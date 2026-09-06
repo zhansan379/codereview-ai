@@ -1,19 +1,36 @@
-"""离线单测（M5.6-1）：agentic 六工具 + llmloop 压缩/空轮/grace + 预算闸门。
+"""离线单测（M5.6）：agentic 六工具 + llmloop 压缩/空轮/grace + 预算闸门 + 沙箱编排。
 
 全部用 fake/in-process 驱动，不触真实 LLM/Docker：
 - tools：临时物化目录跑只读工具——`..` 路径穿越拒绝、read_file ≤500 行、缺 path 回退 groupKey。
 - llmloop：fake AgentLLM 走工具往返→code_comment 进 comments；空轮超限收束；
   grace round 只放 code_comment/task_done；同步压缩落地。
 - budget：超预算 stop 不再调度剩余组。
+- sandbox：FakeRuntime 物化只读工作区→code_comment 进 result(source=agent)；LLM 异常
+  或沙箱关 → 降级普通 diff 审查仍产出。
 """
 
 from __future__ import annotations
 
 import json
 
-from codereview_ai.domain.models import Category, ChangeType, FileDiff, Severity
+import pytest
+
+from codereview_ai.domain.models import (
+    Category,
+    ChangeType,
+    FileDiff,
+    Finding,
+    PullRequest,
+    ReviewResult,
+    Severity,
+)
 from codereview_ai.review.agentic.budget import BudgetGate, estimate_tokens
 from codereview_ai.review.agentic.llmloop import AgentConfig, AgentTurn, ToolCall, run_agent_session
+from codereview_ai.review.agentic.sandbox import (
+    FakeRuntime,
+    SandboxDisabled,
+    run_agentic_review,
+)
 from codereview_ai.review.agentic.tools import (
     MAX_READ_LINES,
     RepoContext,
@@ -230,3 +247,92 @@ def test_estimate_tokens_counts_diffs():
         "a.py", "a.py", "+x*400", 400, 0, ChangeType.MODIFIED, "x" * 400
     )]
     assert 90 <= estimate_tokens(diffs) <= 110
+
+
+# ── 沙箱编排（M5.6-2 / DESIGN §12.2）──────────────────────────────────
+
+
+def _pr() -> PullRequest:
+    return PullRequest(
+        provider="gitlab", repo_id="1", repo_full_name="o/r", web_url="",
+        pr_number=1, title="t", source_branch="s", target_branch="m",
+        head_sha="a" * 12, base_sha="b" * 12,
+    )
+
+
+def _diffs(tmp_path, path="a.py", content="x = 1\n") -> list[FileDiff]:
+    return [FileDiff(path, path, f"+ {content}", 1, 0, ChangeType.MODIFIED, content)]
+
+
+async def test_run_agentic_review_source_agent(tmp_path):
+    _diffs(tmp_path)  # 建真实待物化文件
+    runtime = FakeRuntime()
+
+    def factory():
+        return _FakeLLM([
+            AgentTurn(tool_calls=[ToolCall("read_file", {"file_path": "a.py"})]),
+            AgentTurn(tool_calls=[ToolCall("code_comment", {"comments": [_comment_tuple()]})]),
+            AgentTurn(tool_calls=[ToolCall("task_done", {"state": "DONE"})]),
+        ])
+
+    result = await run_agentic_review(runtime, factory, _diffs(tmp_path))
+    assert len(result.findings) == 1
+    assert result.findings[0].source == "agent"
+    assert result.findings[0].file == "a.py"
+    assert runtime._tmp is None  # stop 已清理
+
+
+async def test_run_agentic_review_llm_failure_raises(tmp_path):
+    runtime = FakeRuntime()
+
+    class _Boom:
+        async def chat(self, _m, _t) -> None:
+            raise RuntimeError("llm down")
+
+        async def summarize(self, _f, _c) -> str:
+            return "s"
+
+    with pytest.raises(RuntimeError):
+        await run_agentic_review(runtime, lambda: _Boom(), _diffs(tmp_path))
+
+
+class _FakeReviewer:
+    async def review(self, *, pr, commits_text, diffs, static_findings_text=""):
+        return ReviewResult(findings=[
+            Finding(content="diff 意见", category=Category.BUG, severity=Severity.HIGH,
+                    existing_code="", file="a.py"),
+        ])
+
+
+class _BrokenRuntime:
+    async def guard(self) -> None:
+        return None
+
+    async def start(self, diffs) -> None:
+        raise SandboxDisabled("沙箱默认关")
+
+    async def stop(self) -> None:
+        return None
+
+
+async def test_strategy_agentic_degrades_to_diff(tmp_path):
+    # strategy=agentic 但沙箱关 → 降级普通 diff 审查仍产出（§12.4 B9）
+    from codereview_ai.worker import _review_agent_or_diff
+
+    result = await _review_agent_or_diff(
+        _FakeReviewer(), None, _pr(), "t", _diffs(tmp_path), [],
+        strategy="agentic", agent_runtime=_BrokenRuntime(),
+        agent_llm_factory=lambda: _FakeLLM([]),
+    )
+    assert len(result.findings) == 1
+    assert result.findings[0].content == "diff 意见"
+
+
+async def test_strategy_diff_uses_diff_review(tmp_path):
+    from codereview_ai.worker import _review_agent_or_diff
+
+    result = await _review_agent_or_diff(
+        _FakeReviewer(), None, _pr(), "t", _diffs(tmp_path), [],
+        strategy="diff", agent_runtime=None, agent_llm_factory=None,
+    )
+    assert result.findings[0].content == "diff 意见"

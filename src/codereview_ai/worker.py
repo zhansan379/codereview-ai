@@ -22,6 +22,8 @@ from codereview_ai.domain.models import FileDiff, Finding, PullRequest, PushEven
 from codereview_ai.forges.base import ForgeAdapter
 from codereview_ai.notifiers.dispatch import NotifierDispatcher
 from codereview_ai.queue.base import TaskMeta, TaskQueue
+from codereview_ai.review.agentic.llmloop import AgentLLM
+from codereview_ai.review.agentic.sandbox import SandboxDisabled, SandboxRuntime, run_agentic_review
 from codereview_ai.review.group_review import review_in_groups
 from codereview_ai.review.grouping import SemanticGrouper
 from codereview_ai.review.increments import (
@@ -60,6 +62,36 @@ class PushGate:
         if not self.enabled:
             return False
         return self.branch_match(branch) if self.branch_match else True
+
+
+async def _review_agent_or_diff(
+    reviewer: Reviewer,
+    grouper: SemanticGrouper | None,
+    pr: PullRequest,
+    commits_text: str,
+    diffs: list[FileDiff],
+    static_findings: list[Finding] | None,
+    strategy: str,
+    agent_runtime: SandboxRuntime | None,
+    agent_llm_factory: Callable[[], AgentLLM] | None,
+) -> ReviewResult:
+    """按 `strategy` 调度审查：`agentic` 走沙箱，否则普通 diff 分组审查。
+
+    agentic 需 `agent_runtime` 与 `agent_llm_factory` 都配置；任一步骤异常（含沙箱
+    默认关 `SandboxDisabled`）→ **整条降级为 diff 审查**（DESIGN §12.4 B9），保证
+    至少一条普通 review 落回，不把 agent 的失败转成任务级 failed 丢失审查。
+    """
+    if strategy == "agentic" and agent_runtime is not None and agent_llm_factory is not None:
+        try:
+            return await run_agentic_review(
+                agent_runtime, agent_llm_factory, diffs, grouper=grouper,
+            )
+        except SandboxDisabled as exc:
+            logger.warning("agentic 不可用，降级为普通 diff 审查：%s", exc)
+    return await review_in_groups(
+        reviewer, grouper, pr=pr, commits_text=commits_text, diffs=diffs,
+        static_findings=static_findings,
+    )
 
 
 def _commits_text(ev: PushEvent) -> str:
@@ -178,6 +210,9 @@ async def process_raw_event(
     notifier: NotifierDispatcher | None = None,
     push_gate: PushGate | None = None,
     static_analyzer: StaticAnalyzer | None = None,
+    review_strategy: str = "diff",
+    agent_runtime: SandboxRuntime | None = None,
+    agent_llm_factory: Callable[[], AgentLLM] | None = None,
 ) -> None:
     """原始 webhook payload → 审查 + 回写。各阶段失败在此抛出，由 worker 标 failed。
 
@@ -204,6 +239,8 @@ async def process_raw_event(
         await _review_push_event(
             forge, reviewer, ev, review_repo=review_repo, grouper=grouper,
             notifier=notifier, push_gate=push_gate, static_analyzer=static_analyzer,
+            review_strategy=review_strategy, agent_runtime=agent_runtime,
+            agent_llm_factory=agent_llm_factory,
         )
         return
     if not forge.should_review(_event_action(data)):
@@ -226,9 +263,10 @@ async def process_raw_event(
     diffs = await forge.fetch_files(refreshed)
     # 静态分析先跑（DESIGN §11）：失败降级为空，不影响主链
     static_findings = await _run_static(static_analyzer, diffs)
-    result = await review_in_groups(
+    result = await _review_agent_or_diff(
         reviewer, grouper, pr=refreshed, commits_text=refreshed.title, diffs=diffs,
-        static_findings=static_findings,
+        static_findings=static_findings, strategy=review_strategy,
+        agent_runtime=agent_runtime, agent_llm_factory=agent_llm_factory,
     )
 
     if incremental:
@@ -273,6 +311,9 @@ async def _review_push_event(
     notifier: NotifierDispatcher | None = None,
     push_gate: PushGate | None = None,
     static_analyzer: StaticAnalyzer | None = None,
+    review_strategy: str = "diff",
+    agent_runtime: SandboxRuntime | None = None,
+    agent_llm_factory: Callable[[], AgentLLM] | None = None,
 ) -> None:
     """push 轨审查（DESIGN §7.7）：幂等落审计行 → 门控 → 差量三分支 → 单条总结回写。
 
@@ -313,9 +354,10 @@ async def _review_push_event(
             diffs = await forge.get_push_changes(ev)
         pr = _push_as_pr(ev)
         static_findings = await _run_static(static_analyzer, diffs)
-        result = await review_in_groups(
+        result = await _review_agent_or_diff(
             reviewer, grouper, pr=pr, commits_text=_commits_text(ev), diffs=diffs,
-            static_findings=static_findings,
+            static_findings=static_findings, strategy=review_strategy,
+            agent_runtime=agent_runtime, agent_llm_factory=agent_llm_factory,
         )
         summary = build_push_summary(ev, result)
         await forge.post_commit_summary(ev, summary)  # 只一条总结评论，无行级（§7.7）
@@ -346,12 +388,15 @@ def make_processor(
     notifier: NotifierDispatcher | None = None,
     push_gate: PushGate | None = None,
     static_analyzer: StaticAnalyzer | None = None,
+    review_strategy: str = "diff",
+    agent_runtime: SandboxRuntime | None = None,
+    agent_llm_factory: Callable[[], AgentLLM] | None = None,
 ) -> Callable[[TaskMeta], Awaitable[None]]:
     """由 worker 主循环调用的处理函数：根据 task 取 payload 后走完整管线。
 
     `increments`/`review_repo`/`grouper`/`chain_valid`/`notifier`/`push_gate`/
-    `static_analyzer` 透传给 `process_raw_event`（都缺省时禁用增量/分组/推送/记录/
-    静态分析，见其 docstring）。
+    `static_analyzer`/`review_strategy`/`agent_runtime`/`agent_llm_factory` 透传给
+    `process_raw_event`（都缺省时禁用增量/分组/推送/记录/静态分析/沙箱，见其 docstring）。
     """
 
     async def process(task: TaskMeta) -> None:
@@ -375,6 +420,9 @@ def make_processor(
             notifier=notifier,
             push_gate=push_gate,
             static_analyzer=static_analyzer,
+            review_strategy=review_strategy,
+            agent_runtime=agent_runtime,
+            agent_llm_factory=agent_llm_factory,
         )
 
     return process
