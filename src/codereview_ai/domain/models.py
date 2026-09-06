@@ -45,7 +45,7 @@ class PullRequest:
     target_branch: str
     head_sha: str  # 幂等键之一
     base_sha: str
-    diff_refs: dict[str, object] | None = None  # gitlab 专用：base/head/start sha，构造 position 必填
+    diff_refs: dict[str, object] | None = None  # gitlab：base/head/start sha，position 必填  # noqa: E501
     author: str = ""
     is_draft: bool = False
 
