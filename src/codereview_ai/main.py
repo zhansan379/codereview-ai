@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from fnmatch import fnmatch
 
 import httpx
 from fastapi import FastAPI
@@ -32,9 +33,21 @@ from codereview_ai.queue.asyncio import AsyncioTaskQueue
 from codereview_ai.queue.worker import run_worker
 from codereview_ai.storage.db import create_engine, init_db
 from codereview_ai.storage.review_repo import ReviewRepository
-from codereview_ai.worker import EventStore, QueueEnqueuer, make_processor
+from codereview_ai.worker import EventStore, PushGate, QueueEnqueuer, make_processor
 
 logger = logging.getLogger("codereview_ai.main")
+
+
+def _branch_glob_match(globs: str) -> Callable[[str], bool] | None:
+    """把 `CR_PUSH_BRANCH_GLOBS`（逗号分隔 fnmatch）编译成 `branch -> bool`；空则 None。"""
+    patterns = [p.strip() for p in globs.split(",") if p.strip()]
+    if not patterns:
+        return None
+
+    def match(branch: str) -> bool:
+        return any(fnmatch(branch, p) for p in patterns)
+
+    return match
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -66,9 +79,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             review_repo = ReviewRepository(engine)
             # F4/M4.7：路由从 DB notifier_config 拉取（project_id=None→仅全局默认）
             notifier = NotifierDispatcher(provider_repo.notifier_routes, http=http)
+            # §7.7：push 轨默认关；由 env 开关 + 分支 glob 构造 PushGate
+            push_gate = PushGate(
+                enabled=settings.push_review_enabled,
+                branch_match=_branch_glob_match(settings.push_branch_globs),
+            )
             processor = make_processor(
                 lambda p: adapters.get(p), lambda _: reviewer, store, review_repo=review_repo,
-                notifier=notifier,
+                notifier=notifier, push_gate=push_gate,
             )
             worker_task = asyncio.create_task(run_worker(queue, processor))
             logger.info(

@@ -3,8 +3,10 @@
 - `EventStore`：task_id → (provider, raw_body) 的进程内暂存（队列只搬 task_id，
   payload 由 worker 取出后解析，DESIGN §9.1）。
 - `QueueEnqueuer`：匹配 webhook 契约 `async enqueue(provider, raw)`，投队列并入 store。
-- `process_raw_event`：原始 payload → 解析 PR → 过滤 action → 补 diff_refs → 拉 diff →
-  审查 → 回写。
+- `process_raw_event`：原始 payload → 解析 PR（mr 轨）或 push 事件（push 轨 §7.7）→
+  过滤 action → 审查 → 回写；有 `review_repo` 时把两轨的结果/审计行真落库。
+- push 轨：默认关（`PushGate`），差量三分支取 diff，只产**一条**总结评论回写 head commit；
+  幂等靠 `uq_review_push` 抢占（DESIGN §7.7）。
 - 网络与 LLM 只出现在 forge/reviewer 注入里；测试可全程离线。
 """
 
@@ -13,8 +15,10 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
+from codereview_ai.domain.models import PullRequest, PushEvent, ReviewResult
 from codereview_ai.forges.base import ForgeAdapter
 from codereview_ai.notifiers.dispatch import NotifierDispatcher
 from codereview_ai.queue.base import TaskMeta, TaskQueue
@@ -38,6 +42,77 @@ logger = logging.getLogger("codereview_ai.worker")
 #: forge 可能返回 None（该 provider 未配置适配器），worker 跳过而非报错。
 ForgeFactory = Callable[[str], ForgeAdapter | None]
 ReviewerFactory = Callable[[str], Reviewer]
+
+
+@dataclass
+class PushGate:
+    """push 轨审查的开关 + 分支过滤（DESIGN §7.7：默认关闭，避免刷屏）。
+
+    `enabled=False` 时任何分支都不走 LLM（仍会落审计行并标 skipped）。
+    `branch_match(branch)` 命中才审；None 表示启用时全分支放行。
+    """
+
+    enabled: bool = False
+    branch_match: Callable[[str], bool] | None = None
+
+    def should(self, branch: str) -> bool:
+        if not self.enabled:
+            return False
+        return self.branch_match(branch) if self.branch_match else True
+
+
+def _commits_text(ev: PushEvent) -> str:
+    """push 的提交历史文本（首个几分钟条），供 reviewer prompt 与回写展示用。"""
+    if not ev.commits:
+        return ev.after
+    return "\n".join(c.message for c in ev.commits)
+
+
+def _push_as_pr(ev: PushEvent) -> PullRequest:
+    """push 事件套上最小 PullRequest 壳，让 reviewer/分组管线可复用（无 MR 序号）。"""
+    return PullRequest(
+        provider=ev.provider, repo_id=ev.repo_id, repo_full_name=ev.repo_full_name,
+        web_url="", pr_number=0, title=_commits_text(ev), source_branch=ev.branch,
+        target_branch=ev.branch, head_sha=ev.after, base_sha=ev.before,
+    )
+
+
+#: severity → 展示符号（push 总结 Markdown 用）。
+_SEVERITY_ICON = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
+
+
+def build_push_summary(ev: PushEvent, result: ReviewResult) -> str:
+    """push 轨总结评论：只产一条（无行级，§7.7）。"""
+    scores = result.scores
+    lines = [
+        f"🤖 AI 代码审查 · {ev.repo_full_name}@{ev.branch}",
+        f"最新提交：`{ev.after[:8]}`",
+        "",
+        f"**总分 {scores.total} / 100**",
+        "| 维度 | 得分 |",
+        "|---|---|",
+        f"| 正确性 | {scores.correctness}/40 |",
+        f"| 安全 | {scores.security}/30 |",
+        f"| 工程实践 | {scores.practices}/20 |",
+        f"| 性能 | {scores.performance}/5 |",
+        f"| 提交质量 | {scores.commit_quality}/5 |",
+        "",
+        result.summary,
+    ]
+    if result.findings:
+        lines += ["", "---", "**发现的问题：**", ""]
+        for f in result.findings:
+            icon = _SEVERITY_ICON.get(str(f.severity), "⚪")
+            lines.append(f"- {icon} **[{str(f.category)}]** {f.file}：{f.content}")
+    if result.skipped_files:
+        skip = [f"- {p}" for p in result.skipped_files]
+        lines += ["", "---", "**被过滤、未审查的文件：**", *skip]
+    return "\n".join(lines)
+
+
+def _is_all_zero(sha: str) -> bool:
+    """after/before 全 0 判断：删分支/新分支的分支哨兵（§7.7）。"""
+    return bool(sha) and set(sha) == {"0"}
 
 
 class EventStore:
@@ -87,14 +162,18 @@ async def process_raw_event(
     grouper: SemanticGrouper | None = None,
     chain_valid: Callable[[str, str], bool] | None = None,
     notifier: NotifierDispatcher | None = None,
+    push_gate: PushGate | None = None,
 ) -> None:
     """原始 webhook payload → 审查 + 回写。各阶段失败在此抛出，由 worker 标 failed。
 
+    事件解析分双轨：mr（`parse_merge_request`）、push（`parse_push_event`，DESIGN §7.7）。
     增量（DESIGN §7.3）落点可来自 `review_repo`（DB 持久，M4 起主用）或进程内
     `increments`（M3 内存档兼容）。`grouper` 给定且改动 ≥ 4 个文件时走语义分组并
     发审查（DESIGN §7.5，见 review.group_review）。`chain_valid(prior_sha, head_sha)`
     校验上次 head 是否仍在本 PR 链上（平台 compare），缺省 `None` → 保守回退全量。
     `notifier`（DESIGN F4）给定时，审查+回写成功后后台推送 IM 通知（失败不影响主链）。
+    `push_gate` 给定时判定 push 轨是否走 LLM（默认关）；给定 `review_repo` 时两轨结果
+    真落库（review_task/review_finding）。
     """
     try:
         data = json.loads(raw)
@@ -104,7 +183,14 @@ async def process_raw_event(
         return
     pr = forge.parse_merge_request(data)
     if pr is None:
-        return  # 非 merge_request 事件：任务即完成，无需回写
+        ev = forge.parse_push_event(data)
+        if ev is None:
+            return  # 非 merge_request 也非 push 事件：任务即完成，无需回写
+        await _review_push_event(
+            forge, reviewer, ev, review_repo=review_repo, grouper=grouper,
+            notifier=notifier, push_gate=push_gate,
+        )
+        return
     if not forge.should_review(_event_action(data)):
         return  # close/merge 等动作不触发审查
 
@@ -136,6 +222,21 @@ async def process_raw_event(
 
     await ResultWriter(forge).write(refreshed, diffs, result)
 
+    if review_repo is not None:
+        # mr 轨真落库（幂等；同 head 已存在则跳过，不重复写）
+        task_id = await review_repo.ensure_task(
+            provider=refreshed.provider, repo_id=refreshed.repo_id,
+            pr_number=refreshed.pr_number, event_type="mr",
+            branch=refreshed.source_branch, head_sha=refreshed.head_sha,
+            base_sha=refreshed.base_sha,
+        )
+        if task_id is not None:
+            await review_repo.insert_findings(task_id, result.findings)
+            await review_repo.mark_state(
+                task_id, state="completed", summary_md=result.summary,
+                score_total=result.scores.total,
+            )
+
     if notifier is not None:
         # F4.4 fire-and-forget：推送后台化，不拖慢也不阻断审查主链
         notifier.launch(refreshed, result)
@@ -145,6 +246,77 @@ async def process_raw_event(
         increments.record(
             pr.provider, pr.pr_number, refreshed.head_sha, collect_fingerprints(result.findings)
         )
+
+
+async def _review_push_event(
+    forge: ForgeAdapter,
+    reviewer: Reviewer,
+    ev: PushEvent,
+    *,
+    review_repo: ReviewRepository | None = None,
+    grouper: SemanticGrouper | None = None,
+    notifier: NotifierDispatcher | None = None,
+    push_gate: PushGate | None = None,
+) -> None:
+    """push 轨审查（DESIGN §7.7）：幂等落审计行 → 门控 → 差量三分支 → 单条总结回写。
+
+    事件本身**始终**落一条审计行（幂等抢占，冲突即跳过）；仅当 push 开且分支规则命中
+    才真正走 LLM。**不**做行级评论：push 没有 MR 可挂 inline，只回写一条总结到 head commit。
+    """
+    if not ev.before and not ev.after:
+        return  # 构造缺失（无 before/after）→ 忽略，不审不落
+    audit_id = 0  # 未配 DB（review_repo=None）时的占位，下面所有落库调用都被 `review_repo` 守卫
+    if review_repo is not None:
+        # push 幂等预检：同 (branch, after) 已有审计行 → 已审过/已跳过，直接跳过（§7.7）
+        if await review_repo.push_already_audited(
+            provider=ev.provider, repo_id=ev.repo_id, branch=ev.branch, head_sha=ev.after
+        ):
+            return
+        tid = await review_repo.ensure_task(
+            provider=ev.provider, repo_id=ev.repo_id, pr_number=None, event_type="push",
+            branch=ev.branch, head_sha=ev.after, base_sha=ev.before,
+        )
+        if tid is None:
+            return  # 并发下另一 worker 抢先插入 → 幂等跳过（§7.7）
+        audit_id = tid
+    try:
+        if _is_all_zero(ev.after):
+            # 删分支：不审也不回写（只留审计行，标 skipped）
+            if review_repo is not None:
+                await review_repo.mark_state(audit_id, state="skipped", error="delete_branch")
+            return
+        if push_gate is None or not push_gate.should(ev.branch):
+            # 默认关或分支规则未命中：审计行标 skipped，不审
+            if review_repo is not None:
+                await review_repo.mark_state(audit_id, state="skipped")
+            return
+        # 差量三分支：before 全 0 = 新分支 → 单 commit diff；其余 → compare（§7.7）
+        if _is_all_zero(ev.before):
+            diffs = await forge.get_first_commit_changes(ev)
+        else:
+            diffs = await forge.get_push_changes(ev)
+        pr = _push_as_pr(ev)
+        if grouper is not None:
+            result = await review_in_groups(
+                reviewer, grouper, pr=pr, commits_text=_commits_text(ev), diffs=diffs
+            )
+        else:
+            result = await reviewer.review(pr=pr, commits_text=_commits_text(ev), diffs=diffs)
+        summary = build_push_summary(ev, result)
+        await forge.post_commit_summary(ev, summary)  # 只一条总结评论，无行级（§7.7）
+        if notifier is not None:
+            notifier.launch(pr, result)
+        if review_repo is not None:
+            await review_repo.insert_findings(audit_id, result.findings)
+            await review_repo.mark_state(
+                audit_id, state="completed", summary_md=result.summary,
+                score_total=result.scores.total,
+            )
+    except Exception as exc:
+        logger.warning("push 轨审查失败（%s@%s）：%s", ev.repo_full_name, ev.after, exc)
+        if review_repo is not None:
+            await review_repo.mark_state(audit_id, state="failed", error=str(exc))
+        raise
 
 
 def make_processor(
@@ -157,11 +329,12 @@ def make_processor(
     grouper: SemanticGrouper | None = None,
     chain_valid: Callable[[str, str], bool] | None = None,
     notifier: NotifierDispatcher | None = None,
+    push_gate: PushGate | None = None,
 ) -> Callable[[TaskMeta], Awaitable[None]]:
     """由 worker 主循环调用的处理函数：根据 task 取 payload 后走完整管线。
 
-    `increments`/`review_repo`/`grouper`/`chain_valid`/`notifier` 透传给
-    `process_raw_event`（都缺省时禁用增量/分组/推送，见其 docstring）。
+    `increments`/`review_repo`/`grouper`/`chain_valid`/`notifier`/`push_gate` 透传给
+    `process_raw_event`（都缺省时禁用增量/分组/推送/记录，见其 docstring）。
     """
 
     async def process(task: TaskMeta) -> None:
@@ -183,6 +356,7 @@ def make_processor(
             grouper=grouper,
             chain_valid=chain_valid,
             notifier=notifier,
+            push_gate=push_gate,
         )
 
     return process

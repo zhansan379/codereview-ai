@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     max_concurrent_reviews: int = 4
     request_timeout_seconds: float = 60.0
 
+    # —— push 轨审查（§7.7：默认关，避免刷屏）——
+    push_review_enabled: bool = False
+    push_branch_globs: str = ""  # 逗号分隔 glob，命中才审；空 = enable 时全放行
+
     # —— 平台 / LLM（可选；未配齐则 worker 不启动，仅 webhook 可入队）——
     gitlab_url: str = ""
     gitlab_token: str = ""
