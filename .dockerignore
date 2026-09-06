@@ -1,0 +1,19 @@
+# 构建上下文排除：保持镜像小而净
+.venv
+venv
+data
+**/__pycache__
+*.py[cod]
+*.egg-info
+.git
+.gitignore
+node_modules
+frontend
+docs
+.claude
+tests
+.coverage
+htmlcov
+*.db
+*.sqlite
+.env

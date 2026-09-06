@@ -1,0 +1,43 @@
+# codereview-ai Composer（M6 标准 9）。
+# 密钥从宿主 .env 注入（.gitignore 已忽略 .env）；缺密钥容器启动即 fail-fast。
+# 使用：docker compose up -d；健康探测 http://localhost:5001/health。
+
+services:
+  codereview-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: codereview-ai:v0.1.0
+    container_name: codereview-ai
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    environment:
+      # 四枚必配密钥（无默认值，缺失即拒绝启动，见 DESIGN §16）
+      CR_SECRET_KEY: "${CR_SECRET_KEY:?请设置 CR_SECRET_KEY（生成: python -c 'import secrets;print(secrets.token_urlsafe(48))'）}"
+      CR_WEBHOOK_SECRET: "${CR_WEBHOOK_SECRET:?请设置 CR_WEBHOOK_SECRET}"
+      CR_ENCRYPTION_KEY: "${CR_ENCRYPTION_KEY:?请设置 CR_ENCRYPTION_KEY（Fernet）}"
+      CR_ADMIN_PASSWORD: "${CR_ADMIN_PASSWORD:?请设置 CR_ADMIN_PASSWORD}"
+      # 平台 token / 模型（可选；配齐才启动内置 worker）
+      CR_LLM_MODEL: ${CR_LLM_MODEL:-}
+      CR_GITLAB_URL: ${CR_GITLAB_URL:-}
+      CR_GITLAB_TOKEN: ${CR_GITLAB_TOKEN:-}
+      CR_GITHUB_URL: ${CR_GITHUB_URL:-}
+      CR_GITHUB_TOKEN: ${CR_GITHUB_TOKEN:-}
+      # 运行时
+      CR_DATABASE_URL: sqlite:////app/data/app.db
+    volumes:
+      - appdb:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5001/health').status==200 else 1)"
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+
+volumes:
+  appdb:
