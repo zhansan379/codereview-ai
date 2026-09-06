@@ -11,12 +11,14 @@ from collections.abc import Callable
 
 import httpx
 
-from codereview_ai.domain.models import ChangeType, PullRequest
+from codereview_ai.domain.models import ChangeType, PullRequest, PushEvent
+from codereview_ai.forges import github as gh_mod
 from codereview_ai.forges.github import (
     GitHubForge,
     _new_file_content_from_patch,
     _to_file_diff,
     parse_pull_request_payload,
+    parse_push_event_payload,
 )
 from codereview_ai.forges.signatures import GITHUB
 
@@ -75,6 +77,22 @@ def test_parse_missing_number_is_none():
     payload = _sample_pr_payload()
     payload["pull_request"].pop("number")
     assert parse_pull_request_payload(payload) is None
+
+
+def test_parse_pr_non_dict_repo_head_base():
+    payload = _sample_pr_payload()
+    payload["repository"] = "nope"  # 非 dict → 兜底
+    payload["pull_request"]["head"] = None  # 非 dict/None → 兜底
+    payload["pull_request"]["base"] = None
+    pr = parse_pull_request_payload(payload)
+    assert pr.pr_number == 99
+    assert pr.repo_full_name == ""
+    assert pr.source_branch == "" and pr.target_branch == ""
+    assert pr.head_sha == "abc123"  # event 顶层 head_sha 仍在
+
+
+def test_parse_push_missing_full_name_is_none():
+    assert parse_push_event_payload({"repository": "oops"}) is None
 
 
 def test_should_review_gates_actions():
@@ -154,6 +172,14 @@ def test_fetch_files_retries_on_empty_then_succeeds():
     assert len(diffs) == 1
 
 
+def test_fetch_files_exhausts_retries_returns_empty(monkeypatch):
+    # 缩小退避参数，快速走完全部尝试后仍空 → 返回 []
+    monkeypatch.setattr(gh_mod, "_RETRY_ATTEMPTS", 2)
+    monkeypatch.setattr(gh_mod, "_RETRY_DELAY_0", 0.001)
+    handler = lambda r: httpx.Response(200, json=[])  # noqa: E731
+    assert asyncio.run(_forge(handler).fetch_files(_pr())) == []
+
+
 # ── fetch_pull_request 补权威 head/base sha ─────────────────────────────
 
 
@@ -167,6 +193,12 @@ def test_fetch_pull_request_populates_authoritative_shas():
     assert pr.base_sha == "BASE1"
     assert pr.title == "t2"
     assert pr.pr_number == 99  # 其余字段不变
+
+
+def test_fetch_pull_request_returns_pr_when_body_not_dict():
+    handler = lambda r: httpx.Response(200, json=[1, 2])  # noqa: E731
+    pr = asyncio.run(_forge(handler).fetch_pull_request(_pr()))
+    assert pr.head_sha == "abc123"  # 非 dict 响应 → 原样返回 pr
 
 
 # ── 回写评论 ────────────────────────────────────────────────────────────
@@ -206,6 +238,32 @@ def test_post_inline_builds_batch_review():
     # RIGHT 用 line、LEFT 用 old_line，side 保留
     assert payload["comments"][0] == {"path": "src/a.py", "line": 5, "side": "RIGHT", "body": "新增行"}  # noqa: E501
     assert payload["comments"][1] == {"path": "src/a.py", "line": 3, "side": "LEFT", "body": "删行"}  # noqa: E501
+
+
+def test_post_inline_drops_missing_path_and_skips_empty_batch():
+    sent: list[bytes] = []
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        sent.append(r.content)
+        return httpx.Response(200, json={})
+
+    f = _forge(handler)
+    pr = PullRequest(provider="github", repo_id="acme/widgets", repo_full_name="", web_url="",
+                     pr_number=99, title="", source_branch="", target_branch="", head_sha="h", base_sha="b")  # noqa: E501
+    # 三者均缺 path 或行号 → batch 空 → 不发请求
+    asyncio.run(f.post_inline(pr, [
+        {"side": "RIGHT", "line": 5, "body": "缺 path"},
+        {"side": "RIGHT", "line": None, "body": "缺行号", "path": "a.py"},
+        {},
+    ]))
+    assert sent == []  # 全程不发单次 review 请求
+
+
+def test_get_push_changes_returns_empty_when_after_all_zero():
+    ev = PushEvent(provider=GITHUB, repo_id="acme/widgets", repo_full_name="a/b",
+                   branch="main", before="aaaa",
+                   after="0000000000000000000000000000000000000000")
+    assert asyncio.run(_forge(lambda r: httpx.Response(999)).get_push_changes(ev)) == []
 
 
 def test_post_summary_uses_issues_comments():

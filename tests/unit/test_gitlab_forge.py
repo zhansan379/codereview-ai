@@ -11,7 +11,13 @@ from collections.abc import Callable
 import httpx
 
 from codereview_ai.domain.models import ChangeType, PullRequest
-from codereview_ai.forges.gitlab import GitLabForge, _to_file_diff, parse_merge_request_payload
+from codereview_ai.forges import gitlab as gl_mod
+from codereview_ai.forges.gitlab import (
+    GitLabForge,
+    _to_file_diff,
+    parse_merge_request_payload,
+    parse_push_event_payload,
+)
 from codereview_ai.forges.signatures import GITLAB
 
 API_BASE = "https://gitlab.example.com"
@@ -69,6 +75,20 @@ def test_parse_missing_iid_is_none():
     payload = _sample_mr_payload()
     payload["object_attributes"].pop("iid")
     assert parse_merge_request_payload(payload) is None
+
+
+def test_parse_mr_non_dict_project_and_last_commit():
+    payload = _sample_mr_payload()
+    payload["project"] = "oops"  # 非 dict → 兜底为空 dict
+    payload["object_attributes"]["last_commit"] = None  # 非 dict/None → 兜底为空 dict
+    pr = parse_merge_request_payload(payload)
+    assert pr.repo_id == "7"  # target_project_id 仍在
+    assert pr.head_sha == ""
+
+
+def test_parse_push_missing_repo_is_none():
+    payload = {"object_kind": "push", "project": {"id": None}}
+    assert parse_push_event_payload(payload) is None
 
 
 def test_should_review_gates_actions():
@@ -138,6 +158,14 @@ def test_fetch_files_retries_on_empty_then_succeeds():
     assert len(diffs) == 1
 
 
+def test_fetch_files_exhausts_retries_returns_empty(monkeypatch):
+    # 缩小退避参数，快速走完全部尝试后仍空 → 返回 []
+    monkeypatch.setattr(gl_mod, "_RETRY_ATTEMPTS", 2)
+    monkeypatch.setattr(gl_mod, "_RETRY_DELAY_0", 0.001)
+    handler = lambda r: httpx.Response(200, json={"changes": []})  # noqa: E731
+    assert asyncio.run(_forge(handler).fetch_files(_pr())) == []
+
+
 # ── fetch_pull_request 补 diff_refs ─────────────────────────────────────
 
 
@@ -149,6 +177,13 @@ def test_fetch_pull_request_populates_diff_refs():
     pr = asyncio.run(_forge(handler).fetch_pull_request(_pr()))
     assert pr.diff_refs == {"base_sha": "b", "head_sha": "h", "start_sha": "s"}
     assert pr.pr_number == 42  # 其余字段不变
+
+
+def test_fetch_pull_request_returns_pr_when_no_diff_refs():
+    # 响应里没有 diff_refs（或非 dict）→ 原样返回 pr，不构造
+    handler = lambda r: httpx.Response(200, json={"title": "无 refs"})  # noqa: E731
+    pr = asyncio.run(_forge(handler).fetch_pull_request(_pr()))
+    assert pr.diff_refs is None
 
 
 # ── 评论回写 ────────────────────────────────────────────────────────────
@@ -182,6 +217,28 @@ def test_post_inline_builds_position():
     asyncio.run(f.post_inline(pr, [{"side": "RIGHT", "line": 5, "body": "注释", "path": "src/a.py"}]))  # noqa: E501
     assert len(urls) == 1
     assert "/discussions" in urls[0]  # 命中 GitLab discussions 端点
+
+
+def test_post_inline_skips_no_line_and_left_uses_old_line():
+    urls: list[str] = []
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        urls.append(str(r.url))
+        return httpx.Response(200, json={})
+
+    f = _forge(handler)
+    pr = PullRequest(
+        provider="gitlab", repo_id="7", repo_full_name="acme/widgets", web_url="",
+        pr_number=42, title="t", source_branch="s", target_branch="t", head_sha="h", base_sha="",
+        diff_refs={"base_sha": "b", "head_sha": "h", "start_sha": "s"},
+    )
+    # 第一条无行号 → continue 跳过；第二条 LEFT 走 old_line 分支
+    asyncio.run(f.post_inline(pr, [
+        {"side": "RIGHT", "line": None, "body": "无行号", "path": "a.py"},
+        {"side": "LEFT", "old_line": 3, "body": "删行", "path": "b.py"},
+    ]))
+    assert len(urls) == 1
+    assert '"new_line"' not in urls[0]  # LEFT 不用 new_line
 
 
 def test_post_summary_uses_notes_endpoint():
