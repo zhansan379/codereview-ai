@@ -50,12 +50,14 @@ LiteLLM 多模型接入，钉钉/飞书/企业微信推送，Vue 管理后台。
 前置：`docker`；GitHub token 需 `workflow` scope（首推含 CI 工作流）。
 
 ```bash
-# 四枚必配密钥（缺失即拒绝启动；看不懂它们在干嘛，见下文 §密钥说明）
-export CR_SECRET_KEY=$(python -c 'import secrets;print(secrets.token_urlsafe(48))')
-export CR_WEBHOOK_SECRET=$(python -c 'import secrets;print(secrets.token_urlsafe(48))')
-export CR_ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')
-export CR_ADMIN_PASSWORD=$(python -c 'import secrets;print(secrets.token_urlsafe(24))')
+# —— 生成 4 枚密钥：先生成存进变量 → export 给程序 → echo 打印，三行一步到位。
+#    打印出的那一份(echo 输出的)和 export 用的是同一个值，改密钥就抄打印出来的。——
+S=$(python -c 'import secrets;print(secrets.token_urlsafe(48))')   && export CR_SECRET_KEY=$S     && echo "CR_SECRET_KEY     = $S"
+W=$(python -c 'import secrets;print(secrets.token_urlsafe(48))')   && export CR_WEBHOOK_SECRET=$W && echo "CR_WEBHOOK_SECRET = $W   ← 填到 GitLab/GitHub webhook（必须与系统一致）"
+E=$(python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())') && export CR_ENCRYPTION_KEY=$E && echo "CR_ENCRYPTION_KEY = $E"
+P=$(python -c 'import secrets;print(secrets.token_urlsafe(24))')   && export CR_ADMIN_PASSWORD=$P && echo "CR_ADMIN_PASSWORD = $P   ← 登录后台用，建议改成你能记住的"
 
+# 关终端就丢；想重启还在，存进 .env（compose 会自动读）或用 setx
 docker compose up -d
 curl http://localhost:5001/health   # → 200 即就绪
 ```
@@ -64,10 +66,11 @@ curl http://localhost:5001/health   # → 200 即就绪
 > PowerShell 用 `$env:VAR=`，测健康用 `curl.exe`（PowerShell 里 `curl` 是别的命令别名）：
 >
 > ```powershell
-> $env:CR_SECRET_KEY     = (python -c 'import secrets;print(secrets.token_urlsafe(48))')
-> $env:CR_WEBHOOK_SECRET = (python -c 'import secrets;print(secrets.token_urlsafe(48))')
-> $env:CR_ENCRYPTION_KEY = (python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())')
-> $env:CR_ADMIN_PASSWORD = (python -c 'import secrets;print(secrets.token_urlsafe(24))')
+> # 生成＋打印一步到位：打印出来的就是实际生效的密钥，关终端就丢
+> $env:CR_SECRET_KEY=(python -c 'import secrets;print(secrets.token_urlsafe(48))'); $env:CR_SECRET_KEY
+> $env:CR_WEBHOOK_SECRET=(python -c 'import secrets;print(secrets.token_urlsafe(48))'); $env:CR_WEBHOOK_SECRET
+> $env:CR_ENCRYPTION_KEY=(python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())'); $env:CR_ENCRYPTION_KEY
+> $env:CR_ADMIN_PASSWORD=(python -c 'import secrets;print(secrets.token_urlsafe(24))'); $env:CR_ADMIN_PASSWORD
 >
 > docker compose up -d
 > curl.exe http://localhost:5001/health
