@@ -18,3 +18,8 @@ Thumbs.db
 
 # Env
 .env
+
+# Runtime data (SQLite)
+data/
+*.db
+*.sqlite

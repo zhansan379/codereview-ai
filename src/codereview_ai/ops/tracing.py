@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -20,7 +21,7 @@ X_TRACE_ID = "X-Trace-Id"
 class TraceMiddleware(BaseHTTPMiddleware):
     """每个请求：生成/继承 trace_id → 设置 ContextVar → 响应头回写。"""
 
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next: Any) -> Any:
         tid = request.headers.get(X_TRACE_ID) or f"webhook-{uuid4().hex[:12]}"
         token = TRACE_ID.set(tid)
         try:

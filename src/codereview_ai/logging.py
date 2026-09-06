@@ -13,7 +13,7 @@ import json
 import logging
 import re
 import sys
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
@@ -26,7 +26,7 @@ TRACE_ID: contextvars.ContextVar[str] = contextvars.ContextVar("trace_id", defau
 
 
 @asynccontextmanager
-async def trace(prefix: str = "") -> Iterator[str]:
+async def trace(prefix: str = "") -> AsyncIterator[str]:
     """在异步上下文里生成/继承一个 trace_id，作用域内 yield，退出时还原。"""
     tid = TRACE_ID.get() or f"{prefix}{uuid4().hex[:12]}"
     token = TRACE_ID.set(tid)
@@ -115,7 +115,8 @@ class JsonFormatter(logging.Formatter):
                 payload[field] = record.__dict__[field]
         if record.exc_info:
             (typ, value, _tb) = record.exc_info
-            payload["exception"] = f"{typ.__name__}: {value}"
+            if typ and value:
+                payload["exception"] = f"{typ.__name__}: {value}"
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 
