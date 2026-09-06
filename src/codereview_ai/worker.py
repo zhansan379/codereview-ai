@@ -16,6 +16,7 @@ import json
 import logging
 import os
 from collections.abc import Awaitable, Callable
+from fnmatch import fnmatch
 from dataclasses import dataclass
 from typing import Any
 
@@ -93,6 +94,21 @@ async def _project_cfg(
         logger.warning("读取项目配置失败（%s@%s），按不过滤处理", provider, repo_id)
         return None
     return cfg
+
+
+def _compile_push_globs(globs: str) -> Callable[[str], bool] | None:
+    """把逗号分隔 fnmatch 分支 glob 编译成 `branch -> bool`；空则 None（启用时全放行）。
+
+    与 `main._branch_glob_match` 语义一致，供项目级 push 分支规则覆盖用（DESIGN §7.7）。
+    """
+    patterns = [p.strip() for p in globs.split(",") if p.strip()]
+    if not patterns:
+        return None
+
+    def match(branch: str) -> bool:
+        return any(fnmatch(branch, p) for p in patterns)
+
+    return match
 
 
 @dataclass
@@ -401,12 +417,17 @@ async def _review_push_event(
     if not ev.before and not ev.after:
         return  # 构造缺失（无 before/after）→ 忽略，不审不落
     audit_id = 0  # 未配 DB（review_repo=None）时的占位，下面所有落库调用都被 `review_repo` 守卫
+    force = False  # 手动重试意图：true 则绕过幂等预检 + push 门控强制执行（§7.7 补审）
+    # 提前取一次项目配置：门控解析与文件扩展名过滤共用（项目开关改动实时生效）
+    cfg = await _project_cfg(project_config_factory, ev.provider, ev.repo_id)
     if review_repo is not None:
-        # push 幂等预检：同 (branch, after) 已有审计行 → 已审过/已跳过，直接跳过（§7.7）
-        if await review_repo.push_already_audited(
+        # push 幂等预检：同 (branch, after) 已有审计行 → 已处理过；除非该行为手动重试（force_rerun）
+        existing = await review_repo.push_existing_audit(
             provider=ev.provider, repo_id=ev.repo_id, branch=ev.branch, head_sha=ev.after
-        ):
-            return
+        )
+        force = bool(existing and existing.force_rerun)
+        if existing is not None and not force:
+            return  # 重复 webhook：该分支该 after 已审过/已跳过，跳过（§7.7）
         tid = await review_repo.ensure_task(
             provider=ev.provider, repo_id=ev.repo_id, pr_number=None, event_type="push",
             branch=ev.branch, head_sha=ev.after, base_sha=ev.before, payload=raw_payload,
@@ -414,27 +435,41 @@ async def _review_push_event(
         if tid is None:
             return  # 并发下另一 worker 抢先插入 → 幂等跳过（§7.7）
         audit_id = tid
+        if force:
+            # 手动重试意图本次消费：清掉标记，本事件按强制重跑处理而非幂等跳过
+            await review_repo.clear_force_rerun(audit_id)
     try:
         if _is_all_zero(ev.after):
-            # 删分支：不审也不回写（只留审计行，标 skipped，带原因）
+            # 删分支：无 head 可审，不审也不回写（只留审计行，标 skipped，带原因）；补审对删分支无意义
             if review_repo is not None:
                 await review_repo.mark_state(
-                    audit_id, state="skipped", error="push 事件为删除分支，仅记录未审查",
+                    audit_id, state="skipped", skip_reason="branch_deleted",
+                    error="push 事件为删除分支，仅记录未审查",
                 )
             return
-        if push_gate is None:
-            # 默认关闭：审计行标 skipped，带原因
+        # 门控解析：enabled / branch_match = 全局 env 默认（push_gate）→ 项目显式覆盖（cfg）
+        enabled = push_gate.enabled if push_gate is not None else False
+        branch_match = push_gate.branch_match if push_gate is not None else None
+        if cfg is not None and cfg.push_enabled is not None:
+            enabled = cfg.push_enabled
+        if cfg is not None and cfg.push_branch_globs:
+            branch_match = _compile_push_globs(cfg.push_branch_globs)
+        if force:
+            # 手动补审：用户显式要审这条，无视门控直接走 LLM
+            enabled, branch_match = True, None
+        if not enabled:
+            # 未开启：审计行标 skipped，带原因；门控/配置类跳过可由「补审」重试
             if review_repo is not None:
                 await review_repo.mark_state(
-                    audit_id, state="skipped",
+                    audit_id, state="skipped", skip_reason="push_disabled",
                     error="push 审查未开启（默认关闭），仅记录未审查",
                 )
             return
-        if not push_gate.should(ev.branch):
-            # 分支规则未命中：审计行标 skipped，带原因
+        if branch_match is not None and not branch_match(ev.branch):
+            # 分支规则未命中：审计行标 skipped，带原因；改配置后可由「补审」重试
             if review_repo is not None:
                 await review_repo.mark_state(
-                    audit_id, state="skipped",
+                    audit_id, state="skipped", skip_reason="branch_mismatch",
                     error="该分支未命中 push 审查规则，仅记录未审查",
                 )
             return
@@ -443,8 +478,7 @@ async def _review_push_event(
             diffs = await forge.get_first_commit_changes(ev)
         else:
             diffs = await forge.get_push_changes(ev)
-        # 项目级文件扩展名过滤（DESIGN 文件扩展名过滤），push 轨同样生效
-        cfg = await _project_cfg(project_config_factory, ev.provider, ev.repo_id)
+        # 项目级文件扩展名过滤（DESIGN 文件扩展名过滤），push 轨同样生效（cfg 已在开头取）
         if cfg and cfg.file_extensions:
             diffs = apply_extension_filter(diffs, cfg.file_extensions)
         if not diffs:

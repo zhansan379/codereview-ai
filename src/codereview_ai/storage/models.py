@@ -46,6 +46,9 @@ class Project(Base):
     web_url: Mapped[str] = mapped_column(String(1024), default="")
     branch_rule: Mapped[str] = mapped_column(String(255), default="")
     file_extensions: Mapped[str] = mapped_column(String(255), default="")
+    # push 轨审查（DESIGN §7.7）：None=继承全局 env 默认；True/False=显式覆盖；glob 非空则覆盖全局分支规则
+    push_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
+    push_branch_globs: Mapped[str] = mapped_column(String(255), default="")
     review_strategy: Mapped[str] = mapped_column(String(32), default="diff")
     prompt_suffix: Mapped[str] = mapped_column(Text, default="")
     score_threshold: Mapped[int] = mapped_column(Integer, default=80)
@@ -91,6 +94,10 @@ class ReviewTask(Base):
     trace_id: Mapped[str] = mapped_column(String(64), default="")
     model_config_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     writeback_failed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # skipped 分型（留空则非 skipped）：push_disabled | branch_mismatch | branch_deleted
+    skip_reason: Mapped[str] = mapped_column(String(32), default="")
+    # 手动重试意图：worker 见 force_rerun=true 则绕过幂等预检 + push 门控，强制执行该条再清掉
+    force_rerun: Mapped[bool] = mapped_column(Boolean, default=False)
     model_snapshot: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     diff_snapshot: Mapped[str] = mapped_column(Text, default="")
     summary_md: Mapped[str] = mapped_column(Text, default="")

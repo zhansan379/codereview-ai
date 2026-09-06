@@ -77,8 +77,16 @@ def test_projects_crud_roundtrip(app):
         upd = c.put(f"/api/projects/{pid}", json={
             "provider": "gitlab", "repo_id": "123", "branch_rule": "dev",
             "score_threshold": 60,
+            "push_enabled": True, "push_branch_globs": "main,release/*",
         }).json()
         assert upd["branch_rule"] == "dev" and upd["score_threshold"] == 60
+        assert upd["push_enabled"] is True and upd["push_branch_globs"] == "main,release/*"
+
+        # push_enabled 可回写为 null → 继承全局默认
+        upd2 = c.put(f"/api/projects/{pid}", json={
+            "provider": "gitlab", "repo_id": "123", "push_enabled": None,
+        }).json()
+        assert upd2["push_enabled"] is None
 
         assert c.get("/api/projects/9999").status_code == 404
         assert c.delete(f"/api/projects/{pid}").status_code == 204
@@ -283,6 +291,97 @@ def test_retry_reenqueues_payload(app):
         retried = c.post(f"/api/tasks/{tid}/retry").json()
         assert retried["state"] == "queued" and retried["attempt"] == 2
         assert calls == [("gitlab", payload_bytes)]
+
+
+def test_tasks_retry_skipped_recoverable_only(app):
+    """门控/配置类 skipped 可补审；删分支 skipped 有 head 可审，禁止重试（409）。"""
+    fast, token = app
+
+    async def _seed() -> None:
+        session = session_factory(fast.state.engine)
+        async with session() as s:
+            s.add(ReviewTask(provider="gitlab", repo_id="1", event_type="push",
+                             branch="main", head_sha="p1", state="skipped",
+                             skip_reason="push_disabled", error="push 审查未开启...",
+                             payload='{"x":1}'))
+            s.add(ReviewTask(provider="gitlab", repo_id="1", event_type="push",
+                             branch="main", head_sha="p2", state="skipped",
+                             skip_reason="branch_deleted", error="push 事件为删除分支..."))
+            await s.commit()
+
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(_seed())
+
+    class _FakeEnqueuer:
+        async def enqueue(self, provider: str, raw: bytes) -> str:
+            return "t-x"
+
+    fast.state.enqueuer = _FakeEnqueuer()
+
+    with _client(fast, token) as c:
+        lst = c.get("/api/tasks").json()
+        disabled = next(t for t in lst if t["skip_reason"] == "push_disabled")
+        deleted = next(t for t in lst if t["skip_reason"] == "branch_deleted")
+        # skip_reason 已在列表响应露出，前端据此亮「补审」按钮
+        assert disabled["skip_reason"] == "push_disabled"
+
+        r = c.post(f"/api/tasks/{disabled['id']}/retry")
+        assert r.status_code == 200, r.text
+        assert r.json()["state"] == "queued"
+        assert c.post(f"/api/tasks/{deleted['id']}/retry").status_code == 409
+        # mr 轨 skipped（不应出现，防御态）也不可重试
+        async def _mr() -> None:
+            session = session_factory(fast.state.engine)
+            async with session() as s:
+                s.add(ReviewTask(provider="gitlab", repo_id="1", pr_number=5, event_type="mr",
+                                 branch="main", head_sha="m1", state="skipped",
+                                 skip_reason="branch_mismatch"))
+                await s.commit()
+        asyncio.get_event_loop().run_until_complete(_mr())
+        m = next(t for t in c.get("/api/tasks").json() if t["event_type"] == "mr")
+        assert c.post(f"/api/tasks/{m['id']}/retry").status_code == 409
+
+
+def test_retry_push_failed_sets_force_rerun(app):
+    """push 轨失败任务重试后置 force_rerun，令 worker 绕过幂等预检真正重跑（修空转 bug）。"""
+    fast, token = app
+
+    async def _seed() -> None:
+        session = session_factory(fast.state.engine)
+        async with session() as s:
+            s.add(ReviewTask(provider="gitlab", repo_id="1", event_type="push",
+                             branch="main", head_sha="p3", state="failed", attempt=1,
+                             error="boom", payload='{"x":1}'))
+            await s.commit()
+
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(_seed())
+
+    class _FakeEnqueuer:
+        async def enqueue(self, provider: str, raw: bytes) -> str:
+            return "t-x"
+
+    fast.state.enqueuer = _FakeEnqueuer()
+    tid = None
+    async def _get() -> None:
+        nonlocal tid
+        from sqlalchemy import select
+        session = session_factory(fast.state.engine)
+        async with session() as s:
+            tid = (await s.execute(
+                select(ReviewTask).where(ReviewTask.event_type == "push"))).scalar_one().id
+    asyncio.get_event_loop().run_until_complete(_get())
+
+    with _client(fast, token) as c:
+        c.post(f"/api/tasks/{tid}/retry").json()
+
+    async def _assert() -> None:
+        from sqlalchemy import select
+        session = session_factory(fast.state.engine)
+        async with session() as s:
+            row = (await s.execute(select(ReviewTask))).scalar_one()
+            assert row.force_rerun is True  # push 重试写到 force_rerun，供 worker 绕过幂等
+    asyncio.get_event_loop().run_until_complete(_assert())
 
 
 def test_forges_list_synthesizes_defaults(app, monkeypatch):

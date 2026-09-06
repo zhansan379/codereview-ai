@@ -48,6 +48,19 @@
         <el-form-item label="分支规则">
           <el-input v-model="form.branch_rule" placeholder="如 main" />
         </el-form-item>
+        <el-form-item label="Push 审查">
+          <el-radio-group v-model="form.push_mode">
+            <el-radio label="on">开启</el-radio>
+            <el-radio label="off">关闭</el-radio>
+            <el-radio label="inherit">跟随全局</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="Push 分支规则">
+          <el-input
+            v-model="form.push_branch_globs"
+            placeholder="逗号分隔 glob，如 main,release/*；留空继承全局"
+          />
+        </el-form-item>
         <el-form-item label="文件扩展名">
           <el-select
             v-model="form.file_extensions"
@@ -106,6 +119,9 @@ const emptyForm = () => ({
   prompt_suffix: '',
   score_threshold: 80,
   enabled: true,
+  // push 审查（三态）：on=开启 / off=关闭 / inherit=跟随全局 env 默认
+  push_mode: 'inherit' as 'on' | 'off' | 'inherit',
+  push_branch_globs: '',
 })
 const form = reactive(emptyForm())
 
@@ -138,6 +154,8 @@ function openEdit(row: Project) {
     prompt_suffix: row.prompt_suffix || '',
     score_threshold: row.score_threshold ?? 80,
     enabled: row.enabled,
+    push_mode: row.push_enabled === true ? 'on' : row.push_enabled === false ? 'off' : 'inherit',
+    push_branch_globs: row.push_branch_globs || '',
   })
   dialogVisible.value = true
 }
@@ -145,7 +163,13 @@ function openEdit(row: Project) {
 async function onSave() {
   saving.value = true
   try {
-    const payload = { ...form, file_extensions: form.file_extensions.join(',').replace(/,\s*/g, ',') }
+    const payload = {
+      ...form,
+      push_mode: undefined,
+      file_extensions: form.file_extensions.join(',').replace(/,\s*/g, ','),
+      push_enabled: form.push_mode === 'inherit' ? null : form.push_mode === 'on',
+    // push_branch_globs 已含在展开的 form 里
+    }
     if (isEdit.value && editingId.value != null) {
       await updateProject(editingId.value, payload)
     } else {

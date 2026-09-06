@@ -649,9 +649,11 @@ LLM 指出"文件里存在但本次没改"的行会被平台 422 拒绝。宁可
 我们继承这条能力链，并补齐旧项目缺的两块：**幂等**、**分支规则收敛**（旧项目 push 无任何分支过滤，
 每个分支的每次 push 都审，刷屏严重）。
 
-- **触发与门**：GitLab / GitHub 的 push 事件 → 仅当 ①项目 `review_strategy` 开启 push 审查（项目级，默认关）
-  且 ②`branch_rule` 命中（把"只审合入受保护分支"，见旧项目 `target_branch_protected`，落到分支规则）时，
-  才真正调 LLM。事件本身始终**幂等落库**，用于审计"谁、什么时候、往哪个分支、推了什么到哪个 sha"。
+- **触发与门**：GitLab / GitHub 的 push 事件 → 仅当 ①push 审查开启且 ②分支命中（逗号分隔 fnmatch glob，
+  项目级）时，才真正调 LLM。门控解析**每事件实时查项目配置**（`Project.push_enabled / push_branch_globs`）：
+  项目显式赋值覆盖全局 env 默认（`CR_PUSH_REVIEW_ENABLED` / `CR_PUSH_BRANCH_GLOBS`），未赋值（None）
+  继承全局——前端的项目"Push 审查"开关落在 `project.push_enabled` 三态（跟随全局/开/关）。事件本身始终
+  **幂等落库**，用于审计"谁、什么时候、往哪个分支、推了什么到哪个 sha"。
 - **差量三分支**（复用旧项目 `PushHandler.get_push_changes` 已验证的思路，`reference/platform_payload_map.md` §6）：
   - `after` 全 0 → **删除分支**，忽略；
   - `before` 全 0 → **新分支**，用**单 commit diff API** 取首个提交差量（旧项目的兜底分支，`gitlab/webhook_handler.py:318-324`，值得抄）；
@@ -726,10 +728,17 @@ stateDiagram-v2
     running --> queued : 超时回收
     queued --> skipped : 分支规则不匹配【幂等命中在 §6.3 直接 200，不落 queued 行】
     failed --> queued : 管理员手动重试（attempt+1）
+    skipped --> queued : 手动补审（push 轨 push_disabled/branch_mismatch，置 force_rerun）
 ```
 
 - `succeeded` 只能由"审查成功 **且** 回写成功"达成；回写失败但审查已落库 → 单独 `writeback_failed` 字段 + 重试。
   （旧项目把"审查成功"和"推送成功"混成一个状态，导致推送失败也显示审查成功、且无法重试推送。）
+
+**`skipped` 分型 + 手动重试/补审（§7.7）**：`skipped` 有 `skip_reason ∈ {push_disabled, branch_mismatch,
+branch_deleted}`（删分支无 head 可审，天然不可补）。手动重试 `POST /tasks/{id}/retry` 放开为：
+`failed` 或 push 轨门控/配置类 `skipped`（可走前台「补审」）。push 任务重试会落 `force_rerun=true`，
+worker 消费时**绕过幂等预检（`push_existing_audit`）+ push 门控**强制执行该条再清除标记——这同时修掉
+push failed 重试因幂等预检短路而空转的问题。MR 轨 `failed` 重试维持原样（`REASON_ALREADY` 增量跳过除外）。
 
 ---
 
