@@ -54,6 +54,14 @@ export interface Notifier {
   at_threshold: number | null
 }
 
+export interface ForgeConfig {
+  provider: string
+  url: string
+  token: string
+  env_active: boolean
+  enabled: boolean
+}
+
 export interface ReviewFinding {
   id: number
   severity: string
@@ -145,6 +153,17 @@ export function deleteModel(id: number): Promise<any> {
 }
 export function testModel(id: number, prompt?: string): Promise<any> {
   return client.post(`/models/${id}/test`, { prompt }).then((r) => r.data)
+}
+
+// ===== 平台接入（GitHub/GitLab token+url）=====
+export function listForges(): Promise<ForgeConfig[]> {
+  return client.get('/forges').then((r) => r.data)
+}
+export function updateForge(provider: string, data: Partial<ForgeConfig>): Promise<ForgeConfig> {
+  return client.put(`/forges/${provider}`, data).then((r) => r.data)
+}
+export function testForge(provider: string, data?: { url?: string; token?: string }): Promise<{ ok: boolean }> {
+  return client.post(`/forges/${provider}/test`, data || {}).then((r) => r.data)
 }
 
 // ===== 通知渠道 =====

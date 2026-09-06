@@ -28,7 +28,7 @@ from codereview_ai.crypto import decrypt
 from codereview_ai.review.llm_gateway import LLMGateway
 from codereview_ai.review.reviewer import Reviewer
 from codereview_ai.storage.db import session_factory
-from codereview_ai.storage.models import ModelConfig, NotifierConfig
+from codereview_ai.storage.models import ForgeConfig, ModelConfig, NotifierConfig
 
 logger = logging.getLogger("codereview_ai.config_repository")
 
@@ -45,6 +45,12 @@ FORBIDDEN_OVERRIDE_WORDS = (
     "push_outputs",
     "prompt_fragments",
 )
+
+#: 平台默认 URL：env 配了 token 但没配 URL、或 DB 缺省时兜底（GitHub 公共托管 / GitLab 自托管示例）
+DEFAULT_FORGE_URLS: dict[str, str] = {
+    "github": "https://api.github.com",
+    "gitlab": "https://gitlab.com",
+}
 
 #: 项目可覆盖的分节 → 允许键白名单（DESIGN §16：同一张表驱动编辑与覆盖两处校验）。
 #: host-only 配置（密钥/URL/LLM 路由/通知签名）一律不在其列。
@@ -121,6 +127,16 @@ class NotifierRoute:
     at_threshold: int
 
 
+@dataclass
+class ResolvedForge:
+    """一个平台接入解析结果（url + 解密后 token）；source 标 env 或 DB。"""
+
+    provider: str
+    url: str
+    token: str
+    source: str = "db"
+
+
 class ConfigRepository:
     """把 DB 模型/通知配置解析成 worker 可直接使用的设施，带 TTL 缓存与 env 重放。"""
 
@@ -129,6 +145,7 @@ class ConfigRepository:
         self._enc = encryption_key if isinstance(encryption_key, str) else ""
         self._models: list[ModelConfig] = []
         self._notifiers: list[NotifierConfig] = []
+        self._forges: list[ForgeConfig] = []
         self._loaded_at: datetime | None = None
 
     # —— 缓存 & 拉取 ——
@@ -139,7 +156,7 @@ class ConfigRepository:
         return datetime.now(UTC) - self._loaded_at < timedelta(seconds=CACHE_TTL_SECONDS)
 
     async def _fetch(self) -> None:
-        """从 DB 拉取启用的模型/通知；成功才更新缓存与时间戳（transient 失败不缓存）。"""
+        """从 DB 拉取启用的模型/通知/平台；成功才更新缓存与时间戳（transient 失败不缓存）。"""
         session = session_factory(self._engine)
         async with session() as s:
             models = (await s.execute(
@@ -150,12 +167,18 @@ class ConfigRepository:
             notifiers = (await s.execute(
                 select(NotifierConfig).where(NotifierConfig.enabled.is_(True))
             )).scalars().all()
+            forges = (await s.execute(
+                select(ForgeConfig)
+                .where(ForgeConfig.enabled.is_(True))
+                .order_by(ForgeConfig.provider)
+            )).scalars().all()
         self._models = list(models)
         self._notifiers = list(notifiers)
+        self._forges = list(forges)
         self._loaded_at = datetime.now(UTC)
 
-    async def _ensure_loaded(self) -> None:
-        if self._fresh():
+    async def _ensure_loaded(self, *, force: bool = False) -> None:
+        if not force and self._fresh():
             return
         try:
             await self._fetch()
@@ -166,6 +189,7 @@ class ConfigRepository:
             logger.warning("DB 配置拉取失败且无缓存，按空配置降级: %s", exc)
             self._models = []
             self._notifiers = []
+            self._forges = []
             self._loaded_at = None  # 失败不置缓存时间戳
 
     # —— 解析 ——
@@ -203,6 +227,33 @@ class ConfigRepository:
                 at_threshold=n.at_threshold,
             ))
         return routes
+
+    async def resolve_forge(
+        self, provider: str, *, force: bool = False
+    ) -> ResolvedForge | None:
+        """返回一个平台的接入凭据；**env 优先、DB 兜底**（host env 压不住）。
+
+        与 `resolve_llm` 语义一致：env 显式配了 `CR_{PROVIDER}_TOKEN` → 用 env；
+        否则读 DB `forge_config` 该 provider 的启用行（token 解密）。`force=True`
+        清 TTL 强制重拉，供后台保存后热更。都无 token 返回 None（该平台不注册）。
+        """
+        key = provider.upper()
+        env_token = (os.environ.get(f"CR_{key}_TOKEN") or "").strip()
+        if env_token:
+            env_url = (os.environ.get(f"CR_{key}_URL") or "").strip()
+            return ResolvedForge(
+                provider,
+                env_url or DEFAULT_FORGE_URLS.get(provider, ""),
+                env_token,
+                source="env",
+            )
+        await self._ensure_loaded(force=force)
+        for f in self._forges:
+            if f.provider != provider:
+                continue
+            token = decrypt(f.token_encrypted, self._enc) if f.token_encrypted else ""
+            return ResolvedForge(provider, f.url or DEFAULT_FORGE_URLS.get(provider, ""), token)
+        return None
 
     # —— env 重放（只补缺失，绝不覆盖 host env）——
 

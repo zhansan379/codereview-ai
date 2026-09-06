@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from codereview_ai.config.repository import (
     CACHE_TTL_SECONDS,
+    DEFAULT_FORGE_URLS,
     FORBIDDEN_OVERRIDE_WORDS,
     ConfigRepository,
     is_overrideable,
@@ -22,7 +23,7 @@ from codereview_ai.config.repository import (
 from codereview_ai.crypto import encrypt
 from codereview_ai.review.reviewer import Reviewer
 from codereview_ai.storage.db import create_engine, init_db, session_factory
-from codereview_ai.storage.models import ModelConfig, NotifierConfig
+from codereview_ai.storage.models import ForgeConfig, ModelConfig, NotifierConfig
 
 
 def _fernet_key() -> str:
@@ -36,6 +37,17 @@ async def engine(tmp_path) -> AsyncEngine:
     await init_db(eng)
     yield eng
     await eng.dispose()
+
+
+async def _seed_forge(engine: AsyncEngine, **kw) -> int:
+    defaults = dict(provider="github", url="", token_encrypted="", enabled=True)
+    defaults.update(kw)
+    session = session_factory(engine)
+    async with session() as s:
+        row = ForgeConfig(**defaults)
+        s.add(row)
+        await s.commit()
+        return row.id
 
 
 async def _seed_model(engine: AsyncEngine, **kw) -> int:
@@ -230,3 +242,71 @@ async def test_apply_env_replay_fills_missing(engine, monkeypatch):
     applied = repo.apply_env_replay(llm)
     assert applied == ["deepseek_api_key"]
     assert __import__("os").environ["deepseek_api_key"] == "k-db"
+
+
+# ---------- resolve_forge（平台 token/url，env 优先、DB 兜底） ----------
+
+
+async def test_resolve_forge_env_overrides_db_with_default_url(engine, monkeypatch):
+    key = _fernet_key()
+    await _seed_forge(engine, provider="github", url="https://gh-enterprise.example",
+                      token_encrypted=encrypt("k-db", key))
+    monkeypatch.setenv("CR_GITHUB_TOKEN", "k-env")  # 只设 env token，未设 URL
+    repo = ConfigRepository(engine, encryption_key=key)
+    res = await repo.resolve_forge("github")
+    assert res is not None and res.source == "env"
+    assert res.token == "k-env"
+    assert res.url == DEFAULT_FORGE_URLS["github"]  # env 无 URL → 默认兜底
+
+
+async def test_resolve_forge_env_url_used(engine, monkeypatch):
+    repo = ConfigRepository(engine, encryption_key=_fernet_key())
+    monkeypatch.setenv("CR_GITLAB_URL", "https://gl.selfhost.example")
+    monkeypatch.setenv("CR_GITLAB_TOKEN", "t")
+    res = await repo.resolve_forge("gitlab")
+    assert res is not None and res.url == "https://gl.selfhost.example" and res.token == "t"
+
+
+async def test_resolve_forge_db_fallback_decrypt(engine, monkeypatch):
+    key = _fernet_key()
+    await _seed_forge(engine, provider="gitlab", url="https://gl.selfhost.example",
+                      token_encrypted=encrypt("k-db", key))
+    monkeypatch.delenv("CR_GITLAB_TOKEN", raising=False)
+    repo = ConfigRepository(engine, encryption_key=key)
+    res = await repo.resolve_forge("gitlab")
+    assert res is not None and res.source == "db"
+    assert res.url == "https://gl.selfhost.example" and res.token == "k-db"
+
+
+async def test_resolve_forge_db_empty_url_falls_back_default(engine, monkeypatch):
+    key = _fernet_key()
+    await _seed_forge(engine, provider="github", url="", token_encrypted=encrypt("t", key))
+    monkeypatch.delenv("CR_GITHUB_TOKEN", raising=False)
+    repo = ConfigRepository(engine, encryption_key=key)
+    res = await repo.resolve_forge("github")
+    assert res is not None and res.url == DEFAULT_FORGE_URLS["github"]
+
+
+async def test_resolve_forge_none_when_unconfigured(engine, monkeypatch):
+    monkeypatch.delenv("CR_GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("CR_GITHUB_URL", raising=False)
+    repo = ConfigRepository(engine, encryption_key=_fernet_key())
+    assert await repo.resolve_forge("github") is None
+
+
+async def test_resolve_forge_force_hot_reload(engine, monkeypatch):
+    """保存后 force=True 立即读到新 DB 值（热更路径），TTL 缓存被绕过。"""
+    key = _fernet_key()
+    monkeypatch.delenv("CR_GITHUB_TOKEN", raising=False)
+    await _seed_forge(engine, provider="github", url="", token_encrypted=encrypt("v1", key))
+    repo = ConfigRepository(engine, encryption_key=key)
+    assert (await repo.resolve_forge("github")).token == "v1"
+
+    # DB 更新成 v2；TTL 未到期（不传 force 应命中旧缓存）
+    session = session_factory(engine)
+    async with session() as s:
+        row = (await s.execute(select(ForgeConfig))).scalars().one()
+        row.token_encrypted = encrypt("v2", key)
+        await s.commit()
+    assert (await repo.resolve_forge("github")).token == "v1"  # TTL 缓存命中
+    assert (await repo.resolve_forge("github", force=True)).token == "v2"  # force 吃到新值

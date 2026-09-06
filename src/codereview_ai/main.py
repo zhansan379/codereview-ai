@@ -19,13 +19,13 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI
 
-from codereview_ai.api.admin import models, notifiers, projects, reviews, stats, tasks
+from codereview_ai.api.admin import forges, models, notifiers, projects, reviews, stats, tasks
 from codereview_ai.api.admin_ui import mount_admin
 from codereview_ai.api.auth import router as auth_router
 from codereview_ai.api.webhook import router as webhook_router
 from codereview_ai.config import Settings
 from codereview_ai.config.repository import ConfigRepository
-from codereview_ai.forges.registry import build_adapter, registered_providers
+from codereview_ai.forges.registry import ForgeRegistry
 from codereview_ai.logging import setup_logging
 from codereview_ai.notifiers.dispatch import NotifierDispatcher
 from codereview_ai.ops.health import router as health_router
@@ -77,10 +77,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # —— DB 驱动配置（DESIGN §16）：LLM 模型/api_key 从 DB 解析，env 重放压 DB
         provider_repo = ConfigRepository(engine, encryption_key=settings.encryption_key)
         reviewer = await provider_repo.build_reviewer()
-        providers = registered_providers(settings)
-        if providers and reviewer is not None:
-            http = httpx.AsyncClient(timeout=settings.request_timeout_seconds)
-            adapters = {p: build_adapter(p, settings, http) for p in providers}
+        app.state.config_repository = provider_repo
+        # —— 平台适配器：DB/env 解析 + 保存后热更（ForgeRegistry）——
+        http = httpx.AsyncClient(timeout=settings.request_timeout_seconds)
+        forge_registry = ForgeRegistry(provider_repo, http)
+        await forge_registry.refresh_all()
+        app.state.forge_registry = forge_registry
+        if reviewer is not None and forge_registry.available():
             review_repo = ReviewRepository(engine)
             # F4/M4.7：路由从 DB notifier_config 拉取（project_id=None→仅全局默认）
             notifier = NotifierDispatcher(provider_repo.notifier_routes, http=http)
@@ -93,7 +96,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ws = Path(settings.static_workspace_dir) if settings.static_workspace_dir else None
             static_analyzer = StaticAnalyzer(enabled=settings.review_static_enabled, workspace=ws)
             processor = make_processor(
-                lambda p: adapters.get(p), lambda _: reviewer, store, review_repo=review_repo,
+                lambda p: forge_registry.get(p), lambda _: reviewer, store, review_repo=review_repo,
                 notifier=notifier, push_gate=push_gate, static_analyzer=static_analyzer,
             )
             worker_task = asyncio.create_task(run_worker(queue, processor))
@@ -106,14 +109,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             daily_task = asyncio.create_task(reporter.run_forever(stop_daily))
             logger.info(
                 "内置 worker 已启动：%s（model %s）",
-                ",".join(providers),
+                ",".join(forge_registry.providers()),
                 reviewer.gateway.model,
             )
-            app.state.config_repository = provider_repo
         else:
             logger.warning(
-                "未配置平台 token（CR_GITLAB_TOKEN/CR_GITHUB_TOKEN）或可用 LLM 模型"
-                "（env CR_LLM_MODEL / DB model_config），webhook 仍可入队但无 worker 消费"
+                "未配置可用 LLM 模型（env CR_LLM_MODEL / DB model_config）或可用平台"
+                "（env CR_GITHUB_TOKEN/CR_GITLAB_TOKEN 或设置页 DB），webhook 仍可入队但无 worker"
             )
 
         try:
@@ -147,6 +149,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(projects.router, prefix="/api")
     app.include_router(models.router, prefix="/api")
     app.include_router(notifiers.router, prefix="/api")
+    app.include_router(forges.router, prefix="/api")
     app.include_router(reviews.router, prefix="/api")
     app.include_router(tasks.router, prefix="/api")
     app.include_router(stats.router, prefix="/api")

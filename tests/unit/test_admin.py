@@ -12,12 +12,13 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from codereview_ai.api.admin import models as admin_models
+from codereview_ai.api.admin import forges, models as admin_models
 from codereview_ai.api.admin import notifiers, projects, reviews, tasks
 from codereview_ai.api.auth import issue_token
 from codereview_ai.api.auth import router as auth_router
+from codereview_ai.config.repository import ConfigRepository
 from codereview_ai.storage.db import create_engine, init_db, session_factory
-from codereview_ai.storage.models import ModelConfig, ReviewFinding, ReviewTask
+from codereview_ai.storage.models import ForgeConfig, ModelConfig, ReviewFinding, ReviewTask
 
 
 def _fernet_key() -> str:
@@ -35,10 +36,13 @@ async def app(tmp_path) -> AsyncIterator[tuple[FastAPI, str]]:
     fast = FastAPI()
     fast.state.engine = engine
     fast.state.settings = settings
+    fast.state.config_repository = ConfigRepository(engine, encryption_key=_fernet_key())
+    fast.state.forge_registry = None  # 单测不启动 worker；热更分支被跳过
     fast.include_router(auth_router, prefix="/api")
     fast.include_router(projects.router, prefix="/api")
     fast.include_router(admin_models.router, prefix="/api")
     fast.include_router(notifiers.router, prefix="/api")
+    fast.include_router(forges.router, prefix="/api")
     fast.include_router(reviews.router, prefix="/api")
     fast.include_router(tasks.router, prefix="/api")
 
@@ -245,3 +249,90 @@ def test_tasks_list_and_retry(app):
         done_id = c.get("/api/tasks?state=completed").json()[0]["id"]
         assert c.post(f"/api/tasks/{done_id}/retry").status_code == 409
         assert c.post("/api/tasks/9999/retry").status_code == 404
+
+
+def test_forges_list_synthesizes_defaults(app, monkeypatch):
+    fast, token = app
+    monkeypatch.delenv("CR_GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("CR_GITLAB_TOKEN", raising=False)
+    with _client(fast, token) as c:
+        rows = c.get("/api/forges").json()
+        assert {r["provider"] for r in rows} == {"github", "gitlab"}
+        # 未配置：URL 回退默认、token 空、env_active False
+        gh = next(r for r in rows if r["provider"] == "github")
+        assert gh["url"] == "https://api.github.com" and gh["token"] == ""
+        assert gh["env_active"] is False
+
+
+def test_forges_upsert_encrypts_and_masks(app, monkeypatch):
+    fast, token = app
+    monkeypatch.delenv("CR_GITHUB_TOKEN", raising=False)
+    with _client(fast, token) as c:
+        r = c.put("/api/forges/github", json={"url": "https://gh.example", "token": "gh-secret-abc", "enabled": True})
+        assert r.status_code == 200, r.text
+        assert r.json()["token"] == "******"
+        assert r.json()["url"] == "https://gh.example"
+
+        # 落库密文，明文不出现
+        found: list[ForgeConfig] = []
+
+        async def _fetch() -> None:
+            from sqlalchemy import select
+
+            session = session_factory(fast.state.engine)
+            async with session() as s:
+                found.append((await s.execute(select(ForgeConfig))).scalar_one())
+
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(_fetch())
+        row = found[0]
+        assert row.token_encrypted not in ("", "gh-secret-abc")
+        from codereview_ai.crypto import decrypt
+
+        assert decrypt(row.token_encrypted, _fernet_key()) == "gh-secret-abc"
+
+        # 掩码提交 → 保留原密文；新明文 → 重加密
+        c.put("/api/forges/github", json={"url": "https://gh.example", "token": "******", "enabled": True})
+        c.put("/api/forges/github", json={"url": "https://gh.example", "token": "gh-new-xyz", "enabled": True})
+
+        async def _last() -> None:
+            nonlocal row
+            from sqlalchemy import select
+
+            async with session_factory(fast.state.engine)() as s:
+                row = (await s.execute(select(ForgeConfig))).scalar_one()
+
+        asyncio.get_event_loop().run_until_complete(_last())
+        assert decrypt(row.token_encrypted, _fernet_key()) == "gh-new-xyz"
+
+
+def test_forges_probe_zero_network_via_injected_probe(app, monkeypatch):
+    fast, token = app
+    monkeypatch.delenv("CR_GITHUB_TOKEN", raising=False)
+    with _client(fast, token) as c:
+        c.put("/api/forges/github", json={"url": "https://gh.example", "token": "tok", "enabled": True})
+
+        captured: dict = {}
+
+        async def fake_probe(provider, url, token):
+            captured.update(provider=provider, url=url, token=token)
+            return True
+
+        monkeypatch.setattr(forges, "probe_forge", fake_probe)
+        r = c.post("/api/forges/github/test", json={})
+        assert r.status_code == 200, r.text
+        assert captured == {"provider": "github", "url": "https://gh.example", "token": "tok"}
+
+        async def fail_probe(provider, url, token):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(forges, "probe_forge", fail_probe)
+        assert c.post("/api/forges/github/test", json={}).status_code == 502
+
+
+def test_forges_probe_invalid_provider_404(app):
+    fast, token = app
+    with _client(fast, token) as c:
+        assert c.put("/api/forges/gitee", json={"url": "u", "token": "t"}).status_code == 404
+        assert c.post("/api/forges/gitee/test", json={}).status_code == 404
