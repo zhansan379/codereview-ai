@@ -23,3 +23,9 @@ Thumbs.db
 data/
 *.db
 *.sqlite
+
+# Coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
