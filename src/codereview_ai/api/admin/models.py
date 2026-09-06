@@ -6,7 +6,6 @@ api_key 写路径加密落库（`api_key_encrypted`），读路径统一回显 `
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -148,43 +147,13 @@ async def probe_model(cfg: ModelConfig, prompt: str, *, encryption_key: str) -> 
     if not cfg.api_key_encrypted:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "该模型未配置 api_key，无法探测")
     api_key = decrypt(cfg.api_key_encrypted, encryption_key)
-    kv: dict[str, str] = {}
-    if cfg.provider:
-        kv[f"{cfg.provider}_api_key"] = api_key
-    if cfg.base_url:
-        kv["api_base"] = cfg.base_url
-    with patch_env(kv):
-        gateway = LLMGateway(model=cfg.model or cfg.name)
-        text = await gateway.complete([{"role": "user", "content": prompt}])
+    gateway = LLMGateway(
+        model=cfg.model or cfg.name,
+        api_key=api_key,
+        base_url=cfg.base_url or None,
+    )
+    text = await gateway.complete([{"role": "user", "content": prompt}])
     return bool(text.strip())
-
-
-@contextmanager
-def patch_env(kv: dict[str, str], env: dict[str, str] | None = None) -> Any:
-    """临时写入 LLM 客户端依赖的 env 配置，块结束还原。env 缺失时透传现环境。"""
-    import os
-
-    saved: dict[str, str | None] = {}
-    for key, value in kv.items():
-        saved[key] = env.get(key) if env is not None else os.environ.get(key)
-        if env is not None:
-            env[key] = value
-        else:
-            os.environ[key] = value
-    try:
-        yield
-    finally:
-        for key, old in saved.items():
-            if env is not None:
-                if old is None:
-                    env.pop(key, None)
-                else:
-                    env[key] = old
-            else:
-                if old is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = old
 
 
 @router.post("/{model_id}/test", response_model=dict[str, Any])

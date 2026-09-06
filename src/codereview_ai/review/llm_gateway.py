@@ -38,9 +38,13 @@ class LLMGateway:
         model: str,
         backend: Backend | None = None,
         json_object: bool = False,
+        api_key: str | None = None,
+        base_url: str | None = None,
     ) -> None:
         self.model = model
         self.json_object = json_object
+        self.api_key = api_key
+        self.base_url = base_url
         self._backend = backend or self._litellm_backend
 
     async def complete(self, messages: list[dict[str, Any]]) -> str:
@@ -63,6 +67,10 @@ class LLMGateway:
         kwargs: dict[str, Any] = {"model": self.model, "messages": messages}
         if self.json_object:
             kwargs["response_format"] = {"type": "json_object"}
+        if self.api_key:  # 显式传 key，绕开 env 大小写；不设则让 litellm 走 OPENAI_API_KEY 等
+            kwargs["api_key"] = self.api_key
+        if self.base_url:
+            kwargs["base_url"] = self.base_url
         resp = await litellm.acompletion(**kwargs)
         content = resp.choices[0].message.content
         return content or ""

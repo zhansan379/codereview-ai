@@ -33,6 +33,24 @@
         <el-form-item label="名称" required>
           <el-input v-model="form.name" />
         </el-form-item>
+        <el-form-item label="预设提供商">
+          <el-select
+            v-model="presetKey"
+            placeholder="选择常见提供商自动填充，或用「自定义」手动填写"
+            style="width: 100%"
+            clearable
+            @change="applyPreset"
+          >
+            <el-option-group label="主流云厂商">
+              <el-option v-for="p in cloudPresets" :key="p.key" :label="p.label" :value="p.key" />
+            </el-option-group>
+            <el-option-group label="自托管 / 本地">
+              <el-option v-for="p in localPresets" :key="p.key" :label="p.label" :value="p.key" />
+            </el-option-group>
+            <el-option label="自定义（手动填写）" value="custom" />
+          </el-select>
+          <div class="form-tip">选中预设会填入平台 / 模型 / Base URL，可再手动微调；API Key 仍需自行填写。</div>
+        </el-form-item>
         <el-form-item label="平台" required>
           <el-input v-model="form.provider" placeholder="如 openai / deepseek" />
         </el-form-item>
@@ -93,6 +111,52 @@ const editingId = ref<number | null>(null)
 
 const REDACTED = '******'
 
+// 常见模型提供商预设：选中后自动填 provider / model / base_url。
+// model 用 LiteLLM 的「provider/model」复合名（DESIGN §2）；本地/自托管带默认 Base URL。
+interface ProviderPreset {
+  key: string
+  label: string
+  provider: string
+  model: string
+  baseUrl: string
+}
+
+const cloudPresets: ProviderPreset[] = [
+  { key: 'openai', label: 'OpenAI', provider: 'openai', model: 'openai/gpt-4o-mini', baseUrl: '' },
+  { key: 'anthropic', label: 'Anthropic Claude', provider: 'anthropic', model: 'anthropic/claude-sonnet-4-5', baseUrl: '' },  // prettier-ignore
+  { key: 'deepseek', label: 'DeepSeek', provider: 'deepseek', model: 'deepseek/deepseek-chat', baseUrl: '' },
+  { key: 'qwen', label: '阿里云百炼 Qwen', provider: 'openai', model: 'openai/qwen-plus', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  { key: 'zhipu', label: '智谱 GLM', provider: 'openai', model: 'openai/glm-4-plus', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
+  { key: 'moonshot', label: 'Moonshot（Kimi）', provider: 'openai', model: 'openai/moonshot-v1-8k', baseUrl: 'https://api.moonshot.cn/v1' },
+]
+
+const localPresets: ProviderPreset[] = [
+  { key: 'ollama', label: 'Ollama', provider: 'ollama', model: 'ollama/llama3', baseUrl: 'http://localhost:11434' },
+  { key: 'vllm', label: 'vLLM', provider: 'openai', model: 'openai/<模型ID>', baseUrl: 'http://localhost:8000/v1' },
+  { key: 'lmstudio', label: 'LM Studio', provider: 'openai', model: 'openai/<模型名>', baseUrl: 'http://localhost:1234/v1' },
+]
+
+const allPresets = [...cloudPresets, ...localPresets]
+
+// 表单里选中的预设 key；自定义则置空，不改动表单
+const presetKey = ref<string>('')
+
+function applyPreset() {
+  const key = presetKey.value
+  if (!key || key === 'custom') {
+    if (key === 'custom') {
+      presetKey.value = ''
+      ElMessage.info('请手动填写平台 / 模型 / Base URL')
+    }
+    return
+  }
+  const p = allPresets.find((x) => x.key === key)
+  if (!p) return
+  form.provider = p.provider
+  form.model = p.model
+  form.base_url = p.baseUrl
+}
+
 const emptyForm = () => ({
   name: '',
   provider: '',
@@ -119,12 +183,14 @@ async function load() {
 function openCreate() {
   isEdit.value = false
   editingId.value = null
+  presetKey.value = ''
   Object.assign(form, emptyForm())
   dialogVisible.value = true
 }
 function openEdit(row: ModelItem) {
   isEdit.value = true
   editingId.value = row.id
+  presetKey.value = ''
   Object.assign(form, {
     name: row.name,
     provider: row.provider,

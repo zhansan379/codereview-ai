@@ -46,6 +46,40 @@ def test_gateway_complete_returns_text_from_fake_backend():
     assert text == '{"ok": true}'
 
 
+def test_gateway_litellm_backend_forwards_api_key_and_base_url(monkeypatch):
+    """默认 litellm backend 应把显式的 api_key/base_url 透传给 acompletion（绕开 env 大小写）。"""
+    import asyncio
+
+    captured: dict = {}
+
+    class _Msg:
+        content = "hi"
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    async def fake_acompletion(**kwargs):
+        captured.update(kwargs)
+        return _Resp()
+
+    monkeypatch.setattr("litellm.acompletion", fake_acompletion)
+    gw = LLMGateway(
+        model="openai/gpt-4o-mini",
+        api_key="sk-secret-abc",
+        base_url="https://example.com/v1",
+    )
+
+    async def run():
+        return await gw.complete([{"role": "user", "content": "ping"}])
+
+    assert asyncio.run(run()) == "hi"
+    assert captured["api_key"] == "sk-secret-abc"
+    assert captured["base_url"] == "https://example.com/v1"
+
+
 def test_gateway_wraps_transport_failure_into_llm_error():
     async def boom(messages):
         raise TimeoutError("net down")
