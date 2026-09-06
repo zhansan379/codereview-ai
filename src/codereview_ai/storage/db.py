@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
@@ -25,11 +26,36 @@ def _is_sqlite(url: str) -> bool:
     return any(url.startswith(p) for p in SQLITE_URL_PREFIXES)
 
 
-def create_engine(database_url: str) -> AsyncEngine:
-    """按 URL 建 async engine；SQLite 自动加固。"""
-    engine = create_async_engine(database_url, pool_pre_ping=True)
+def ensure_async_url(url: str) -> str:
+    """把文档里简写的同步 DSN 翻译成 async dialect（DESIGN §8.2 默认 `sqlite:///...`）。"""
+    if url.startswith("sqlite://"):
+        return "sqlite+aiosqlite" + url[len("sqlite"):]
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg" + url[len("postgresql"):]
+    return url
 
-    if _is_sqlite(database_url):
+
+def _ensure_sqlite_dir(url: str) -> None:
+    """文件型 SQLite（非 :memory:）自动创建父目录，避免 `unable to open database file`。"""
+    if ":memory:" in url:
+        return
+    rest = url.split("///", 1)[-1]
+    if "?" in rest:
+        rest = rest.split("?", 1)[0]
+    if not rest:
+        return
+    parent = Path(rest).resolve().parent
+    parent.mkdir(parents=True, exist_ok=True)
+
+
+def create_engine(database_url: str) -> AsyncEngine:
+    """按 URL 建 async engine；SQLite 自动加固 + 自动建父目录。"""
+    url = ensure_async_url(database_url)
+    if _is_sqlite(url):
+        _ensure_sqlite_dir(url)
+    engine = create_async_engine(url, pool_pre_ping=True)
+
+    if _is_sqlite(url):
 
         @event.listens_for(engine.sync_engine, "connect")
         def _set_sqlite_pragma(dbapi_connection, connection_record) -> None:  # type: ignore[no-untyped-def]

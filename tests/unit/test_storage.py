@@ -7,8 +7,14 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from codereview_ai.storage.db import create_engine, init_db, session_factory
+from codereview_ai.storage.db import create_engine, ensure_async_url, init_db, session_factory
 from codereview_ai.storage.models import ReviewTask
+
+
+def test_ensure_async_url_translates_dialects():
+    assert ensure_async_url("sqlite:///./data/app.db") == "sqlite+aiosqlite:///./data/app.db"
+    assert ensure_async_url("postgresql://u:p@h/db") == "postgresql+asyncpg://u:p@h/db"
+    assert ensure_async_url("sqlite+aiosqlite:///:memory:") == "sqlite+aiosqlite:///:memory:"
 
 
 @pytest.fixture
