@@ -65,6 +65,23 @@ curl http://localhost:5001/health   # → 200 即就绪
 密钥可复用生成命令：`python -c 'import secrets;print(secrets.token_urlsafe(48))'`（SECRET_KEY/WEBHOOK_SECRET）、
 `python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())'`（ENCRYPTION_KEY）。
 
+### 这 4 枚密钥是啥？（大白话）
+
+它们**不是**哪家平台（GitLab/GitHub/AI 服务商）给你的密码，而是**本系统自己家门的三把锁加一把钥匙**，都是你自己生成的随机串。缺了系统直接不启动（fail-fast），宁可不开机也不带病运行。
+
+| 密钥 | 打个比方 | 真正干啥 |
+|---|---|---|
+| `CR_SECRET_KEY` | **门锁** | 给 webhook 和登录做签名、生成后台会话凭证 |
+| `CR_WEBHOOK_SECRET` | **验门铃** | 收到 webhook 事件先验真伪：GitLab 当 `Secret token`、GitHub 做 HMAC 指纹。**伪造签名 → 401 直接拒** |
+| `CR_ENCRYPTION_KEY` | **保险柜钥匙** | 把存进数据库的 api_key / IM token 用 Fernet 加密，平时读出来全是 `******` |
+| `CR_ADMIN_PASSWORD` | **后台开门密码** | 管理员登录 Vue 后台用 |
+
+> ⚠️ **`CR_ENCRYPTION_KEY` 最特殊**：必须是 `Fernet.generate_key()` 生成的 **base64 串**，
+> 不能用 `token_urlsafe` 的串，否则 `Fernet(key)` 会校验失败拒绝启动。
+
+> 顺手提醒：改了 `CR_WEBHOOK_SECRET`，记得去 GitLab/GitHub 那边把 webhook 的密钥也改成一样，
+> 两边对不上就 401 收不到事件。
+
 ## 开发 / 验证（离线）
 
 ```bash
