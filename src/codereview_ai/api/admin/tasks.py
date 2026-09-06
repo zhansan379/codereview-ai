@@ -6,16 +6,19 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from codereview_ai.api.deps import get_current_user, get_db
-from codereview_ai.storage.models import ReviewTask
+from codereview_ai.storage.models import ReviewTask, _utcnow
+
+logger = logging.getLogger("codereview_ai.api.tasks")
 
 router = APIRouter(prefix="/tasks", dependencies=[Depends(get_current_user)])
 
@@ -61,13 +64,24 @@ async def list_tasks(
 
 
 @router.post("/{task_id}/retry", response_model=TaskRetried)
-async def retry_task(task_id: int, session: AsyncSession = Depends(get_db)) -> TaskRetried:
+async def retry_task(
+    task_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+) -> TaskRetried:
     row = await _get_or_404(session, task_id)
     if row.state != "failed":
         raise HTTPException(status.HTTP_409_CONFLICT, f"仅 failed 状态可重试（当前 {row.state}）")
     row.state = "queued"
     row.attempt += 1
     row.error = ""
+    row.queued_at = _utcnow()
     await session.commit()
     await session.refresh(row)
+    # simple 档队列：仅翻 DB 侧 queued 不会让内存 worker 重新拾取。持原事件且
+    # enqueuer 就绪时把任务重新投进队列，worker 才会真去跑；否则退化为只记状态翻转。
+    enqueuer = getattr(request.app.state, "enqueuer", None)
+    if enqueuer is not None and row.payload:
+        await enqueuer.enqueue(row.provider, row.payload.encode())
+        logger.info("重试任务 %s：已重新入队（provider=%s）", row.id, row.provider)
     return TaskRetried(id=row.id, state=row.state, attempt=row.attempt)
