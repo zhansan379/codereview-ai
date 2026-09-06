@@ -19,7 +19,7 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI
 
-from codereview_ai.api.admin import models, notifiers, projects, reviews, tasks
+from codereview_ai.api.admin import models, notifiers, projects, reviews, stats, tasks
 from codereview_ai.api.admin_ui import mount_admin
 from codereview_ai.api.auth import router as auth_router
 from codereview_ai.api.webhook import router as webhook_router
@@ -137,6 +137,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(notifiers.router, prefix="/api")
     app.include_router(reviews.router, prefix="/api")
     app.include_router(tasks.router, prefix="/api")
+    app.include_router(stats.router, prefix="/api")
     app.include_router(webhook_router)
     return app
 
