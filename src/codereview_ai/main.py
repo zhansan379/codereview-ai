@@ -17,8 +17,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 
-from codereview_ai.api.admin import models as admin_models
-from codereview_ai.api.admin import projects as admin_projects
+from codereview_ai.api.admin import models, notifiers, projects, reviews, tasks
 from codereview_ai.api.auth import router as auth_router
 from codereview_ai.api.webhook import router as webhook_router
 from codereview_ai.config import Settings
@@ -95,8 +94,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(TraceMiddleware)
     app.include_router(health_router)
     app.include_router(auth_router, prefix="/api")
-    app.include_router(admin_projects.router, prefix="/api")
-    app.include_router(admin_models.router, prefix="/api")
+    app.include_router(projects.router, prefix="/api")
+    app.include_router(models.router, prefix="/api")
+    app.include_router(notifiers.router, prefix="/api")
+    app.include_router(reviews.router, prefix="/api")
+    app.include_router(tasks.router, prefix="/api")
     app.include_router(webhook_router)
     return app
 

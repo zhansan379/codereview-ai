@@ -13,11 +13,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from codereview_ai.api.admin import models as admin_models
-from codereview_ai.api.admin import projects as admin_projects
+from codereview_ai.api.admin import notifiers, projects, reviews, tasks
 from codereview_ai.api.auth import issue_token
 from codereview_ai.api.auth import router as auth_router
 from codereview_ai.storage.db import create_engine, init_db, session_factory
-from codereview_ai.storage.models import ModelConfig
+from codereview_ai.storage.models import ModelConfig, ReviewFinding, ReviewTask
 
 
 def _fernet_key() -> str:
@@ -36,8 +36,11 @@ async def app(tmp_path) -> AsyncIterator[tuple[FastAPI, str]]:
     fast.state.engine = engine
     fast.state.settings = settings
     fast.include_router(auth_router, prefix="/api")
-    fast.include_router(admin_projects.router, prefix="/api")
+    fast.include_router(projects.router, prefix="/api")
     fast.include_router(admin_models.router, prefix="/api")
+    fast.include_router(notifiers.router, prefix="/api")
+    fast.include_router(reviews.router, prefix="/api")
+    fast.include_router(tasks.router, prefix="/api")
 
     token = issue_token(settings.secret_key)
     try:
@@ -154,3 +157,91 @@ def test_models_missing_api_key_400_on_create(app):
             "name": "bad", "provider": "x", "model": "x", "api_key": "******",
         })
         assert r.status_code == 400
+
+
+def test_notifiers_crud_and_masking(app):
+    fast, token = app
+    with _client(fast, token) as c:
+        r = c.post("/api/notifiers", json={
+            "channel": "dingtalk", "webhook": "https://oapi.dingtalk.com/robot/send?access_token=abc",
+            "secret": "SECsecret", "project_id": None, "at_threshold": 60,
+        })
+        assert r.status_code == 201, r.text
+        nid = r.json()["id"]
+        assert r.json()["webhook"] == "******" and r.json()["secret"] == "******"
+        assert r.json()["channel"] == "dingtalk" and r.json()["project_id"] is None
+
+        upd = c.put(f"/api/notifiers/{nid}", json={
+            "channel": "dingtalk", "webhook": "******", "secret": "******",
+            "project_id": 3, "at_threshold": 80,
+        }).json()
+        assert upd["project_id"] == 3 and upd["at_threshold"] == 80
+
+        assert c.get("/api/notifiers").json()[0]["webhook"] == "******"
+        assert c.delete(f"/api/notifiers/{nid}").status_code == 204
+        assert c.delete(f"/api/notifiers/{nid}").status_code == 404
+
+
+def test_reviews_list_pagination_and_detail(app):
+    fast, token = app
+
+    async def _seed() -> None:
+        session = session_factory(fast.state.engine)
+        async with session() as s:
+            t1 = ReviewTask(provider="gitlab", repo_id="1", pr_number=1, event_type="mr",
+                            branch="main", head_sha="aaa", state="completed", score_total=80,
+                            summary_md="# ok")
+            t2 = ReviewTask(provider="gitlab", repo_id="1", pr_number=2, event_type="mr",
+                            branch="main", head_sha="bbb", state="failed", error="boom")
+            s.add_all([t1, t2])
+            await s.flush()
+            s.add(ReviewFinding(task_id=t1.id, fingerprint="h", severity="high",
+                                category="bug", file="a.py", title="t"))
+            await s.commit()
+
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(_seed())
+
+    with _client(fast, token) as c:
+        page = c.get("/api/reviews?state=completed&limit=10").json()
+        assert page["total"] == 1 and len(page["items"]) == 1
+        assert page["items"][0]["score_total"] == 80
+
+        all_page = c.get("/api/reviews?limit=1").json()
+        assert all_page["total"] == 2 and len(all_page["items"]) == 1
+
+        detail = c.get("/api/reviews/1").json()
+        assert detail["state"] == "completed"
+        assert len(detail["findings"]) == 1 and detail["findings"][0]["severity"] == "high"
+
+        assert c.get("/api/reviews/999").status_code == 404
+
+
+def test_tasks_list_and_retry(app):
+    fast, token = app
+
+    async def _seed() -> None:
+        session = session_factory(fast.state.engine)
+        async with session() as s:
+            s.add(ReviewTask(provider="gitlab", repo_id="1", pr_number=9, event_type="mr",
+                             branch="main", head_sha="abc", state="failed", attempt=1,
+                             error="timeout"))
+            s.add(ReviewTask(provider="gitlab", repo_id="1", pr_number=8, event_type="mr",
+                             branch="main", head_sha="def", state="completed"))
+            await s.commit()
+
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(_seed())
+
+    with _client(fast, token) as c:
+        failed = c.get("/api/tasks?state=failed").json()
+        assert len(failed) == 1 and failed[0]["attempt"] == 1
+
+        tid = failed[0]["id"]
+        retried = c.post(f"/api/tasks/{tid}/retry").json()
+        assert retried["state"] == "queued" and retried["attempt"] == 2
+
+        # 已完成任务不能重试 → 409
+        done_id = c.get("/api/tasks?state=completed").json()[0]["id"]
+        assert c.post(f"/api/tasks/{done_id}/retry").status_code == 409
+        assert c.post("/api/tasks/9999/retry").status_code == 404

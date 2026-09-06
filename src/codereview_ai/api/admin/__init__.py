@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from codereview_ai.api.admin import models, projects
+from codereview_ai.api.admin import models, notifiers, projects, reviews, tasks
 
-__all__ = ["models", "projects"]
+__all__ = ["models", "notifiers", "projects", "reviews", "tasks"]
