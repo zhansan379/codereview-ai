@@ -16,6 +16,7 @@ dependencies = [
     "orjson>=3.12",
     "cryptography>=42",
     "prometheus-client>=0.20",
+    "aiosqlite>=0.20",
 ]
 
 [dependency-groups]
