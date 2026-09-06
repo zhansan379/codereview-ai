@@ -106,6 +106,31 @@ class NotifierDispatcher:
         """fire-and-forget：后台任务推送，异常仅记录，不阻碍/不拖慢审查主链（F4.4）。"""
         return asyncio.create_task(self._guarded(pr, result, project_id))
 
+    async def send_markdown(
+        self, title: str, markdown: str, *, project_id: int | None = None,
+    ) -> int:
+        """推一条**纯文本/markdown**到匹配路由（日报等无 PR 上下文的推送）。
+
+        复用同一套渠道 sink 与指数退避重试；失败只记日志不抛出（M5.7 日报不炸进程）。
+        `score=None` → 不触发 @阈值门控（@ 仅适用于审查结果）。
+        """
+        msg = ReviewNotification(
+            project_name="代码审查日报", title=title, score=None,
+            summary_md=markdown, url="",
+        )
+        routes = await self._routes(project_id)
+        sent = 0
+        for route in routes:
+            sink = build_notifier(route, http=self._http)
+            if sink is None:
+                continue
+            try:
+                await self._send_with_retry(sink, msg)
+                sent += 1
+            except Exception as exc:  # noqa: BLE001  单渠道失败不炸流程
+                logger.error("渠道 %s 推送日报失败: %s", route.channel, exc, exc_info=True)
+        return sent
+
     async def _guarded(
         self, pr: PullRequest, result: ReviewResult, project_id: int | None
     ) -> None:

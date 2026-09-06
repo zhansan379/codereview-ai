@@ -29,6 +29,7 @@ from codereview_ai.forges.registry import build_adapter, registered_providers
 from codereview_ai.logging import setup_logging
 from codereview_ai.notifiers.dispatch import NotifierDispatcher
 from codereview_ai.ops.health import router as health_router
+from codereview_ai.ops.periodic import DailyReporter
 from codereview_ai.ops.tracing import TraceMiddleware
 from codereview_ai.queue.asyncio import AsyncioTaskQueue
 from codereview_ai.queue.worker import run_worker
@@ -69,6 +70,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.queue = queue
         app.state.enqueuer = QueueEnqueuer(queue, store)
         worker_task: asyncio.Task[None] | None = None
+        daily_task: asyncio.Task[None] | None = None
+        stop_daily = asyncio.Event()
         http: httpx.AsyncClient | None = None
 
         # —— DB 驱动配置（DESIGN §16）：LLM 模型/api_key 从 DB 解析，env 重放压 DB
@@ -94,6 +97,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 notifier=notifier, push_gate=push_gate, static_analyzer=static_analyzer,
             )
             worker_task = asyncio.create_task(run_worker(queue, processor))
+            # M5.7 日报调度：随 worker 生命周期启动/清理（hour 由 CR_DAILY_HOUR 配置）
+            reporter = DailyReporter(
+                engine, notifier,
+                hour=settings.daily_report_hour,
+                enabled=settings.daily_report_enabled,
+            )
+            daily_task = asyncio.create_task(reporter.run_forever(stop_daily))
             logger.info(
                 "内置 worker 已启动：%s（model %s）",
                 ",".join(providers),
@@ -109,12 +119,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
-            if worker_task is not None:
-                worker_task.cancel()
-                try:
-                    await worker_task
-                except asyncio.CancelledError:
-                    pass
+            stop_daily.set()  # 先唤醒日报循环退出，再取消任务
+            for t in (daily_task, worker_task):
+                if t is not None:
+                    t.cancel()
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
             if http is not None:
                 await http.aclose()
             await engine.dispose()

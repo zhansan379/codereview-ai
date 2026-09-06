@@ -61,9 +61,8 @@ async def _counts(session: AsyncSession, col: Any) -> list[CountItem]:
     return [CountItem(key=str(row[0] or "未知"), count=int(row[1])) for row in rows]
 
 
-@router.get("", response_model=StatsOut)
-async def get_stats(session: AsyncSession = Depends(get_db)) -> StatsOut:
-    """聚合全部看板指标，一次调用出全量（前端只发一次请求）。"""
+async def aggregate_stats(session: AsyncSession) -> StatsOut:
+    """在给定会话上聚合全部看板指标（路由与日报共用，M5.7 复用）。"""
     total_tasks = int((await session.execute(
         select(func.count()).select_from(ReviewTask)
     )).scalar_one() or 0)
@@ -125,3 +124,9 @@ async def get_stats(session: AsyncSession = Depends(get_db)) -> StatsOut:
         findings_by_category=findings_by_category, reviews_by_day=reviews_by_day,
         model_usage=model_usage, provider_split=provider_split,
     )
+
+
+@router.get("", response_model=StatsOut)
+async def get_stats(session: AsyncSession = Depends(get_db)) -> StatsOut:
+    """聚合全部看板指标，一次调用出全量（前端只发一次请求）。"""
+    return await aggregate_stats(session)

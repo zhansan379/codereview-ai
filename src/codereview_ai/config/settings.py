@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     review_static_enabled: bool = True
     static_workspace_dir: str = ""  # 临时工作区目录；空 = 系统临时目录
 
+    # —— 日报调度（M5.7：本地时区每日整点）——
+    daily_report_enabled: bool = True
+    daily_report_hour: int = 9  # 每日推送时刻（本地时区，0-23）
+
     # —— 平台 / LLM（可选；未配齐则 worker 不启动，仅 webhook 可入队）——
     gitlab_url: str = ""
     gitlab_token: str = ""
