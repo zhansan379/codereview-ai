@@ -19,7 +19,7 @@ from fastapi import FastAPI
 
 from codereview_ai.api.webhook import router as webhook_router
 from codereview_ai.config import Settings
-from codereview_ai.forges.gitlab import GitLabForge
+from codereview_ai.forges.registry import build_adapter, registered_providers
 from codereview_ai.logging import setup_logging
 from codereview_ai.ops.health import router as health_router
 from codereview_ai.ops.tracing import TraceMiddleware
@@ -52,18 +52,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         worker_task: asyncio.Task[None] | None = None
         http: httpx.AsyncClient | None = None
 
-        if settings.gitlab_token and settings.gitlab_url and settings.llm_model:
+        providers = registered_providers(settings)
+        if providers and settings.llm_model:
             http = httpx.AsyncClient(timeout=settings.request_timeout_seconds)
-            forge = GitLabForge(settings.gitlab_url, settings.gitlab_token, http)
             gateway = LLMGateway(model=settings.llm_model)
             reviewer = Reviewer(gateway)
-            processor = make_processor(lambda _: forge, lambda _: reviewer, store)
+            adapters = {p: build_adapter(p, settings, http) for p in providers}
+            processor = make_processor(lambda p: adapters.get(p), lambda _: reviewer, store)
             worker_task = asyncio.create_task(run_worker(queue, processor))
-            logger.info("内置 worker 已启动（GitLab %s / model %s）",  # noqa: E501
-                        settings.gitlab_url, settings.llm_model)
+            logger.info("内置 worker 已启动：%s（model %s）", ",".join(providers), settings.llm_model)  # noqa: E501
         else:
             logger.warning(
-                "未配置 CR_GITLAB_URL/CR_GITLAB_TOKEN/CR_LLM_MODEL，webhook 仍可入队但无 worker 消费"  # noqa: E501
+                "未配置平台 token（CR_GITLAB_TOKEN/CR_GITHUB_TOKEN）或 CR_LLM_MODEL，"
+                "webhook 仍可入队但无 worker 消费"
             )
 
         try:

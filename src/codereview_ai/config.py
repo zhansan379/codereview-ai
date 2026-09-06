@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     # —— 平台 / LLM（可选；未配齐则 worker 不启动，仅 webhook 可入队）——
     gitlab_url: str = ""
     gitlab_token: str = ""
+    github_url: str = "https://api.github.com"
+    github_token: str = ""
     llm_model: str = ""
 
     @model_validator(mode="after")

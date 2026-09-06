@@ -23,7 +23,8 @@ from codereview_ai.review.reviewer import Reviewer
 logger = logging.getLogger("codereview_ai.worker")
 
 #: forge / reviewer 工厂：按 provider 给出对应的审查设施（测试注入 fake）。
-ForgeFactory = Callable[[str], ForgeAdapter]
+#: forge 可能返回 None（该 provider 未配置适配器），worker 跳过而非报错。
+ForgeFactory = Callable[[str], ForgeAdapter | None]
 ReviewerFactory = Callable[[str], Reviewer]
 
 
@@ -97,6 +98,9 @@ def make_processor(
         provider, raw = item
         forge = forge_factory(provider)
         reviewer = reviewer_factory(provider)
+        if forge is None:
+            logger.warning("provider %s 未配置适配器，任务 %s 跳过", provider, task.task_id)
+            return
         await process_raw_event(forge, reviewer, raw)
 
     return process
