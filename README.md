@@ -159,6 +159,16 @@ curl http://localhost:5001/health   # → 200 即就绪
 > 本地跑没容器那层；webhook 回调仍要公网可达才能被 GitLab/GitHub 连上（本地调试可 `ngrok http 5001`）。
 > `.env` 会在 `.gitignore` 里，不进仓库；缺密钥直接 `uvicorn` 会 fail-fast 退出并打印缺哪枚。
 
+**前端不用单独启动**：管理后台前端是 Vue 构建产物（`frontend/dist`），由后端自动托管在 `/admin`,
+`uvicorn` 一起来就能访问 `http://localhost:5001/admin`，**不需要手动跑前端命令**。
+仅当你**改前端源码**想热更预览时，才在 `frontend/` 下跑 Vite dev server：
+
+```bash
+cd frontend
+npm install     # 首次
+npm run dev     # Vite dev server（默认 5173 端口，热更新）
+```
+
 ## 密钥说明（大白话）
 
 它们**不是**哪家平台（GitLab/GitHub/AI 服务商）给你的密码，而是**本系统自己家门的三把锁加一把钥匙**，都是你自己生成的随机串。缺了系统直接不启动（fail-fast），宁可不开机也不带病运行。
