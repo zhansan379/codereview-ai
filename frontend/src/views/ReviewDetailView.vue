@@ -17,6 +17,9 @@
         <el-descriptions-item label="提交 SHA">
           <code class="sha">{{ detail.head_sha }}</code>
         </el-descriptions-item>
+        <el-descriptions-item label="比对基线">
+          <code class="sha">{{ detail.base_sha || '—' }}</code>
+        </el-descriptions-item>
         <el-descriptions-item label="排队时间">{{ formatTime(detail.queued_at) }}</el-descriptions-item>
         <el-descriptions-item label="完成时间">
           {{ detail.finished_at ? formatTime(detail.finished_at) : '—' }}
@@ -45,16 +48,40 @@
     <el-card>
       <template #header>发现的问题（{{ detail?.findings?.length ?? 0 }}）</template>
       <el-table :data="detail?.findings || []" stripe>
+        <el-table-column type="expand">
+          <template #default="{ row }">
+            <div class="finding-detail">
+              <div v-if="row.existing_code" class="code-block">
+                <div class="code-label">原代码</div>
+                <pre class="code-text">{{ row.existing_code }}</pre>
+              </div>
+              <div v-if="row.suggestion" class="code-block">
+                <div class="code-label code-fix">建议修复</div>
+                <pre class="code-text">{{ row.suggestion }}</pre>
+              </div>
+              <div v-if="row.detail && row.detail !== row.title" class="code-block">
+                <div class="code-label">补充说明</div>
+                <pre class="code-text">{{ row.detail }}</pre>
+              </div>
+              <el-empty v-if="!row.existing_code && !row.suggestion" description="无代码片段" :image-size="40" />
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="severity" label="严重度" width="90">
           <template #default="{ row }">
             <el-tag :type="severityTag(row.severity)">{{ row.severity }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="category" label="类别" width="120" />
-        <el-table-column prop="file" label="文件" min-width="160" />
-        <el-table-column prop="new_line" label="行号" width="80" />
-        <el-table-column prop="title" label="标题" min-width="200" />
-        <el-table-column prop="status" label="状态" width="100" />
+        <el-table-column prop="category" label="类别" width="110" />
+        <el-table-column prop="file" label="文件" min-width="150" />
+        <el-table-column prop="new_line" label="行号" width="70" />
+        <el-table-column prop="title" label="分析" min-width="220" />
+        <el-table-column prop="source" label="来源" width="90">
+          <template #default="{ row }">
+            <el-tag :type="sourceTagType(row.source)" size="small">{{ sourceLabel(row.source) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="status" label="状态" width="90" />
       </el-table>
     </el-card>
   </div>
@@ -74,6 +101,19 @@ const loading = ref(false)
 function severityTag(sev: string): any {
   if (sev === 'critical' || sev === 'high' || sev === 'error') return 'danger'
   if (sev === 'medium' || sev === 'warning') return 'warning'
+  return 'info'
+}
+
+function sourceLabel(source: string | null): string {
+  if (!source) return '未知'
+  if (source === 'llm') return 'LLM'
+  if (source.startsWith('static')) return '静态分析'
+  return source
+}
+
+function sourceTagType(source: string | null): any {
+  if (source === 'llm') return 'primary'
+  if (source && source.startsWith('static')) return 'warning'
   return 'info'
 }
 
@@ -120,5 +160,32 @@ onMounted(load)
   white-space: pre-wrap;
   word-break: break-word;
   margin: 0;
+}
+.finding-detail {
+  padding: 8px 16px;
+  background: #fafafa;
+}
+.code-block {
+  margin: 8px 0;
+}
+.code-label {
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 4px;
+}
+.code-fix {
+  color: #67c23a;
+}
+.code-text {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  background: #fff;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>
