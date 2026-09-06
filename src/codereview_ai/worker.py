@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from codereview_ai.forges.base import ForgeAdapter
+from codereview_ai.notifiers.dispatch import NotifierDispatcher
 from codereview_ai.queue.base import TaskMeta, TaskQueue
 from codereview_ai.review.group_review import review_in_groups
 from codereview_ai.review.grouping import SemanticGrouper
@@ -85,6 +86,7 @@ async def process_raw_event(
     review_repo: ReviewRepository | None = None,
     grouper: SemanticGrouper | None = None,
     chain_valid: Callable[[str, str], bool] | None = None,
+    notifier: NotifierDispatcher | None = None,
 ) -> None:
     """原始 webhook payload → 审查 + 回写。各阶段失败在此抛出，由 worker 标 failed。
 
@@ -92,6 +94,7 @@ async def process_raw_event(
     `increments`（M3 内存档兼容）。`grouper` 给定且改动 ≥ 4 个文件时走语义分组并
     发审查（DESIGN §7.5，见 review.group_review）。`chain_valid(prior_sha, head_sha)`
     校验上次 head 是否仍在本 PR 链上（平台 compare），缺省 `None` → 保守回退全量。
+    `notifier`（DESIGN F4）给定时，审查+回写成功后后台推送 IM 通知（失败不影响主链）。
     """
     try:
         data = json.loads(raw)
@@ -133,6 +136,10 @@ async def process_raw_event(
 
     await ResultWriter(forge).write(refreshed, diffs, result)
 
+    if notifier is not None:
+        # F4.4 fire-and-forget：推送后台化，不拖慢也不阻断审查主链
+        notifier.launch(refreshed, result)
+
     if increments is not None and refreshed.head_sha:
         # 内存档才显式记录落点；DB 档 findigs 已落 review_finding，由 review_repo 读取
         increments.record(
@@ -149,11 +156,12 @@ def make_processor(
     review_repo: ReviewRepository | None = None,
     grouper: SemanticGrouper | None = None,
     chain_valid: Callable[[str, str], bool] | None = None,
+    notifier: NotifierDispatcher | None = None,
 ) -> Callable[[TaskMeta], Awaitable[None]]:
     """由 worker 主循环调用的处理函数：根据 task 取 payload 后走完整管线。
 
-    `increments`/`review_repo`/`grouper`/`chain_valid` 透传给 `process_raw_event`
-    （都缺省时禁用增量/分组，见其 docstring）。
+    `increments`/`review_repo`/`grouper`/`chain_valid`/`notifier` 透传给
+    `process_raw_event`（都缺省时禁用增量/分组/推送，见其 docstring）。
     """
 
     async def process(task: TaskMeta) -> None:
@@ -174,6 +182,7 @@ def make_processor(
             review_repo=review_repo,
             grouper=grouper,
             chain_valid=chain_valid,
+            notifier=notifier,
         )
 
     return process

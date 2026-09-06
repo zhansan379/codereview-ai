@@ -24,6 +24,7 @@ from codereview_ai.config import Settings
 from codereview_ai.config.repository import ConfigRepository
 from codereview_ai.forges.registry import build_adapter, registered_providers
 from codereview_ai.logging import setup_logging
+from codereview_ai.notifiers.dispatch import NotifierDispatcher
 from codereview_ai.ops.health import router as health_router
 from codereview_ai.ops.tracing import TraceMiddleware
 from codereview_ai.queue.asyncio import AsyncioTaskQueue
@@ -62,8 +63,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             http = httpx.AsyncClient(timeout=settings.request_timeout_seconds)
             adapters = {p: build_adapter(p, settings, http) for p in providers}
             review_repo = ReviewRepository(engine)
+            # F4/M4.7：路由从 DB notifier_config 拉取（project_id=None→仅全局默认）
+            notifier = NotifierDispatcher(provider_repo.notifier_routes, http=http)
             processor = make_processor(
-                lambda p: adapters.get(p), lambda _: reviewer, store, review_repo=review_repo
+                lambda p: adapters.get(p), lambda _: reviewer, store, review_repo=review_repo,
+                notifier=notifier,
             )
             worker_task = asyncio.create_task(run_worker(queue, processor))
             logger.info(
