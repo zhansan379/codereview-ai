@@ -37,7 +37,7 @@ def client():
 
 
 def _gitlab_headers(token: str) -> dict[str, str]:
-    return {"X-Gitlab-Token": token, "Content-Type": "application/json", "X-Forwarded-For": "9.9.9.9"}
+    return {"X-Gitlab-Token": token, "Content-Type": "application/json", "X-Forwarded-For": "9.9.9.9"}  # noqa: E501
 
 
 def test_valid_gitlab_event_is_enqueued_202(client):
@@ -77,7 +77,7 @@ def test_github_signature_path(client):
     tc, enq = client
     body = b'{"action": "opened"}'
     sig = "sha256=" + hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
-    r = tc.post("/webhook", content=body, headers={"X-GitHub-Event": "pull_request", "X-Hub-Signature-256": sig})
+    r = tc.post("/webhook", content=body, headers={"X-GitHub-Event": "pull_request", "X-Hub-Signature-256": sig})  # noqa: E501
     assert r.status_code == 202
     assert enq.calls[0][0] == "github"
 

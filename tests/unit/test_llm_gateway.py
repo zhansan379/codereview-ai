@@ -14,7 +14,7 @@ from codereview_ai.review.llm_gateway import (
 
 CLEAN = {
     "summary": "整体不错",
-    "scores": {"correctness": 30, "security": 20, "practices": 15, "performance": 3, "commit_quality": 2},
+    "scores": {"correctness": 30, "security": 20, "practices": 15, "performance": 3, "commit_quality": 2},  # noqa: E501
     "findings": [
         {
             "content": "这里可能 NPE",
@@ -108,8 +108,8 @@ def test_parse_review_json_clean_dict():
 def test_parse_review_json_normalizes_bad_enums_and_clamps_scores():
     data = {
         "summary": "x",
-        "scores": {"correctness": 999, "security": -5, "practices": 10, "performance": 1, "commit_quality": 5},
-        "findings": [{"content": "c", "file": "f.py", "category": "not-a-cat", "severity": "catastrophic"}],
+        "scores": {"correctness": 999, "security": -5, "practices": 10, "performance": 1, "commit_quality": 5},  # noqa: E501
+        "findings": [{"content": "c", "file": "f.py", "category": "not-a-cat", "severity": "catastrophic"}],  # noqa: E501
         "skipped_files": [],
     }
     r = parse_review_json(data)

@@ -30,7 +30,7 @@ def test_detect_forge_github_and_gitlab_default():
 def test_verify_github_signature():
     body = b'{"a": 1}'
     assert verify_signature("github", SECRET, {"X-Hub-Signature-256": _gh(body)}, body) is True
-    assert verify_signature("github", SECRET, {"X-Hub-Signature-256": _gh(b"tampered")}, body) is False
+    assert verify_signature("github", SECRET, {"X-Hub-Signature-256": _gh(b"tampered")}, body) is False  # noqa: E501
 
 
 def test_verify_gitlab_plain_token():
@@ -61,4 +61,4 @@ def test_signature_is_not_recomputed_from_reserialized_body():
     body = b'{"z": 1, "a": 2}'
     sig = _gh(body)
     # 对重排键后的字符串验签应当失败
-    assert verify_signature("github", SECRET, {"X-Hub-Signature-256": sig}, b'{"a": 2, "z": 1}') is False
+    assert verify_signature("github", SECRET, {"X-Hub-Signature-256": sig}, b'{"a": 2, "z": 1}') is False  # noqa: E501

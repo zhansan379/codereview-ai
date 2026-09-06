@@ -1,0 +1,68 @@
+"""ForgeAdapter 抽象：平台无关的 PR 解析 + 变更/评论回写接口（DESIGN §9）。
+
+实现者把各平台 Webhook payload / REST API 归一成中立领域模型
+（PullRequest / FileDiff / ChangeType），上层（worker 审查编排）只依赖本接口。
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Any
+
+from codereview_ai.domain.models import ChangeType, FileDiff, PullRequest
+
+#: 触发审查的事件动作白名单（open/update 语义，跨平台归一）。
+REVIEW_ACTIONS = frozenset({"open", "opened", "reopen", "reopened", "update", "synchronize"})
+
+
+def change_type_from_flags(*, is_new: bool, is_deleted: bool, is_renamed: bool) -> ChangeType:
+    if is_deleted:
+        return ChangeType.DELETED_FILE
+    if is_new:
+        return ChangeType.NEW_FILE
+    if is_renamed:
+        return ChangeType.RENAMED_FILE
+    return ChangeType.MODIFIED
+
+
+def count_diff_stats(diff: str) -> tuple[int, int]:
+    """从 unified diff 文本粗略统计 (additions, deletions)——供过滤/展示用。"""
+    adds = dels = 0
+    for line in diff.splitlines():
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+"):
+            adds += 1
+        elif line.startswith("-"):
+            dels += 1
+    return adds, dels
+
+
+class ForgeAdapter(ABC):
+    """平台适配器。HTTP 客户端在构造时注入，测试可用 httpx.MockTransport。"""
+
+    name: str = ""
+
+    @abstractmethod
+    def parse_merge_request(self, data: dict[str, Any]) -> PullRequest | None:
+        """从 webhook 的 merge_request 事件解析出中立 PullRequest。"""
+
+    @staticmethod
+    def should_review(action: str) -> bool:
+        return action in REVIEW_ACTIONS
+
+    async def fetch_pull_request(self, pr: PullRequest) -> PullRequest:
+        """按需补齐 PR 元数据（diff_refs / 标题 / 作者），默认原样返回。"""
+        return pr
+
+    @abstractmethod
+    async def fetch_files(self, pr: PullRequest) -> list[FileDiff]:
+        """拉取 PR 涉及文件的 diff（含 full new_file_content 则更好）。"""
+
+    @abstractmethod
+    async def post_summary(self, pr: PullRequest, body: str) -> None:
+        """发总结评论。"""
+
+    @abstractmethod
+    async def post_inline(self, pr: PullRequest, comments: list[dict[str, Any]]) -> None:
+        """并行发行级评论。"""
