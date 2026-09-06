@@ -26,6 +26,8 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.6",
     "mypy>=1.10",
+    "pytest-cov>=7.1.0",
+    "pip-audit>=2.10.1",
 ]
 
 [tool.uv]
@@ -59,3 +61,17 @@ mypy_path = "src"
 plugins = ["pydantic.mypy"]
 strict = true
 ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["src/codereview_ai"]
+branch = true
+
+[tool.coverage.report]
+# M6 质量门：总覆盖率（DESIGN §19 ≥70%）
+fail_under = 70
+show_missing = true
+# 声明式 port 抽象（storage/base.py）为纯接口，不计入 min；其具体实现已覆盖。
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+]
