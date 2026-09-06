@@ -60,6 +60,22 @@ docker compose up -d
 curl http://localhost:5001/health   # → 200 即就绪
 ```
 
+> 💻 **Windows / PowerShell 用户看这里**：上面的 `export` 是 bash 语法，PowerShell 和 cmd 不认。
+> PowerShell 用 `$env:VAR=`，测健康用 `curl.exe`（PowerShell 里 `curl` 是别的命令别名）：
+>
+> ```powershell
+> $env:CR_SECRET_KEY     = (python -c 'import secrets;print(secrets.token_urlsafe(48))')
+> $env:CR_WEBHOOK_SECRET = (python -c 'import secrets;print(secrets.token_urlsafe(48))')
+> $env:CR_ENCRYPTION_KEY = (python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())')
+> $env:CR_ADMIN_PASSWORD = (python -c 'import secrets;print(secrets.token_urlsafe(24))')
+>
+> docker compose up -d
+> curl.exe http://localhost:5001/health
+> ```
+>
+> 只想临时用用就 `$env:VAR = ...` 够了（关了终端就没了）；想**永久生效**（重启还在）再补一句
+> `setx CR_SECRET_KEY "<值>"`（会写入用户级环境变量）。装了 **Git Bash** 的同学可直接照抄上面的 `export`。
+
 ### ② 接入 GitLab
 
 ```bash
