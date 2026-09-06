@@ -45,27 +45,65 @@ LiteLLM 多模型接入，钉钉/飞书/企业微信推送，Vue 管理后台。
 
 ## 快速启动（Docker）
 
+### ① 通用：先导出 4 枚必配密钥并起服务
+
 前置：`docker`；GitHub token 需 `workflow` scope（首推含 CI 工作流）。
 
 ```bash
-# 四枚必配密钥（缺失即拒绝启动；生成命令见下文）
+# 四枚必配密钥（缺失即拒绝启动；看不懂它们在干嘛，见下文 §密钥说明）
 export CR_SECRET_KEY=$(python -c 'import secrets;print(secrets.token_urlsafe(48))')
 export CR_WEBHOOK_SECRET=$(python -c 'import secrets;print(secrets.token_urlsafe(48))')
 export CR_ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')
 export CR_ADMIN_PASSWORD=$(python -c 'import secrets;print(secrets.token_urlsafe(24))')
 
-# 平台 token / 模型（可选；配齐才启动内置 worker）
-export CR_GITLAB_URL= CR_GITLAB_TOKEN= CR_GITHUB_URL= CR_GITHUB_TOKEN=
-export CR_LLM_MODEL=
-
 docker compose up -d
 curl http://localhost:5001/health   # → 200 即就绪
 ```
 
-密钥可复用生成命令：`python -c 'import secrets;print(secrets.token_urlsafe(48))'`（SECRET_KEY/WEBHOOK_SECRET）、
-`python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())'`（ENCRYPTION_KEY）。
+### ② 接入 GitLab
 
-### 这 4 枚密钥是啥？（大白话）
+```bash
+# 平台信息（没配这些，平台推 MR 时 worker 不会真审）
+export CR_GITLAB_URL=http://your-gitlab     # 自建 GitLab 根地址（如 http://gitlab.example.com）
+export CR_GITLAB_TOKEN=glpat-xxxx           # GitLab Personal Access Token（api 权限）
+export CR_LLM_MODEL=anthropic/claude-...    # 你要用的 LLM 模型
+
+docker compose up -d
+
+# 注：LOCAL_URL 改成公网可达地址（本地调试可先用临时内网穿透，如 ngrok http 5001）
+LOCAL_URL=http://<你的公网地址>:5001/webhook
+curl -X POST "$CR_GITLAB_URL/api/v4/projects/<project_id>/hooks" \
+  -H "PRIVATE-TOKEN: $CR_GITLAB_TOKEN" \
+  --data-urlencode "url=$LOCAL_URL" \
+  --data-urlencode "token=$CR_WEBHOOK_SECRET" \
+  --data-urlencode "merge_requests_events=true" \
+  --data-urlencode "push_events=true"
+# 返回体里的 "id" 即该 webhook 的 id，可用来删/查/重测
+```
+
+### ③ 接入 GitHub
+
+```bash
+# 平台信息（token 用 PAT，需 repo + admin:repo_hook 权限）
+export CR_GITHUB_URL=https://api.github.com   # GitHub Enterprise 换成你的实例
+export CR_GITHUB_TOKEN=ghp_xxxx              # GitHub PAT
+export CR_LLM_MODEL=anthropic/claude-...      # 你要用的 LLM 模型
+
+docker compose up -d
+
+# 注：LOCAL_URL 改成公网可达地址（本地调试可先用临时内网穿透，如 ngrok http 5001）
+LOCAL_URL=http://<你的公网地址>:5001/webhook
+curl -X POST "https://api.github.com/repos/<owner>/<repo>/hooks" \
+  -H "Authorization: Bearer $CR_GITHUB_TOKEN" \
+  -H "Accept: application/vnd.github.v3+json" \
+  -d "{\"config\":{\"url\":\"$LOCAL_URL\",\"content_type\":\"json\",\"secret\":\"$CR_WEBHOOK_SECRET\"},\"events\":[\"pull_request\",\"push\"],\"active\":true}"
+```
+
+> webhook 的 `token`/`secret` 都源自 `CR_WEBHOOK_SECRET`，**务必和上面⓶③里保持一致**，对不上就 401 收不到事件。
+> `CR_WEBHOOK_SECRET`、`CR_GITLAB_TOKEN`、`CR_GITHUB_TOKEN`、`CR_LLM_MODEL` 这几枚是**可选**的：
+> 不配也能起服务（后台、看板可用），但只有配齐了，平台推 M/R PR 时内置 worker 才会真跑审查并回写评论。
+
+## 密钥说明（大白话）
 
 它们**不是**哪家平台（GitLab/GitHub/AI 服务商）给你的密码，而是**本系统自己家门的三把锁加一把钥匙**，都是你自己生成的随机串。缺了系统直接不启动（fail-fast），宁可不开机也不带病运行。
 
@@ -76,11 +114,12 @@ curl http://localhost:5001/health   # → 200 即就绪
 | `CR_ENCRYPTION_KEY` | **保险柜钥匙** | 把存进数据库的 api_key / IM token 用 Fernet 加密，平时读出来全是 `******` |
 | `CR_ADMIN_PASSWORD` | **后台开门密码** | 管理员登录 Vue 后台用 |
 
+生成命令（可反复用）：SECRET_KEY / WEBHOOK_SECRET 用
+`python -c 'import secrets;print(secrets.token_urlsafe(48))'`，
+ENCRYPTION_KEY 用 `python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())'`。
+
 > ⚠️ **`CR_ENCRYPTION_KEY` 最特殊**：必须是 `Fernet.generate_key()` 生成的 **base64 串**，
 > 不能用 `token_urlsafe` 的串，否则 `Fernet(key)` 会校验失败拒绝启动。
-
-> 顺手提醒：改了 `CR_WEBHOOK_SECRET`，记得去 GitLab/GitHub 那边把 webhook 的密钥也改成一样，
-> 两边对不上就 401 收不到事件。
 
 ## 开发 / 验证（离线）
 
