@@ -8,7 +8,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from codereview_ai.storage.db import create_engine, ensure_async_url, init_db, session_factory
-from codereview_ai.storage.models import ReviewTask
+from codereview_ai.storage.models import (
+    ModelConfig,
+    ModelUsage,
+    NotifierConfig,
+    ProjectRule,
+    ReviewTask,
+)
 
 
 def test_ensure_async_url_translates_dialects():
@@ -35,7 +41,32 @@ async def test_sqlite_pragmas_applied(engine):
 async def test_tables_created(engine):
     async with engine.connect() as conn:
         tables = await conn.run_sync(lambda sync: inspect(sync).get_table_names())
-    assert {"project", "review_task", "review_finding"} <= set(tables)
+    expected = {"project", "review_task", "review_finding",
+                "model_config", "notifier_config", "project_rule", "model_usage"}
+    assert expected <= set(tables)
+
+
+async def test_model_config_insert_read(engine):
+    session = session_factory(engine)
+    async with session() as s:
+        s.add(ModelConfig(name="deepseek", provider="deepseek", model="deepseek-chat",
+                          api_key_encrypted="gAAAAA...cipher", priority=10, enabled=True))
+        s.add(NotifierConfig(channel="dingtalk", enabled=True,
+                             webhook_encrypted="gAAAAA...wh", secret_encrypted="gAAAAA...sec",
+                             project_id=None, at_threshold=60))
+        s.add(ProjectRule(project_id=1, path_glob="src/**", rule_text="注意并发", priority=5))
+        s.add(ModelUsage(task_id=1, phase="review", model="deepseek-chat", total_tokens=120))
+        await s.commit()
+
+    async with session() as s:
+        m = (await s.execute(select(ModelConfig))).scalar_one()
+        n = (await s.execute(select(NotifierConfig))).scalar_one()
+        r = (await s.execute(select(ProjectRule))).scalar_one()
+        u = (await s.execute(select(ModelUsage))).scalar_one()
+        assert m.model == "deepseek-chat" and m.api_key_encrypted.startswith("gAAAAA")
+        assert n.channel == "dingtalk" and n.project_id is None
+        assert r.path_glob == "src/**" and r.rule_text == "注意并发"
+        assert u.total_tokens == 120
 
 
 async def test_insert_and_read_review_task(engine):
