@@ -40,11 +40,15 @@ class LLMGateway:
         json_object: bool = False,
         api_key: str | None = None,
         base_url: str | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
     ) -> None:
         self.model = model
         self.json_object = json_object
         self.api_key = api_key
         self.base_url = base_url
+        self.max_tokens = max_tokens
+        self.temperature = temperature
         self._backend = backend or self._litellm_backend
 
     async def complete(self, messages: list[dict[str, Any]]) -> str:
@@ -71,6 +75,10 @@ class LLMGateway:
             kwargs["api_key"] = self.api_key
         if self.base_url:
             kwargs["base_url"] = self.base_url
+        if self.max_tokens:  # 输出预算透传，避免大 MR 被默认上限截断成坏 JSON
+            kwargs["max_tokens"] = self.max_tokens
+        if self.temperature is not None:
+            kwargs["temperature"] = self.temperature
         resp = await litellm.acompletion(**kwargs)
         content = resp.choices[0].message.content
         return content or ""

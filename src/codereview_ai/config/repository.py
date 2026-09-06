@@ -101,6 +101,8 @@ class ResolvedLLM:
     model: str
     api_key: str = ""
     base_url: str = ""
+    temperature: float | None = None
+    max_tokens: int | None = None
     env: dict[str, str] = field(default_factory=dict)  # 供 env 重放的 {provider}_api_key / api_base
 
     def __post_init__(self) -> None:
@@ -186,6 +188,8 @@ class ConfigRepository:
             model=top.model or top.name,
             api_key=api_key,
             base_url=top.base_url,
+            temperature=top.temperature,
+            max_tokens=top.max_tokens,
         )
 
     async def notifier_routes(self, project_id: int | None = None) -> list[NotifierRoute]:
@@ -233,5 +237,10 @@ class ConfigRepository:
         if llm is None:
             return None
         self.apply_env_replay(llm)
-        gateway = LLMGateway(model=llm.model or llm.name, backend=backend)
+        gateway = LLMGateway(
+            model=llm.model or llm.name,
+            backend=backend,
+            max_tokens=llm.max_tokens,
+            temperature=llm.temperature,
+        )
         return Reviewer(gateway)

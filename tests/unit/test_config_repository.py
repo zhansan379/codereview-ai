@@ -218,6 +218,21 @@ async def test_build_reviewer_uses_db_model(engine, monkeypatch):
     assert calls == []  # follower：评审时才发请求
 
 
+async def test_build_reviewer_threads_max_tokens_and_temperature(engine):
+    key = _fernet_key()
+    await _seed_model(engine, name="db-model", model="m-db", priority=5,
+                      max_tokens=4096, temperature=0.3)
+
+    async def fake_backend(messages):
+        return "ok"
+
+    repo = ConfigRepository(engine, encryption_key=key)
+    reviewer = await repo.build_reviewer(backend=fake_backend)
+    gateway = reviewer.gateway
+    assert gateway.max_tokens == 4096  # DB max_tokens 真正透传给 litellm（治坏 JSON 截断）
+    assert gateway.temperature == 0.3
+
+
 
 async def test_apply_env_replay_fills_missing(engine, monkeypatch):
     key = _fernet_key()
