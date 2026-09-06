@@ -77,6 +77,9 @@ export interface ReviewFinding {
   suggestion: string | null
   source: string | null
   status: string | null
+  first_seen: string | null
+  last_seen: string | null
+  reopened_count: number | null
 }
 
 export interface ReviewItem {
@@ -192,6 +195,9 @@ export function listReviews(params: { state?: string; limit?: number; offset?: n
 }
 export function getReview(id: number): Promise<ReviewDetail> {
   return client.get(`/reviews/${id}`).then((r) => r.data)
+}
+export function setFindingStatus(id: number, status: 'waived' | 'active'): Promise<ReviewFinding> {
+  return client.post(`/reviews/findings/${id}/status`, { status }).then((r) => r.data)
 }
 
 // ===== 任务 =====

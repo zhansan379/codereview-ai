@@ -575,10 +575,18 @@ if reviews:
 - **指纹一致性**：这里的状态机用的是**身份指纹**；发出前的去重判断（body_fp / code_fp）见 §13.3，
   两者分别落 `REVIEW_FINDING.fingerprint` 与去重库，别混用。
 - **finding 生命周期状态机**（F2.20，PR-Agent `review_finding_state.py`，见 `reference/pr_agent_notes.md` §3）：
-  finding 身份用 `hash(file + body.lower())` 内容指纹（非行号——行号会漂，内容不会）。
+  finding 身份用 `hash(file + body.lower())` 内容指纹（非行号——行号会漂，内容不会），落 `review_finding.fingerprint`。
   跨轮对账：新 finding → ACTIVE；上次在、这次不在 → **仅当"非增量完整审查 且 head_sha 变化"才转 RESOLVED**
   （保守门，防部分审查误判已解决）；追踪 `first_seen/last_seen/reopened_count`。
   落 `REVIEW_FINDING` 表，不塞到 PR 评论里（PR-Agent 因无 DB 才把状态藏评论隐藏标记，我们不需要）。
+  **已落地实现**（`review_repo.reconcile_findings`，worker 非增量轮接入）：
+  - `resolved` = 仅非增量全量轮 + **文件覆盖门**自动对账：`file` 不在本轮 diff 覆盖集 → 不判已解决；
+    覆盖到但缺席 → `resolved`、`last_seen=now`；覆盖到且仍在 → 仅刷 `last_seen`。
+  - `active` 复现：上轮 `resolved` 本轮复现 → 回 `active`、`reopened_count+1`、`last_seen=now`，复现指纹
+    去重不插重复行（`insert_findings(skip_fingerprints=...)`）。
+  - `waived` = **人工端点** `POST /reviews/findings/{id}/status`（waived↔active）驱动，永不自动改；
+    `resolved` 系统托管禁止手改（防误判已解决埋 bug）。
+  管理员可在审查详情页对 finding 置「搁置」/「恢复」，状态列与统计（`stats`/`periodic` 只数 `active`）自动反映。
 
 ### 7.4 结构化输出与容错
 

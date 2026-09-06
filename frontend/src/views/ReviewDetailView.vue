@@ -51,6 +51,26 @@
         <el-table-column type="expand">
           <template #default="{ row }">
             <div class="finding-detail">
+              <div class="finding-actions">
+                <el-button
+                  v-if="row.status === 'active'"
+                  type="warning"
+                  size="small"
+                  plain
+                  :disabled="busy"
+                  @click="onFindingStatus(row, 'waived')"
+                >搁置</el-button>
+                <el-button
+                  v-if="row.status === 'waived'"
+                  type="primary"
+                  size="small"
+                  plain
+                  :disabled="busy"
+                  @click="onFindingStatus(row, 'active')"
+                >恢复</el-button>
+                <span v-if="row.first_seen" class="finding-meta">首次 {{ formatTime(row.first_seen) }}</span>
+                <span v-if="row.status === 'resolved' && row.last_seen" class="finding-meta">解决 {{ formatTime(row.last_seen) }}</span>
+              </div>
               <div v-if="row.existing_code" class="code-block">
                 <div class="code-label">原代码</div>
                 <pre class="code-text">{{ row.existing_code }}</pre>
@@ -81,7 +101,14 @@
             <el-tag :type="sourceTagType(row.source)" size="small">{{ sourceLabel(row.source) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="90" />
+        <el-table-column prop="status" label="状态" width="110">
+          <template #default="{ row }">
+            <el-tag :type="findingStatusTag(row.status)" size="small">
+              {{ statusLabel(row.status) }}
+              <span v-if="row.status === 'active' && row.reopened_count > 0"> 重开×{{ row.reopened_count }}</span>
+            </el-tag>
+          </template>
+        </el-table-column>
       </el-table>
     </el-card>
   </div>
@@ -90,13 +117,26 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { getReview, type ReviewDetail } from '../api'
+import { getReview, setFindingStatus, type ReviewDetail, type ReviewFinding } from '../api'
 import { formatTime, stateTagType, stateLabel } from '../utils/format'
 
 const route = useRoute()
 const id = Number(route.params.id)
 const detail = ref<ReviewDetail | null>(null)
 const loading = ref(false)
+const busy = ref(false)
+
+function findingStatusTag(status: string | null): any {
+  if (status === 'resolved') return 'success'
+  if (status === 'waived') return 'warning'
+  return 'info'
+}
+
+function statusLabel(status: string | null): string {
+  if (status === 'resolved') return '已解决'
+  if (status === 'waived') return '已搁置'
+  return '待处理'
+}
 
 function severityTag(sev: string): any {
   if (sev === 'critical' || sev === 'high' || sev === 'error') return 'danger'
@@ -123,6 +163,16 @@ async function load() {
     detail.value = await getReview(id)
   } finally {
     loading.value = false
+  }
+}
+
+async function onFindingStatus(row: ReviewFinding, status: 'waived' | 'active') {
+  busy.value = true
+  try {
+    await setFindingStatus(row.id, status)
+    await load()
+  } finally {
+    busy.value = false
   }
 }
 
@@ -164,6 +214,17 @@ onMounted(load)
 .finding-detail {
   padding: 8px 16px;
   background: #fafafa;
+}
+.finding-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.finding-meta {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #909399;
 }
 .code-block {
   margin: 8px 0;

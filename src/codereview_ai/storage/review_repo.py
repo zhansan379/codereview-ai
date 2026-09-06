@@ -170,11 +170,19 @@ class ReviewRepository:
                 row.finished_at = _utcnow()
             await s.commit()
 
-    async def insert_findings(self, task_id: int, findings: list[Finding]) -> None:
-        """把一轮 findings 落成 `review_finding` 行（含 source 区分 llm/static/agent）。"""
+    async def insert_findings(
+        self, task_id: int, findings: list[Finding], *, skip_fingerprints: frozenset[str] = frozenset()
+    ) -> None:
+        """把一轮 findings 落成 `review_finding` 行（含 source 区分 llm/static/agent）。
+
+        `skip_fingerprints`：复现对账后已由 `reconcile_findings` 回的指纹，跳过不重复插入
+        （避免复现 finding 产生第二条 active 行）。
+        """
         session = session_factory(self._engine)
         async with session() as s:
             for f in findings:
+                if finding_fingerprint(f) in skip_fingerprints:
+                    continue
                 s.add(ReviewFinding(
                     task_id=task_id,
                     fingerprint=finding_fingerprint(f),
@@ -191,3 +199,63 @@ class ReviewRepository:
                     status="active",
                 ))
             await s.commit()
+
+    async def reconcile_findings(
+        self,
+        *,
+        provider: str,
+        repo_id: str,
+        pr_number: int,
+        current_findings: list[Finding],
+        covered_files: set[str],
+        exclude_task_id: int,
+    ) -> frozenset[str]:
+        """非增量全量轮次的 finding 生命周期对账（DESIGN §7.3），推进 `status` 状态机。
+
+        仅处理 `file` 落在本轮 `covered_files` 的行——本轮没覆盖到的缺席**不算**已解决
+        （§7.3 保守门，防部分审查误判）。逐行：
+        - `active` 且本轮缺席 → `resolved`（覆盖到已修复）；
+        - `active` 且本轮仍在 → 刷新 `last_seen`；
+        - `resolved` 且本轮复现 → 回 `active`，`reopened_count += 1`；
+        - `waived` 永不自动改（人工忽略保持忽略）。
+
+        返回「复现并回 active 的指纹集」，供 `insert_findings` 作 `skip_fingerprints` 去重。
+        """
+        from codereview_ai.storage.models import _utcnow
+
+        cur_fps = frozenset(finding_fingerprint(f) for f in current_findings)
+        reopen: set[str] = set()
+        session = session_factory(self._engine)
+        async with session() as s:
+            prior = (await s.execute(
+                select(ReviewFinding).where(
+                    ReviewFinding.task_id.in_(
+                        select(ReviewTask.id).where(
+                            ReviewTask.provider == provider,
+                            ReviewTask.repo_id == repo_id,
+                            ReviewTask.pr_number == pr_number,
+                            ReviewTask.event_type == "mr",
+                            ReviewTask.state == "completed",
+                            ReviewTask.id != exclude_task_id,
+                        )
+                    )
+                )
+            )).scalars().all()
+            now = _utcnow()
+            for row in prior:
+                if row.file not in covered_files:
+                    continue  # 本轮没覆盖到 → 不判已解决（保守门）
+                if row.fingerprint in cur_fps:
+                    if row.status == "resolved":
+                        row.status = "active"
+                        row.reopened_count += 1
+                        row.last_seen = now
+                        reopen.add(row.fingerprint)
+                    elif row.status == "active":
+                        row.last_seen = now
+                    # waived：永不自动改
+                elif row.status == "active":
+                    row.status = "resolved"
+                    row.last_seen = now
+            await s.commit()
+        return frozenset(reopen)
