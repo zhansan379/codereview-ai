@@ -98,7 +98,9 @@ class Finding:
     suggestion_code: str | None = None
     thinking: str | None = None  # 仅审计用，不回写
     # ── 由工程锚定/校验填充，LLM 不产出 ──
-    line: int | None = None
+    line: int | None = None  # 新侧行号（锚定解析结果）
+    old_line: int | None = None  # 旧侧行号（仅新增行类锚定到旧侧时）
+    side: str = "RIGHT"  # "RIGHT"(新侧) | "LEFT"(旧侧/删除)，回写 position 用
     source: str = "llm"  # "llm" | "static:<tool>"
 
 
