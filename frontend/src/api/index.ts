@@ -176,3 +176,35 @@ export function listTasks(params: { state?: string }): Promise<TaskItem[]> {
 export function retryTask(id: number): Promise<{ id: number; state: string; attempt: number }> {
   return client.post(`/tasks/${id}/retry`).then((r) => r.data)
 }
+
+// ===== 看板统计 =====
+export interface CountItem {
+  key: string
+  count: number
+}
+export interface ReviewsByDay {
+  day: string
+  count: number
+}
+export interface ModelUsageItem {
+  model: string
+  requests: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+}
+export interface DashboardStats {
+  total_tasks: number
+  total_findings: number
+  open_critical: number
+  open_high: number
+  tasks_by_state: CountItem[]
+  findings_by_severity: CountItem[]
+  findings_by_category: CountItem[]
+  reviews_by_day: ReviewsByDay[]
+  model_usage: ModelUsageItem[]
+  provider_split: CountItem[]
+}
+export function getStats(): Promise<DashboardStats> {
+  return client.get('/stats').then((r) => r.data)
+}

@@ -3,34 +3,59 @@
     <el-row :gutter="20">
       <el-col :span="6">
         <el-card>
-          <div class="stat-label">总数</div>
-          <div class="stat-value">{{ stats.total }}</div>
+          <div class="stat-label">审查任务</div>
+          <div class="stat-value">{{ stats.total_tasks }}</div>
         </el-card>
       </el-col>
       <el-col :span="6">
         <el-card>
-          <div class="stat-label">成功</div>
-          <div class="stat-value" style="color: #67c23a">{{ stats.ok }}</div>
+          <div class="stat-label">问题总数</div>
+          <div class="stat-value">{{ stats.total_findings }}</div>
         </el-card>
       </el-col>
       <el-col :span="6">
         <el-card>
-          <div class="stat-label">失败</div>
-          <div class="stat-value" style="color: #f56c6c">{{ stats.failed }}</div>
+          <div class="stat-label">未解决高危</div>
+          <div class="stat-value" style="color: #f56c6c">{{ stats.open_high }}</div>
         </el-card>
       </el-col>
       <el-col :span="6">
         <el-card>
-          <div class="stat-label">排队中</div>
-          <div class="stat-value" style="color: #e6a23c">{{ stats.queued }}</div>
+          <div class="stat-label">未解决严重</div>
+          <div class="stat-value" style="color: #e6a23c">{{ stats.open_critical }}</div>
         </el-card>
       </el-col>
     </el-row>
 
-    <el-card class="chart-card">
-      <template #header>按 state 分布</template>
-      <div ref="chartRef" class="chart"></div>
-    </el-card>
+    <el-row :gutter="20" class="charts-row">
+      <el-col :span="12">
+        <el-card>
+          <template #header>严重级别分布</template>
+          <div ref="severityRef" class="chart"></div>
+        </el-card>
+      </el-col>
+      <el-col :span="12">
+        <el-card>
+          <template #header>近 14 天审查趋势</template>
+          <div ref="trendRef" class="chart"></div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="20" class="charts-row">
+      <el-col :span="12">
+        <el-card>
+          <template #header>任务状态分布</template>
+          <div ref="stateRef" class="chart chart-sm"></div>
+        </el-card>
+      </el-col>
+      <el-col :span="12">
+        <el-card>
+          <template #header>审查渠道分流</template>
+          <div ref="providerRef" class="chart chart-sm"></div>
+        </el-card>
+      </el-col>
+    </el-row>
 
     <el-card class="table-card">
       <template #header>最近记录</template>
@@ -53,62 +78,84 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
-import { listReviews, type ReviewItem } from '../api'
+import { getStats, listReviews, type DashboardStats, type ReviewItem } from '../api'
 
-const chartRef = ref<HTMLDivElement>()
-const reviews = ref<ReviewItem[]>([])
+const severityRef = ref<HTMLDivElement>()
+const trendRef = ref<HTMLDivElement>()
+const stateRef = ref<HTMLDivElement>()
+const providerRef = ref<HTMLDivElement>()
 const recent = ref<ReviewItem[]>([])
-const stats = ref({ total: 0, ok: 0, failed: 0, queued: 0 })
-
-// 一次拿最近 100 条，前端自行统计与出图。
-// M5 将改为后端聚合(KPI 接口)，此处是过渡实现。
-function computeStats(items: ReviewItem[]) {
-  const s = { total: items.length, ok: 0, failed: 0, queued: 0 }
-  for (const it of items) {
-    if (it.state === 'reviewed' || it.state === 'success') s.ok++
-    else if (it.state === 'failed') s.failed++
-    else s.queued++
-  }
-  return s
-}
+const stats = ref<DashboardStats>({
+  total_tasks: 0,
+  total_findings: 0,
+  open_critical: 0,
+  open_high: 0,
+  tasks_by_state: [],
+  findings_by_severity: [],
+  findings_by_category: [],
+  reviews_by_day: [],
+  model_usage: [],
+  provider_split: [],
+})
 
 function stateTagType(state: string): any {
-  if (state === 'reviewed' || state === 'success') return 'success'
+  if (state === 'completed' || state === 'reviewed' || state === 'success') return 'success'
   if (state === 'failed') return 'danger'
   return 'warning'
 }
 
-async function loadDash() {
-  const res = await listReviews({ limit: 100 })
-  reviews.value = res.items || []
-  recent.value = reviews.value.slice(0, 10)
-  stats.value = computeStats(reviews.value)
-  await nextTick()
-  drawChart()
-}
-
-// ECharts 柱状图：按 state 分布
-function drawChart() {
-  if (!chartRef.value) return
-  const chart = echarts.init(chartRef.value)
-  const countByState: Record<string, number> = {}
-  for (const it of reviews.value) {
-    countByState[it.state] = (countByState[it.state] || 0) + 1
-  }
-  const states = Object.keys(countByState)
-  chart.setOption({
-    tooltip: {},
-    xAxis: { type: 'category', data: states },
-    yAxis: { type: 'value' },
+function drawSeverity() {
+  if (!severityRef.value) return
+  echarts.init(severityRef.value).setOption({
+    tooltip: { trigger: 'item' },
     series: [
       {
-        name: '数量',
-        type: 'bar',
-        data: states.map((s) => countByState[s]),
-        itemStyle: { color: '#409eff' },
+        type: 'pie',
+        radius: ['40%', '68%'],
+        data: stats.value.findings_by_severity.map((s) => ({
+          name: s.key,
+          value: s.count,
+        })),
       },
     ],
   })
+}
+
+function drawTrend() {
+  if (!trendRef.value) return
+  echarts.init(trendRef.value).setOption({
+    tooltip: { trigger: 'axis' },
+    grid: { left: 40, right: 16, top: 24, bottom: 24 },
+    xAxis: {
+      type: 'category',
+      data: stats.value.reviews_by_day.map((d) => d.day.slice(5)), // MM-DD
+    },
+    yAxis: { type: 'value', minInterval: 1 },
+    series: [{ type: 'line', smooth: true, data: stats.value.reviews_by_day.map((d) => d.count) }],
+  })
+}
+
+function drawBar(el: HTMLDivElement, items: { key: string; count: number }[]) {
+  echarts.init(el).setOption({
+    tooltip: {},
+    xAxis: { type: 'category', data: items.map((i) => i.key) },
+    yAxis: { type: 'value' },
+    series: [{ type: 'bar', data: items.map((i) => i.count), barMaxWidth: 24 }],
+  })
+}
+
+async function loadDash() {
+  const [dash, list] = await Promise.all([
+    getStats(),
+    listReviews({ limit: 10 }),
+  ])
+  stats.value = dash
+  recent.value = list.items || []
+  await nextTick()
+  drawSeverity()
+  drawTrend()
+  if (stateRef.value) drawBar(stateRef.value, dash.tasks_by_state)
+  if (providerRef.value) drawBar(providerRef.value, dash.provider_split)
 }
 
 onMounted(loadDash)
@@ -124,11 +171,14 @@ onMounted(loadDash)
   font-weight: 700;
   margin-top: 6px;
 }
-.chart-card {
+.charts-row {
   margin-top: 20px;
 }
 .chart {
-  height: 320px;
+  height: 300px;
+}
+.chart-sm {
+  height: 240px;
 }
 .table-card {
   margin-top: 20px;
