@@ -24,7 +24,15 @@
     </el-card>
 
     <el-card>
-      <ReviewsTable :items="items" :loading="loading" @detail="goDetail" />
+      <ReviewsTable
+        :items="items"
+        :loading="loading"
+        show-process
+        show-retry
+        :retrying-id="retryingId"
+        @detail="goDetail"
+        @retry="onRetry"
+      />
 
       <!-- 服务端分页 -->
       <el-pagination
@@ -43,8 +51,9 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
-import { listReviews, type ReviewItem } from '../api'
+import { listReviews, retryTask, type ReviewItem } from '../api'
 import ReviewsTable from '../components/ReviewsTable.vue'
 
 const router = useRouter()
@@ -52,6 +61,7 @@ const router = useRouter()
 const items = ref<ReviewItem[]>([])
 const total = ref(0)
 const loading = ref(false)
+const retryingId = ref<number | null>(null)
 const query = reactive({ state: '', limit: 10, offset: 0 })
 
 // 翻页/过滤均重新请求后端（服务端分页）
@@ -85,6 +95,20 @@ function onSizeChange(s: number) {
 }
 function goDetail(id: number) {
   router.push(`/reviews/${id}`)
+}
+
+// 重试失败任务（合并自原任务页）：成功后刷新当前页
+async function onRetry(row: ReviewItem) {
+  retryingId.value = row.id
+  try {
+    await retryTask(row.id)
+    ElMessage.success('已提交重试')
+    load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '重试失败')
+  } finally {
+    retryingId.value = null
+  }
 }
 
 onMounted(load)
