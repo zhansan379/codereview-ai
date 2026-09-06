@@ -22,7 +22,7 @@ export interface Project {
   repo_full_name: string
   web_url: string
   branch_rule: string | null
-  file_extensions: string[] | null
+  file_extensions: string | null
   review_strategy: string | null
   prompt_suffix: string | null
   score_threshold: number | null

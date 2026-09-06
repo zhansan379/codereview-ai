@@ -37,7 +37,12 @@
     <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑通知渠道' : '新增通知渠道'" width="560px">
       <el-form :model="form" label-width="110px">
         <el-form-item label="渠道" required>
-          <el-select v-model="form.channel" :disabled="isEdit" style="width: 100%">
+          <el-select
+            v-model="form.channel"
+            :disabled="isEdit"
+            style="width: 100%"
+            @change="onChannelChange"
+          >
             <el-option label="钉钉 dingtalk" value="dingtalk" />
             <el-option label="飞书 feishu" value="feishu" />
             <el-option label="企业微信 wecom" value="wecom" />
@@ -52,7 +57,7 @@
           />
           <div class="form-tip" v-if="isEdit">读回为 ****** 表示保留原值。</div>
         </el-form-item>
-        <el-form-item label="Secret" required>
+        <el-form-item v-if="form.channel !== 'wecom'" label="Secret" required>
           <el-input
             v-model="form.secret"
             type="password"
@@ -60,6 +65,7 @@
             :placeholder="isEdit ? '留空或填 ****** 表示不修改' : '请输入 Secret'"
           />
           <div class="form-tip" v-if="isEdit">读回为 ****** 表示保留原值。</div>
+          <div class="form-tip" v-else>钉钉/飞书可用加签；企业微信无签名机制，不填。</div>
         </el-form-item>
         <el-form-item label="项目(ID)">
           <el-input-number
@@ -103,7 +109,7 @@ const emptyForm = () => ({
   webhook: '',
   secret: '',
   project_id: null as number | null,
-  at_threshold: 1,
+  at_threshold: 60,
   enabled: true,
 })
 const form = reactive(emptyForm())
@@ -129,12 +135,19 @@ function openEdit(row: Notifier) {
   Object.assign(form, {
     channel: row.channel,
     webhook: row.webhook || REDACTED,
-    secret: row.secret || REDACTED,
+    // 企业微信无签名：secret 直接置空，避免回显占位误导
+    secret: row.channel === 'wecom' ? '' : (row.secret || REDACTED),
     project_id: row.project_id ?? null,
-    at_threshold: row.at_threshold ?? 1,
+    at_threshold: row.at_threshold ?? 60,
     enabled: row.enabled,
   })
   dialogVisible.value = true
+}
+function onChannelChange() {
+  // 切到企业微信时清掉残留 secret（该渠道无签名）
+  if (form.channel === 'wecom') {
+    form.secret = ''
+  }
 }
 
 async function onSave() {

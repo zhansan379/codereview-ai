@@ -29,7 +29,12 @@
     <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑项目' : '新增项目'" width="640px">
       <el-form :model="form" label-width="110px">
         <el-form-item label="平台" required>
-          <el-input v-model="form.provider" placeholder="如 github / gitee" />
+          <el-select v-model="form.provider" style="width: 100%">
+            <el-option label="GitHub" value="github" />
+            <el-option label="GitLab" value="gitlab" />
+            <el-option label="Gitea" value="gitea" />
+            <el-option label="Gitee" value="gitee" />
+          </el-select>
         </el-form-item>
         <el-form-item label="仓库 ID" required>
           <el-input v-model="form.repo_id" />
@@ -44,10 +49,21 @@
           <el-input v-model="form.branch_rule" placeholder="如 main" />
         </el-form-item>
         <el-form-item label="文件扩展名">
-          <el-input v-model="fileExtText" placeholder="逗号分隔，如 .py,.ts" />
+          <el-select
+            v-model="form.file_extensions"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            placeholder="输入后回车添加，如 .py"
+            style="width: 100%"
+          />
         </el-form-item>
         <el-form-item label="审查策略">
-          <el-input v-model="form.review_strategy" />
+          <el-select v-model="form.review_strategy" style="width: 100%">
+            <el-option label="diff（普通 diff 分组审查）" value="diff" />
+            <el-option label="agentic（沙箱探索式，需额外配置）" value="agentic" />
+          </el-select>
         </el-form-item>
         <el-form-item label="Prompt 后缀">
           <el-input v-model="form.prompt_suffix" type="textarea" :rows="3" />
@@ -86,20 +102,12 @@ const emptyForm = () => ({
   web_url: '',
   branch_rule: '',
   file_extensions: [] as string[],
-  review_strategy: '',
+  review_strategy: 'diff',
   prompt_suffix: '',
-  score_threshold: 0,
+  score_threshold: 80,
   enabled: true,
 })
 const form = reactive(emptyForm())
-const fileExtText = ref('')
-
-function syncFileExt() {
-  form.file_extensions = fileExtText.value
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-}
 
 async function load() {
   loading.value = true
@@ -114,7 +122,6 @@ function openCreate() {
   isEdit.value = false
   editingId.value = null
   Object.assign(form, emptyForm())
-  fileExtText.value = ''
   dialogVisible.value = true
 }
 function openEdit(row: Project) {
@@ -126,24 +133,23 @@ function openEdit(row: Project) {
     repo_full_name: row.repo_full_name,
     web_url: row.web_url || '',
     branch_rule: row.branch_rule || '',
-    file_extensions: row.file_extensions || [],
+    file_extensions: row.file_extensions ? row.file_extensions.split(',').map((s) => s.trim()).filter(Boolean) : [],
     review_strategy: row.review_strategy || '',
     prompt_suffix: row.prompt_suffix || '',
-    score_threshold: row.score_threshold ?? 0,
+    score_threshold: row.score_threshold ?? 80,
     enabled: row.enabled,
   })
-  fileExtText.value = (row.file_extensions || []).join(',')
   dialogVisible.value = true
 }
 
 async function onSave() {
-  syncFileExt()
   saving.value = true
   try {
+    const payload = { ...form, file_extensions: form.file_extensions.join(',').replace(/,\s*/g, ',') }
     if (isEdit.value && editingId.value != null) {
-      await updateProject(editingId.value, { ...form })
+      await updateProject(editingId.value, payload)
     } else {
-      await createProject({ ...form })
+      await createProject(payload)
     }
     ElMessage.success('保存成功')
     dialogVisible.value = false

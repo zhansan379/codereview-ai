@@ -15,7 +15,9 @@ from codereview_ai.queue.worker import run_worker
 from codereview_ai.worker import (
     EventStore,
     QueueEnqueuer,
+    apply_extension_filter,
     make_processor,
+    parse_file_extensions,
     process_raw_event,
 )
 
@@ -163,6 +165,136 @@ async def test_process_incremental_dedups_previous_finding():
     # 该 finding 与上次内容指纹相同 → 被 dedup 掉，无行级评论；总结仍回写
     assert forge.posted_inline == []
     assert forge.posted_summary
+
+
+# ── 文件扩展名过滤（DESIGN：接入 diff 管线）──────────────
+
+
+def _diff(old: str = "", new: str = ""):
+    from codereview_ai.domain.models import ChangeType, FileDiff
+
+    return FileDiff(old_path=old, new_path=new or old, diff="---\n+++\n@@ -1 +1 @@\n",
+                    additions=1, deletions=0, change_type=ChangeType.MODIFIED)
+
+
+def test_parse_file_extensions_normalizes():
+    assert parse_file_extensions(".py, .ts\n") == {"py", "ts"}
+    assert parse_file_extensions("") == set()
+    assert parse_file_extensions("  ,  ") == set()
+    assert parse_file_extensions("Py") == {"py"}  # 去前导点 + 小写
+
+
+def test_apply_extension_filter_empty_keeps_all():
+    diffs = [_diff(new="a.py"), _diff(new="a.md"), _diff(new="Makefile")]
+    assert apply_extension_filter(diffs, "") == diffs  # 空 → 原样
+
+
+def test_apply_extension_filter_keeps_only_matching():
+    diffs = [_diff(new="a.py"), _diff(new="b.ts"), _diff(new="c.md"), _diff(new="README")]
+    kept = apply_extension_filter(diffs, ".py,.ts")
+    assert [d.new_path for d in kept] == ["a.py", "b.ts"]
+
+
+def test_apply_extension_filter_case_insensitive():
+    diffs = [_diff(new="Main.PY")]
+    assert apply_extension_filter(diffs, ".py") == diffs
+
+
+def test_apply_extension_filter_deleted_file_uses_old_path():
+    diffs = [_diff(old="gone.ts", new="")]  # 删除文件：new_path 空 → 走 old_path
+    assert apply_extension_filter(diffs, ".ts") == diffs
+    assert apply_extension_filter(diffs, ".py") == []
+
+
+class _MultiForge:
+    """返回多文件的 forge 桩：暴露 fetch 出的 diff 与回写记录。"""
+
+    name = "gitlab"
+
+    def __init__(self, paths: list[tuple[str, str]]) -> None:
+        self._paths = paths
+        self.fetch_called = 0
+        self.posted_summary: list[str] = []
+
+    def parse_merge_request(self, data):
+        oa = data.get("object_attributes") or {}
+        if data.get("object_kind") != "merge_request" or not oa.get("iid"):
+            return None
+        from codereview_ai.domain.models import PullRequest
+
+        return PullRequest(
+            provider="gitlab", repo_id=str(oa.get("target_project_id") or 7),
+            repo_full_name="acme/widgets", web_url="", pr_number=int(oa["iid"]),
+            title=str(oa.get("title") or ""), source_branch="s", target_branch="t",
+            head_sha=str(((oa.get("last_commit") or {}) or {}).get("id") or "h"),
+            base_sha="", diff_refs=None,
+        )
+
+    @staticmethod
+    def should_review(action):
+        return action in {"open", "opened", "update", "synchronize"}
+
+    async def fetch_pull_request(self, pr):
+        from dataclasses import replace
+        return replace(pr, diff_refs={"base_sha": "b", "head_sha": "h", "start_sha": "s"})
+
+    async def fetch_files(self, pr):
+        self.fetch_called += 1
+        return [_diff(old=p, new=n) for p, n in self._paths]
+
+    async def post_inline(self, pr, comments):  # 不产行级，过滤后无 finding
+        pass
+
+    async def post_summary(self, pr, body):
+        self.posted_summary.append(body)
+
+
+class _RecordingReviewer:
+    """记录实际收到的 diff 路径，供断言过滤生效。"""
+
+    def __init__(self) -> None:
+        self.received: list[list[str]] = []
+
+    async def review(self, *, pr, commits_text, diffs):
+        self.received.append([d.new_path or d.old_path for d in diffs])
+        from codereview_ai.domain.models import ReviewResult, ReviewScores
+
+        return ReviewResult(summary="s", scores=ReviewScores(
+            correctness=1, security=1, practices=1, performance=1, commit_quality=1))
+
+
+async def test_process_filters_diffs_by_project_extensions():
+    forge = _MultiForge([("a.py", "a.py"), ("a.md", "a.md"), ("b.ts", "b.ts")])
+    reviewer = _RecordingReviewer()
+
+    async def factory(provider, repo_id):
+        from codereview_ai.storage.project_repo import ProjectConfig
+        return ProjectConfig(file_extensions=".py,.ts")
+
+    await process_raw_event(forge, reviewer, _mr_payload(),  # type: ignore[arg-type]
+                            project_config_factory=factory)
+    assert reviewer.received == [["a.py", "b.ts"]]  # .md 被过滤
+
+
+async def test_process_factory_none_keeps_all():
+    forge = _MultiForge([("a.py", "a.py"), ("a.md", "a.md")])
+    reviewer = _RecordingReviewer()
+    await process_raw_event(forge, reviewer, _mr_payload())  # type: ignore[arg-type]
+    assert reviewer.received == [["a.py", "a.md"]]  # 未注入 → 不过滤
+
+
+async def test_process_all_filtered_skips_llm():
+    forge = _MultiForge([("a.py", "a.py")])
+    reviewer = _RecordingReviewer()
+
+    async def factory(provider, repo_id):
+        from codereview_ai.storage.project_repo import ProjectConfig
+        return ProjectConfig(file_extensions=".md")  # 全部滤掉
+
+    await process_raw_event(forge, reviewer, _mr_payload(),  # type: ignore[arg-type]
+                            project_config_factory=factory)
+    assert reviewer.received == []  # 不调 LLM
+    assert forge.posted_summary == []  # 不回写
 
 
 # ── 端到端：enqueue → worker ────────────────────────────────────────────
