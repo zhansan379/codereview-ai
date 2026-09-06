@@ -122,6 +122,43 @@ curl -X POST "https://api.github.com/repos/<owner>/<repo>/hooks" \
 > `CR_WEBHOOK_SECRET`、`CR_GITLAB_TOKEN`、`CR_GITHUB_TOKEN`、`CR_LLM_MODEL` 这几枚是**可选**的：
 > 不配也能起服务（后台、看板可用），但只有配齐了，平台推 M/R PR 时内置 worker 才会真跑审查并回写评论。
 
+### ④ 本地跑（uv，免 Docker）
+
+不想装 Docker 就用本地 uv：写密钥进 `.env`（一次性打印 + 永久保存，本地与 compose 都自动读），再 `uvicorn` 起服务。
+
+先在仓库根目录跑这个，生成 4 枚密钥写进 `.env` 并**当场打印**（`CR_WEBHOOK_SECRET` 抄到平台用）：
+
+```bash
+python - <<'EOF'
+import secrets
+from cryptography.fernet import Fernet
+keys = [
+    ("CR_SECRET_KEY",     secrets.token_urlsafe(48)),
+    ("CR_WEBHOOK_SECRET", secrets.token_urlsafe(48)),
+    ("CR_ENCRYPTION_KEY", Fernet.generate_key().decode()),
+    ("CR_ADMIN_PASSWORD", secrets.token_urlsafe(24)),
+]
+with open(".env", "w") as f:
+    for k, v in keys:
+        f.write(f"{k}={v}\n")
+        print(f"{k} = {v}")     # ← 当场打印，凭这份抄 webhook 密钥
+EOF
+```
+
+然后启动（首次先 `uv sync` 装依赖）：
+
+```bash
+uv sync
+uv run uvicorn codereview_ai.main:app --host 0.0.0.0 --port 5001
+# 另开终端验证：
+curl http://localhost:5001/health   # → 200 即就绪
+```
+
+想真审平台 MR，启动前在 `.env` 末尾追加上面②③里的平台信息（`CR_GITLAB_URL/CR_GITLAB_TOKEN` 或 `CR_GITHUB_URL/CR_GITHUB_TOKEN` + `CR_LLM_MODEL`），uvicorn 启动时才会起内置 worker。
+
+> 本地跑没容器那层；webhook 回调仍要公网可达才能被 GitLab/GitHub 连上（本地调试可 `ngrok http 5001`）。
+> `.env` 会在 `.gitignore` 里，不进仓库；缺密钥直接 `uvicorn` 会 fail-fast 退出并打印缺哪枚。
+
 ## 密钥说明（大白话）
 
 它们**不是**哪家平台（GitLab/GitHub/AI 服务商）给你的密码，而是**本系统自己家门的三把锁加一把钥匙**，都是你自己生成的随机串。缺了系统直接不启动（fail-fast），宁可不开机也不带病运行。
