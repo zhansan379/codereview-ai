@@ -1074,9 +1074,9 @@ Dockerfile
   Stage deps: uv sync --frozen --no-dev          # 生产依赖
   Stage build-frontend: npm run build            # 产出静态文件
   Stage runtime:
-    拷贝 deps venv + 前端 dist + alembic 脚本
+    拷贝 deps venv + 前端 dist
     USER 非 root；HEALTHCHECK curl /health
-    CMD: alembic upgrade head && uvicorn src.codereview_ai.main:app
+    CMD: uvicorn src.codereview_ai.main:app
 ```
 
 - **API 与 Worker 同镜像**，compose 里用不同 command 起两个服务：

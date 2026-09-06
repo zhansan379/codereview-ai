@@ -11,7 +11,6 @@ dependencies = [
     "pydantic>=2.12",
     "pydantic-settings>=2.14",
     "sqlalchemy[asyncio]>=2.0",
-    "alembic>=1.13",
     "httpx>=0.28",
     "orjson>=3.12",
     "cryptography>=42",
