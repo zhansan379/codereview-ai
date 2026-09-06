@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -37,6 +38,7 @@ from codereview_ai.review.increments import (
 from codereview_ai.review.result_writer import ResultWriter
 from codereview_ai.review.reviewer import Reviewer
 from codereview_ai.review.static_analysis import StaticAnalyzer
+from codereview_ai.storage.project_repo import ProjectConfig
 from codereview_ai.storage.review_repo import ReviewRepository
 
 logger = logging.getLogger("codereview_ai.worker")
@@ -45,6 +47,52 @@ logger = logging.getLogger("codereview_ai.worker")
 #: forge 可能返回 None（该 provider 未配置适配器），worker 跳过而非报错。
 ForgeFactory = Callable[[str], ForgeAdapter | None]
 ReviewerFactory = Callable[[str], Reviewer]
+#: 项目配置工厂：按 (provider, repo_id) 返回该项目启用行的审查配置（可为 None）。
+ProjectConfigFactory = Callable[[str, str], Awaitable[ProjectConfig | None]]
+
+
+def parse_file_extensions(raw: str) -> frozenset[str]:
+    """把逗号分隔的扩展名串整形成小写无前导点集合。
+
+    `".py, .ts\\n" → frozenset({"py", "ts"})`；空/空白 → 空集（表示不过滤）。
+    """
+    out: set[str] = set()
+    for part in (raw or "").split(","):
+        ext = part.strip().lstrip(".").lower()
+        if ext:
+            out.add(ext)
+    return frozenset(out)
+
+
+def apply_extension_filter(diffs: list[FileDiff], extensions: str) -> list[FileDiff]:
+    """按扩展名过滤 diff 列表（DESIGN 文件扩展名过滤）。
+
+    `extensions` 为空 → 原样返回（审全部，向后兼容）；否则只保留扩展名命中的文件
+    （`new_path` 为主、`old_path` 兜底——删除文件的场景）。大小写不敏感。
+    """
+    exts = parse_file_extensions(extensions)
+    if not exts:
+        return diffs
+
+    def _ext(d: FileDiff) -> str:
+        path = d.new_path or d.old_path
+        return os.path.splitext(path)[1].lstrip(".").lower()
+
+    return [d for d in diffs if _ext(d) in exts]
+
+
+async def _project_cfg(
+    factory: ProjectConfigFactory | None, provider: str, repo_id: str
+) -> ProjectConfig | None:
+    """取项目配置；未注入 factory → None（不破坏无 DB 的调用/旧测试）。"""
+    if factory is None:
+        return None
+    try:
+        cfg = await factory(provider, repo_id)
+    except Exception:  # noqa: BLE001 配置读取失败降级为不过滤，不影响审查主链
+        logger.warning("读取项目配置失败（%s@%s），按不过滤处理", provider, repo_id)
+        return None
+    return cfg
 
 
 @dataclass
@@ -213,6 +261,7 @@ async def process_raw_event(
     review_strategy: str = "diff",
     agent_runtime: SandboxRuntime | None = None,
     agent_llm_factory: Callable[[], AgentLLM] | None = None,
+    project_config_factory: ProjectConfigFactory | None = None,
 ) -> None:
     """原始 webhook payload → 审查 + 回写。各阶段失败在此抛出，由 worker 标 failed。
 
@@ -223,7 +272,8 @@ async def process_raw_event(
     校验上次 head 是否仍在本 PR 链上（平台 compare），缺省 `None` → 保守回退全量。
     `notifier`（DESIGN F4）给定时，审查+回写成功后后台推送 IM 通知（失败不影响主链）。
     `push_gate` 给定时判定 push 轨是否走 LLM（默认关）；给定 `review_repo` 时两轨结果
-    真落库（review_task/review_finding）。
+    真落库（review_task/review_finding）。`project_config_factory`（可选）按项目取
+    `file_extensions` 过滤 diff（DESIGN 文件扩展名过滤）；未给定 → 不过滤。
     """
     try:
         data = json.loads(raw)
@@ -240,7 +290,7 @@ async def process_raw_event(
             forge, reviewer, ev, review_repo=review_repo, grouper=grouper,
             notifier=notifier, push_gate=push_gate, static_analyzer=static_analyzer,
             review_strategy=review_strategy, agent_runtime=agent_runtime,
-            agent_llm_factory=agent_llm_factory,
+            agent_llm_factory=agent_llm_factory, project_config_factory=project_config_factory,
         )
         return
     if not forge.should_review(_event_action(data)):
@@ -261,6 +311,24 @@ async def process_raw_event(
 
     refreshed = await forge.fetch_pull_request(pr)  # 补 diff_refs（行级评论 position 必填）
     diffs = await forge.fetch_files(refreshed)
+    # 项目级文件扩展名过滤：只审命中的文件（DESIGN 文件扩展名过滤）
+    cfg = await _project_cfg(project_config_factory, refreshed.provider, refreshed.repo_id)
+    if cfg and cfg.file_extensions:
+        diffs = apply_extension_filter(diffs, cfg.file_extensions)
+    if not diffs:
+        # 全部被扩展名滤掉：不调 LLM（省 token）；有 review_repo 则记 completed-empty
+        if review_repo is not None:
+            task_id = await review_repo.ensure_task(
+                provider=refreshed.provider, repo_id=refreshed.repo_id,
+                pr_number=refreshed.pr_number, event_type="mr",
+                branch=refreshed.source_branch, head_sha=refreshed.head_sha,
+                base_sha=refreshed.base_sha,
+            )
+            if task_id is not None:
+                await review_repo.mark_state(task_id, state="completed",
+                                             summary_md="_扩展名过滤后无待审文件_",
+                                             score_total=0)
+        return
     # 静态分析先跑（DESIGN §11）：失败降级为空，不影响主链
     static_findings = await _run_static(static_analyzer, diffs)
     result = await _review_agent_or_diff(
@@ -314,6 +382,7 @@ async def _review_push_event(
     review_strategy: str = "diff",
     agent_runtime: SandboxRuntime | None = None,
     agent_llm_factory: Callable[[], AgentLLM] | None = None,
+    project_config_factory: ProjectConfigFactory | None = None,
 ) -> None:
     """push 轨审查（DESIGN §7.7）：幂等落审计行 → 门控 → 差量三分支 → 单条总结回写。
 
@@ -352,6 +421,16 @@ async def _review_push_event(
             diffs = await forge.get_first_commit_changes(ev)
         else:
             diffs = await forge.get_push_changes(ev)
+        # 项目级文件扩展名过滤（DESIGN 文件扩展名过滤），push 轨同样生效
+        cfg = await _project_cfg(project_config_factory, ev.provider, ev.repo_id)
+        if cfg and cfg.file_extensions:
+            diffs = apply_extension_filter(diffs, cfg.file_extensions)
+        if not diffs:
+            # 全部被扩展名滤掉：不调 LLM，审计行标 completed-empty
+            if review_repo is not None:
+                await review_repo.mark_state(audit_id, state="completed",
+                                             summary_md="_扩展名过滤后无待审文件_", score_total=0)
+            return
         pr = _push_as_pr(ev)
         static_findings = await _run_static(static_analyzer, diffs)
         result = await _review_agent_or_diff(
@@ -391,12 +470,14 @@ def make_processor(
     review_strategy: str = "diff",
     agent_runtime: SandboxRuntime | None = None,
     agent_llm_factory: Callable[[], AgentLLM] | None = None,
+    project_config_factory: ProjectConfigFactory | None = None,
 ) -> Callable[[TaskMeta], Awaitable[None]]:
     """由 worker 主循环调用的处理函数：根据 task 取 payload 后走完整管线。
 
     `increments`/`review_repo`/`grouper`/`chain_valid`/`notifier`/`push_gate`/
-    `static_analyzer`/`review_strategy`/`agent_runtime`/`agent_llm_factory` 透传给
-    `process_raw_event`（都缺省时禁用增量/分组/推送/记录/静态分析/沙箱，见其 docstring）。
+    `static_analyzer`/`review_strategy`/`agent_runtime`/`agent_llm_factory`/
+    `project_config_factory` 透传给 `process_raw_event`（都缺省时禁用增量/分组/推送/
+    记录/静态分析/沙箱/扩展名过滤，见其 docstring）。
     """
 
     async def process(task: TaskMeta) -> None:
@@ -423,6 +504,7 @@ def make_processor(
             review_strategy=review_strategy,
             agent_runtime=agent_runtime,
             agent_llm_factory=agent_llm_factory,
+            project_config_factory=project_config_factory,
         )
 
     return process

@@ -3,7 +3,7 @@ import LayoutView from '../views/LayoutView.vue'
 
 // 除 /login 外所有页面都挂在 LayoutView 之下（含侧边菜单、顶栏）
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/login',
