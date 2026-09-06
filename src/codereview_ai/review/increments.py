@@ -65,18 +65,17 @@ class IncrementStore:
         self._entries[(provider, pr_number)] = IncrementReference(head_sha, fingerprints)
 
 
-def decide_increment(
-    store: IncrementStore,
+def decide_from_ref(
+    ref: IncrementReference | None,
     pr: PullRequest,
     *,
     chain_valid: bool,
 ) -> IncrementDecision:
-    """决定本次审查路径。
+    """按上次审查落点 `ref` 决定本次审查路径。
 
     `chain_valid` = 上次 head 仍落在本次 PR 的可比较 diff 链上（由平台 compare 校验）。
     force-push / rebase / merge-main 使 last.head_sha 脱离链 → chain_valid=False → 回退全量。
     """
-    ref = store.last(pr.provider, pr.pr_number)
     if ref is None:
         return IncrementDecision(False, None, REASON_FIRST)
     if ref.head_sha == pr.head_sha:
@@ -86,6 +85,17 @@ def decide_increment(
         return IncrementDecision(True, ref.head_sha, REASON_INCREMENTAL)
     # 保守回退：宁可全量多审一遍，也不在失效链上误判已解决（DESIGN §7.3）
     return IncrementDecision(False, ref.head_sha, REASON_CHAIN_INVALID)
+
+
+def decide_increment(
+    store: IncrementStore,
+    pr: PullRequest,
+    *,
+    chain_valid: bool,
+) -> IncrementDecision:
+    """从进程内 store 取上轮落点后走 `decide_from_ref`（兼容 M3 内存档调用方）。"""
+    ref = store.last(pr.provider, pr.pr_number)
+    return decide_from_ref(ref, pr, chain_valid=chain_valid)
 
 
 def dedup_findings(findings: list[Finding], ref: IncrementReference | None) -> list[Finding]:

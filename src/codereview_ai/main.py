@@ -29,6 +29,7 @@ from codereview_ai.ops.tracing import TraceMiddleware
 from codereview_ai.queue.asyncio import AsyncioTaskQueue
 from codereview_ai.queue.worker import run_worker
 from codereview_ai.storage.db import create_engine, init_db
+from codereview_ai.storage.review_repo import ReviewRepository
 from codereview_ai.worker import EventStore, QueueEnqueuer, make_processor
 
 logger = logging.getLogger("codereview_ai.main")
@@ -60,7 +61,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if providers and reviewer is not None:
             http = httpx.AsyncClient(timeout=settings.request_timeout_seconds)
             adapters = {p: build_adapter(p, settings, http) for p in providers}
-            processor = make_processor(lambda p: adapters.get(p), lambda _: reviewer, store)
+            review_repo = ReviewRepository(engine)
+            processor = make_processor(
+                lambda p: adapters.get(p), lambda _: reviewer, store, review_repo=review_repo
+            )
             worker_task = asyncio.create_task(run_worker(queue, processor))
             logger.info(
                 "内置 worker 已启动：%s（model %s）",
