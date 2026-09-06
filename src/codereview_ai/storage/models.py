@@ -96,6 +96,8 @@ class ReviewTask(Base):
     summary_md: Mapped[str] = mapped_column(Text, default="")
     score_total: Mapped[int] = mapped_column(Integer, default=0)
     issues: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    # 原始 webhook body；重试时据此回放重新入队（否则 simple 档内存队列不会消费 DB 侧 flip 的 queued）
+    payload: Mapped[str] = mapped_column(Text, default="")
 
 
 class ReviewFinding(Base):

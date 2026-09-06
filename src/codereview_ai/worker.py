@@ -291,6 +291,7 @@ async def process_raw_event(
             notifier=notifier, push_gate=push_gate, static_analyzer=static_analyzer,
             review_strategy=review_strategy, agent_runtime=agent_runtime,
             agent_llm_factory=agent_llm_factory, project_config_factory=project_config_factory,
+            raw_payload=raw.decode("utf-8", "replace"),
         )
         return
     if not forge.should_review(_event_action(data)):
@@ -316,7 +317,7 @@ async def process_raw_event(
         task_id = await review_repo.ensure_task(
             provider=pr.provider, repo_id=pr.repo_id, pr_number=pr.pr_number,
             event_type="mr", branch=pr.source_branch, head_sha=pr.head_sha,
-            base_sha=pr.base_sha,
+            base_sha=pr.base_sha, payload=raw.decode("utf-8", "replace"),
         )
 
     try:
@@ -390,6 +391,7 @@ async def _review_push_event(
     agent_runtime: SandboxRuntime | None = None,
     agent_llm_factory: Callable[[], AgentLLM] | None = None,
     project_config_factory: ProjectConfigFactory | None = None,
+    raw_payload: str = "",
 ) -> None:
     """push 轨审查（DESIGN §7.7）：幂等落审计行 → 门控 → 差量三分支 → 单条总结回写。
 
@@ -407,7 +409,7 @@ async def _review_push_event(
             return
         tid = await review_repo.ensure_task(
             provider=ev.provider, repo_id=ev.repo_id, pr_number=None, event_type="push",
-            branch=ev.branch, head_sha=ev.after, base_sha=ev.before,
+            branch=ev.branch, head_sha=ev.after, base_sha=ev.before, payload=raw_payload,
         )
         if tid is None:
             return  # 并发下另一 worker 抢先插入 → 幂等跳过（§7.7）

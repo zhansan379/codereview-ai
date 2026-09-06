@@ -251,6 +251,40 @@ def test_tasks_list_and_retry(app):
         assert c.post("/api/tasks/9999/retry").status_code == 404
 
 
+def test_retry_reenqueues_payload(app):
+    """重试失败任务时把原始 webhook 重新投进队列（修复原先一直排队中的 bug）。"""
+    fast, token = app
+    payload = '{"action": "open", "object_attributes": {"action": "open"}}'
+    payload_bytes = payload.encode("utf-8")
+
+    async def _seed() -> None:
+        session = session_factory(fast.state.engine)
+        async with session() as s:
+            s.add(ReviewTask(provider="gitlab", repo_id="1", pr_number=7, event_type="mr",
+                             branch="main", head_sha="xyz", state="failed", attempt=1,
+                             error="boom", payload=payload))
+            await s.commit()
+
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(_seed())
+
+    calls: list[tuple[str, bytes]] = []
+
+    class _FakeEnqueuer:
+        async def enqueue(self, provider: str, raw: bytes) -> str:
+            calls.append((provider, raw))
+            return "t-x"
+
+    fast.state.enqueuer = _FakeEnqueuer()
+
+    with _client(fast, token) as c:
+        failed = c.get("/api/tasks?state=failed").json()
+        tid = failed[0]["id"]
+        retried = c.post(f"/api/tasks/{tid}/retry").json()
+        assert retried["state"] == "queued" and retried["attempt"] == 2
+        assert calls == [("gitlab", payload_bytes)]
+
+
 def test_forges_list_synthesizes_defaults(app, monkeypatch):
     fast, token = app
     monkeypatch.delenv("CR_GITHUB_TOKEN", raising=False)
