@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     max_concurrent_reviews: int = 4
     request_timeout_seconds: float = 60.0
 
+    # —— 平台 / LLM（可选；未配齐则 worker 不启动，仅 webhook 可入队）——
+    gitlab_url: str = ""
+    gitlab_token: str = ""
+    llm_model: str = ""
+
     @model_validator(mode="after")
     def _fail_fast(self) -> Settings:
         """校验必备密钥存在、Fernet 密钥格式合法，缺失/非法直接退出。"""
