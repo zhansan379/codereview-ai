@@ -14,6 +14,7 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from fnmatch import fnmatch
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI
@@ -31,6 +32,7 @@ from codereview_ai.ops.health import router as health_router
 from codereview_ai.ops.tracing import TraceMiddleware
 from codereview_ai.queue.asyncio import AsyncioTaskQueue
 from codereview_ai.queue.worker import run_worker
+from codereview_ai.review.static_analysis import StaticAnalyzer
 from codereview_ai.storage.db import create_engine, init_db
 from codereview_ai.storage.review_repo import ReviewRepository
 from codereview_ai.worker import EventStore, PushGate, QueueEnqueuer, make_processor
@@ -84,9 +86,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 enabled=settings.push_review_enabled,
                 branch_match=_branch_glob_match(settings.push_branch_globs),
             )
+            # §11 静态分析：默认开，缺工具自动降级，不影响主链
+            ws = Path(settings.static_workspace_dir) if settings.static_workspace_dir else None
+            static_analyzer = StaticAnalyzer(enabled=settings.review_static_enabled, workspace=ws)
             processor = make_processor(
                 lambda p: adapters.get(p), lambda _: reviewer, store, review_repo=review_repo,
-                notifier=notifier, push_gate=push_gate,
+                notifier=notifier, push_gate=push_gate, static_analyzer=static_analyzer,
             )
             worker_task = asyncio.create_task(run_worker(queue, processor))
             logger.info(

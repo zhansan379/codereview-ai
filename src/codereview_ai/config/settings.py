@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     push_review_enabled: bool = False
     push_branch_globs: str = ""  # 逗号分隔 glob，命中才审；空 = enable 时全放行
 
+    # —— 静态分析融合（§11：默认开，缺工具自动降级）——
+    review_static_enabled: bool = True
+    static_workspace_dir: str = ""  # 临时工作区目录；空 = 系统临时目录
+
     # —— 平台 / LLM（可选；未配齐则 worker 不启动，仅 webhook 可入队）——
     gitlab_url: str = ""
     gitlab_token: str = ""

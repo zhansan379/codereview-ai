@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from codereview_ai.domain.models import PullRequest, PushEvent, ReviewResult
+from codereview_ai.domain.models import FileDiff, Finding, PullRequest, PushEvent, ReviewResult
 from codereview_ai.forges.base import ForgeAdapter
 from codereview_ai.notifiers.dispatch import NotifierDispatcher
 from codereview_ai.queue.base import TaskMeta, TaskQueue
@@ -34,6 +34,7 @@ from codereview_ai.review.increments import (
 )
 from codereview_ai.review.result_writer import ResultWriter
 from codereview_ai.review.reviewer import Reviewer
+from codereview_ai.review.static_analysis import StaticAnalyzer
 from codereview_ai.storage.review_repo import ReviewRepository
 
 logger = logging.getLogger("codereview_ai.worker")
@@ -115,6 +116,19 @@ def _is_all_zero(sha: str) -> bool:
     return bool(sha) and set(sha) == {"0"}
 
 
+async def _run_static(
+    analyzer: StaticAnalyzer | None, diffs: list[FileDiff]
+) -> list[Finding]:
+    """跑静态分析（DESIGN §11）。未配置/失败都降级返回空列表，绝不阻断主链。"""
+    if analyzer is None or not diffs:
+        return []
+    try:
+        return await analyzer.analyze(diffs)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("静态分析异常降级：%s", exc)
+        return []
+
+
 class EventStore:
     """task_id → (provider, raw_body) 的进程内暂存。"""
 
@@ -163,6 +177,7 @@ async def process_raw_event(
     chain_valid: Callable[[str, str], bool] | None = None,
     notifier: NotifierDispatcher | None = None,
     push_gate: PushGate | None = None,
+    static_analyzer: StaticAnalyzer | None = None,
 ) -> None:
     """原始 webhook payload → 审查 + 回写。各阶段失败在此抛出，由 worker 标 failed。
 
@@ -188,7 +203,7 @@ async def process_raw_event(
             return  # 非 merge_request 也非 push 事件：任务即完成，无需回写
         await _review_push_event(
             forge, reviewer, ev, review_repo=review_repo, grouper=grouper,
-            notifier=notifier, push_gate=push_gate,
+            notifier=notifier, push_gate=push_gate, static_analyzer=static_analyzer,
         )
         return
     if not forge.should_review(_event_action(data)):
@@ -209,12 +224,12 @@ async def process_raw_event(
 
     refreshed = await forge.fetch_pull_request(pr)  # 补 diff_refs（行级评论 position 必填）
     diffs = await forge.fetch_files(refreshed)
-    if grouper is not None:
-        result = await review_in_groups(
-            reviewer, grouper, pr=refreshed, commits_text=refreshed.title, diffs=diffs
-        )
-    else:
-        result = await reviewer.review(pr=refreshed, commits_text=refreshed.title, diffs=diffs)
+    # 静态分析先跑（DESIGN §11）：失败降级为空，不影响主链
+    static_findings = await _run_static(static_analyzer, diffs)
+    result = await review_in_groups(
+        reviewer, grouper, pr=refreshed, commits_text=refreshed.title, diffs=diffs,
+        static_findings=static_findings,
+    )
 
     if incremental:
         # 只审增量：按内容指纹滤掉上次已报过的 finding（DESIGN §7.3 / §13.3）
@@ -257,6 +272,7 @@ async def _review_push_event(
     grouper: SemanticGrouper | None = None,
     notifier: NotifierDispatcher | None = None,
     push_gate: PushGate | None = None,
+    static_analyzer: StaticAnalyzer | None = None,
 ) -> None:
     """push 轨审查（DESIGN §7.7）：幂等落审计行 → 门控 → 差量三分支 → 单条总结回写。
 
@@ -296,12 +312,11 @@ async def _review_push_event(
         else:
             diffs = await forge.get_push_changes(ev)
         pr = _push_as_pr(ev)
-        if grouper is not None:
-            result = await review_in_groups(
-                reviewer, grouper, pr=pr, commits_text=_commits_text(ev), diffs=diffs
-            )
-        else:
-            result = await reviewer.review(pr=pr, commits_text=_commits_text(ev), diffs=diffs)
+        static_findings = await _run_static(static_analyzer, diffs)
+        result = await review_in_groups(
+            reviewer, grouper, pr=pr, commits_text=_commits_text(ev), diffs=diffs,
+            static_findings=static_findings,
+        )
         summary = build_push_summary(ev, result)
         await forge.post_commit_summary(ev, summary)  # 只一条总结评论，无行级（§7.7）
         if notifier is not None:
@@ -330,11 +345,13 @@ def make_processor(
     chain_valid: Callable[[str, str], bool] | None = None,
     notifier: NotifierDispatcher | None = None,
     push_gate: PushGate | None = None,
+    static_analyzer: StaticAnalyzer | None = None,
 ) -> Callable[[TaskMeta], Awaitable[None]]:
     """由 worker 主循环调用的处理函数：根据 task 取 payload 后走完整管线。
 
-    `increments`/`review_repo`/`grouper`/`chain_valid`/`notifier`/`push_gate` 透传给
-    `process_raw_event`（都缺省时禁用增量/分组/推送/记录，见其 docstring）。
+    `increments`/`review_repo`/`grouper`/`chain_valid`/`notifier`/`push_gate`/
+    `static_analyzer` 透传给 `process_raw_event`（都缺省时禁用增量/分组/推送/记录/
+    静态分析，见其 docstring）。
     """
 
     async def process(task: TaskMeta) -> None:
@@ -357,6 +374,7 @@ def make_processor(
             chain_valid=chain_valid,
             notifier=notifier,
             push_gate=push_gate,
+            static_analyzer=static_analyzer,
         )
 
     return process

@@ -94,8 +94,21 @@ def build_messages(
     diffs: list[FileDiff],
     skipped_files: list[str],
     cfg: ReviewerConfig,
+    static_findings_text: str = "",
 ) -> list[dict[str, str]]:
-    """用 diff_review 模板拼 system + user 消息（输出严格为 JSON 对象）。"""
+    """用 diff_review 模板拼 system + user 消息（输出严格为 JSON 对象）。
+
+    `static_findings_text` 非空时追加到 system 的审查重点之后，告诉 LLM 这些
+    问题已由静态分析查得、不要重复报告（DESIGN §11）。
+    """
+    static_block = ""
+    if static_findings_text:
+        static_block = (
+            "### 已有的静态分析结果\n"
+            "以下问题已由静态分析查得并会单独呈现，**不要重复报告**，"
+            "只关注静态分析未覆盖的问题：\n```\n"
+            f"{static_findings_text}\n```\n\n"
+        )
     system = f"""你是一位资深软件工程师，正在对一次代码变更做审查。
 
 ### 评分规则（总分 100）
@@ -127,7 +140,7 @@ def build_messages(
 优先报告静态分析工具查不出来的问题：业务逻辑错误、并发与竞态、错误处理缺失、
 安全设计缺陷、API 契约破坏、性能陷阱。不要报告格式、缩进、import 顺序这类 linter 已覆盖的问题。
 
-### 风格
+{static_block}### 风格
 措辞采用 {cfg.style} 风格，但 severity 判定不受风格影响。
 
 ### 输出
@@ -173,6 +186,7 @@ class Reviewer:
         pr: PullRequest,
         commits_text: str,
         diffs: list[FileDiff],
+        static_findings_text: str = "",
     ) -> ReviewResult:
         kept, skipped = filter_files(diffs, self.cfg)
         messages = build_messages(
@@ -181,6 +195,7 @@ class Reviewer:
             diffs=kept,
             skipped_files=skipped,
             cfg=self.cfg,
+            static_findings_text=static_findings_text,
         )
         text = await self.gateway.complete(messages)
         result = parse_review_json(text)

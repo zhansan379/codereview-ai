@@ -10,9 +10,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 
-from codereview_ai.domain.models import FileDiff, PullRequest, ReviewResult
+from codereview_ai.domain.models import FileDiff, Finding, PullRequest, ReviewResult
 from codereview_ai.review.grouping import SemanticGrouper
 from codereview_ai.review.reviewer import Reviewer
+from codereview_ai.review.static_analysis import render_static_findings
 
 #: 触发分组审查的文件数阈值；小于此数走整组一次审查（DESIGN §7.5「files≥4」）
 GROUPING_MIN_FILES = 4
@@ -53,22 +54,50 @@ def merge_results(results: list[ReviewResult], groups: list[list[FileDiff]]) -> 
     return out
 
 
+def _attach_static(result: ReviewResult, static: list[Finding]) -> ReviewResult:
+    """把静态 findings **硬写入**结果（DESIGN §11）。
+
+    静态自带 `source='static:*'`，与 llm findings 天然不同源，直接 union 即可，
+    不做跨源去重（同一问题工具与 LLM 分属两类信号，各自呈现）。
+    """
+    result.findings.extend(static)
+    return result
+
+
 async def review_in_groups(
     reviewer: Reviewer,
-    grouper: SemanticGrouper,
+    grouper: SemanticGrouper | None,
     pr: PullRequest,
     commits_text: str,
     diffs: list[FileDiff],
+    static_findings: list[Finding] | None = None,
 ) -> ReviewResult:
     """把 diff 分组后每组独立审查，合并为整体结果；小变更整组一次。
 
     `grouper` 已包装好降级（LLM 失败 → per-file，见 grouping.py），主链可放心使用。
+    `static_findings`（DESIGN §11）：每个分组只把**本组文件**的静态提示注入该组 prompt；
+    最终把全部静态 findings 硬写入合并结果。
     """
-    if len(diffs) < GROUPING_MIN_FILES:
-        return await reviewer.review(pr=pr, commits_text=commits_text, diffs=diffs)
+    static = static_findings or []
+    if grouper is None or len(diffs) < GROUPING_MIN_FILES:
+        static_text = render_static_findings(static, {d.new_path for d in diffs})
+        result = await reviewer.review(
+            pr=pr, commits_text=commits_text, diffs=diffs, **_static_kwargs(static_text)
+        )
+        return _attach_static(result, static)
 
     groups = await grouper.group(diffs)
-    results = await asyncio.gather(
-        *(reviewer.review(pr=pr, commits_text=commits_text, diffs=g) for g in groups)
-    )
-    return merge_results(list(results), groups)
+    results = await asyncio.gather(*(
+        reviewer.review(
+            pr=pr, commits_text=commits_text, diffs=g,
+            **_static_kwargs(render_static_findings(static, {d.new_path for d in g})),
+        )
+        for g in groups
+    ))
+    merged = merge_results(list(results), groups)
+    return _attach_static(merged, static)
+
+
+def _static_kwargs(static_text: str) -> dict[str, str]:
+    """空文本不改调用形状：缺省 fake reviewer（无 static 参数）也兼容。"""
+    return {"static_findings_text": static_text} if static_text else {}
