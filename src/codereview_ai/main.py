@@ -18,6 +18,7 @@ import httpx
 from fastapi import FastAPI
 
 from codereview_ai.api.admin import models, notifiers, projects, reviews, tasks
+from codereview_ai.api.admin_ui import mount_admin
 from codereview_ai.api.auth import router as auth_router
 from codereview_ai.api.webhook import router as webhook_router
 from codereview_ai.config import Settings
@@ -106,6 +107,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.add_middleware(TraceMiddleware)
     app.include_router(health_router)
+    mount_admin(app, settings.frontend_dist)
     app.include_router(auth_router, prefix="/api")
     app.include_router(projects.router, prefix="/api")
     app.include_router(models.router, prefix="/api")

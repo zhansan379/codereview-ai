@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     redis_url: str | None = None
     log_level: str = "INFO"
     openapi_enabled: bool = True
+    frontend_dist: str = ""  # 管理台构建产物目录；为空则按仓库根 frontend/dist 推算
 
     # —— 审查并发与超时（供 worker 使用）——
     max_concurrent_reviews: int = 4
