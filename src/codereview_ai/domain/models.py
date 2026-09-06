@@ -67,6 +67,7 @@ class PushEvent:
     before: str  # 全 0 = 新分支
     after: str  # 全 0 = 删分支
     commits: list[CommitInfo] = field(default_factory=list)
+    pusher: str = ""
 
 
 class Category(StrEnum):

@@ -17,7 +17,7 @@ from typing import Any
 
 import httpx
 
-from codereview_ai.domain.models import ChangeType, FileDiff, PullRequest
+from codereview_ai.domain.models import ChangeType, CommitInfo, FileDiff, PullRequest, PushEvent
 from codereview_ai.forges.base import ForgeAdapter
 from codereview_ai.forges.signatures import GITHUB
 
@@ -68,6 +68,39 @@ def parse_pull_request_payload(data: dict[str, Any]) -> PullRequest | None:
         base_sha=str(base.get("sha") or ""),
         author=str(((data.get("sender") or {}) or {}).get("login") or ""),
         is_draft=bool(event.get("draft")),
+    )
+
+
+def parse_push_event_payload(data: dict[str, Any]) -> PushEvent | None:
+    """从 GitHub `push` webhook payload 解析中立 PushEvent（§7.7）。
+
+    非 push 事件、或缺 repository 标识时返回 None；`ref` 截取 `refs/heads/` 前缀。
+    """
+    repo = data.get("repository") or {}
+    if not isinstance(repo, dict):
+        repo = {}
+    full_name = str(repo.get("full_name") or "")
+    if not full_name:
+        return None
+    ref = str(data.get("ref") or "")
+    branch = ref.removeprefix("refs/heads/") if ref.startswith("refs/heads/") else ""
+    commits = data.get("commits") or []
+    return PushEvent(
+        provider=GITHUB,
+        repo_id=full_name,
+        repo_full_name=full_name,
+        branch=branch,
+        before=str(data.get("before") or ""),
+        after=str(data.get("after") or ""),
+        commits=[
+            CommitInfo(
+                sha=str(c.get("id") or ""),
+                message=str(c.get("message") or ""),
+                author_name=str(((c.get("author") or {}) or {}).get("name") or ""),
+            )
+            for c in commits if isinstance(c, dict)
+        ],
+        pusher=str(((data.get("pusher") or {}) or {}).get("name") or ""),
     )
 
 
@@ -123,6 +156,9 @@ class GitHubForge(ForgeAdapter):
     # ── payload → 中立模型 ──────────────────────────────────────────────
     def parse_merge_request(self, data: dict[str, Any]) -> PullRequest | None:
         return parse_pull_request_payload(data)
+
+    def parse_push_event(self, data: dict[str, Any]) -> PushEvent | None:
+        return parse_push_event_payload(data)
 
     # ── REST 拉取 ──────────────────────────────────────────────────────
     async def fetch_pull_request(self, pr: PullRequest) -> PullRequest:
@@ -201,6 +237,48 @@ class GitHubForge(ForgeAdapter):
             f"{self._base}/repos/{owner}/{repo}/pulls/{pr.pr_number}/reviews",
             headers=self._auth_headers(),
             json={"commit_id": pr.head_sha, "event": "COMMENT", "comments": batch},
+        )
+        resp.raise_for_status()
+
+    # ── push 轨（§7.7）：compare / 单 commit / head commit 总结回写 ──
+    async def get_push_changes(self, ev: PushEvent) -> list[FileDiff]:
+        """compare {before}...{after}；after 全 0（删分支）直接返回空。"""
+        owner, repo = _owner_repo(ev.repo_id)
+        if ev.after and ev.after.count("0") == len(ev.after):
+            return []
+        path = f"{self._base}/repos/{owner}/{repo}/compare/{ev.before}...{ev.after}"
+        return await self._get_files_with_retry(path)
+
+    async def get_first_commit_changes(self, ev: PushEvent) -> list[FileDiff]:
+        """新分支（before 全 0）：单 commit API 拉该提交 files 差量。"""
+        owner, repo = _owner_repo(ev.repo_id)
+        if not ev.commits:
+            return []
+        sha = ev.commits[0].sha
+        path = f"{self._base}/repos/{owner}/{repo}/commits/{sha}"
+        return await self._get_files_with_retry(path)
+
+    async def _get_files_with_retry(self, path: str) -> list[FileDiff]:
+        delay = _RETRY_DELAY_0
+        for attempt in range(_RETRY_ATTEMPTS):
+            resp = await self._http.get(path, headers=self._auth_headers())
+            resp.raise_for_status()
+            body = resp.json()
+            raw = body.get("files") if isinstance(body, dict) else None
+            if isinstance(raw, list) and raw:
+                return [_to_file_diff(i) for i in raw if isinstance(i, dict)]
+            if attempt + 1 < _RETRY_ATTEMPTS:
+                await asyncio.sleep(delay)
+                delay *= 2
+        return []
+
+    async def post_commit_summary(self, ev: PushEvent, text: str) -> None:
+        """总结回写到 head commit：POST commits/{sha}/comments，字段 **body**（§13.1）。"""
+        owner, repo = _owner_repo(ev.repo_id)
+        resp = await self._http.post(
+            f"{self._base}/repos/{owner}/{repo}/commits/{ev.after}/comments",
+            headers=self._auth_headers(),
+            json={"body": text},
         )
         resp.raise_for_status()
 

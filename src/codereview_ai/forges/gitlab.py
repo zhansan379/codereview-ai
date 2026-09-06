@@ -18,7 +18,7 @@ from typing import Any
 
 import httpx
 
-from codereview_ai.domain.models import FileDiff, PullRequest
+from codereview_ai.domain.models import CommitInfo, FileDiff, PullRequest, PushEvent
 from codereview_ai.forges.base import ForgeAdapter, change_type_from_flags, count_diff_stats
 from codereview_ai.forges.signatures import GITLAB
 
@@ -60,6 +60,41 @@ def parse_merge_request_payload(data: dict[str, Any]) -> PullRequest | None:
     )
 
 
+def parse_push_event_payload(data: dict[str, Any]) -> PushEvent | None:
+    """从 GitLab `push` webhook payload 解析中立 PushEvent（§7.7）。
+
+    非 push 事件返回 None；`ref` 需截取 `refs/heads/` 前缀。
+    """
+    if data.get("object_kind") != "push":
+        return None
+    project = data.get("project") or {}
+    if not isinstance(project, dict):
+        project = {}
+    repo_id = str(project.get("id") or "")
+    if not repo_id:
+        return None
+    ref = str(data.get("ref") or "")
+    branch = ref.removeprefix("refs/heads/") if ref.startswith("refs/heads/") else ""
+    commits = data.get("commits") or []
+    return PushEvent(
+        provider=GITLAB,
+        repo_id=repo_id,
+        repo_full_name=str(project.get("path_with_namespace") or ""),
+        branch=branch,
+        before=str(data.get("before") or ""),
+        after=str(data.get("after") or ""),
+        commits=[
+            CommitInfo(
+                sha=str(c.get("id") or ""),
+                message=str(c.get("message") or ""),
+                author_name=str(((c.get("author") or {}) or {}).get("name") or ""),
+            )
+            for c in commits if isinstance(c, dict)
+        ],
+        pusher=str(data.get("user_username") or ""),
+    )
+
+
 def _to_file_diff(item: dict[str, Any]) -> FileDiff:
     old_path = str(item.get("old_path") or "")
     new_path = str(item.get("new_path") or old_path)
@@ -94,6 +129,9 @@ class GitLabForge(ForgeAdapter):
     # ── payload → 中立模型 ──────────────────────────────────────────────
     def parse_merge_request(self, data: dict[str, Any]) -> PullRequest | None:
         return parse_merge_request_payload(data)
+
+    def parse_push_event(self, data: dict[str, Any]) -> PushEvent | None:
+        return parse_push_event_payload(data)
 
     # ── REST 拉取 ──────────────────────────────────────────────────────
     async def fetch_pull_request(self, pr: PullRequest) -> PullRequest:
@@ -176,6 +214,59 @@ class GitLabForge(ForgeAdapter):
                 json={"body": str(c.get("body") or ""), "position": position},
             )
             resp.raise_for_status()
+
+    # ── push 轨（§7.7）：compare / 单 commit diff / head commit 总结回写 ──
+    async def _get_diffs_with_retry(self, path: str) -> list[FileDiff]:
+        """GET 变化 API 并按 changes/diffs 数组转换；空数组指数退避重试。"""
+        delay = _RETRY_DELAY_0
+        for attempt in range(_RETRY_ATTEMPTS):
+            resp = await self._http.get(path, headers=self._auth_headers())
+            resp.raise_for_status()
+            body = resp.json()
+            raw = body.get("diffs") if isinstance(body, dict) else None
+            if isinstance(raw, list) and raw:
+                return [_to_file_diff(d) for d in raw if isinstance(d, dict)]
+            if attempt + 1 < _RETRY_ATTEMPTS:
+                await asyncio.sleep(delay)
+                delay *= 2
+        return []
+
+    async def get_push_changes(self, ev: PushEvent) -> list[FileDiff]:
+        """compare from=before&to=after；after 全 0（删分支）直接返回空。"""
+        if ev.after and ev.after.count("0") == len(ev.after):
+            return []
+        path = (
+            f"{self._base}/api/v4/projects/{ev.repo_id}/repository/compare"
+            f"?from={ev.before}&to={ev.after}"
+        )
+        return await self._get_diffs_with_retry(path)
+
+    async def get_first_commit_changes(self, ev: PushEvent) -> list[FileDiff]:
+        """新分支（before 全 0）：单 commit diff API 拉首个提交差量。"""
+        if not ev.commits:
+            return []
+        sha = ev.commits[0].sha
+        path = f"{self._base}/api/v4/projects/{ev.repo_id}/repository/commits/{sha}/diff"
+        delay = _RETRY_DELAY_0
+        for attempt in range(_RETRY_ATTEMPTS):
+            resp = await self._http.get(path, headers=self._auth_headers())
+            resp.raise_for_status()
+            body = resp.json()
+            if isinstance(body, list) and body:
+                return [_to_file_diff(d) for d in body if isinstance(d, dict)]
+            if attempt + 1 < _RETRY_ATTEMPTS:
+                await asyncio.sleep(delay)
+                delay *= 2
+        return []
+
+    async def post_commit_summary(self, ev: PushEvent, text: str) -> None:
+        """总结回写到 head commit：POST commits/{sha}/comments，字段 **note**（§13.1）。"""
+        resp = await self._http.post(
+            f"{self._base}/api/v4/projects/{ev.repo_id}/repository/commits/{ev.after}/comments",
+            headers=self._auth_headers(),
+            json={"note": text},
+        )
+        resp.raise_for_status()
 
     def _auth_headers(self) -> dict[str, str]:
         return {"Private-Token": self._token}

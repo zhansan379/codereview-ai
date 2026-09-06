@@ -9,7 +9,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from codereview_ai.domain.models import ChangeType, FileDiff, PullRequest
+from codereview_ai.domain.models import ChangeType, FileDiff, PullRequest, PushEvent
 
 #: 触发审查的事件动作白名单（open/update 语义，跨平台归一）。
 REVIEW_ACTIONS = frozenset({"open", "opened", "reopen", "reopened", "update", "synchronize"})
@@ -66,3 +66,20 @@ class ForgeAdapter(ABC):
     @abstractmethod
     async def post_inline(self, pr: PullRequest, comments: list[dict[str, Any]]) -> None:
         """并行发行级评论。"""
+
+    # ── push 轨（§7.7）：非抽象默认，未实现的分析/测试子类可只保 MR 轨 ──
+    def parse_push_event(self, data: dict[str, Any]) -> PushEvent | None:
+        """从 webhook 的 push 事件解析出中立 PushEvent；不支持/非 push 返回 None。"""
+        return None
+
+    async def get_push_changes(self, ev: PushEvent) -> list[FileDiff]:
+        """compare 差量（before→after）。"""
+        raise NotImplementedError
+
+    async def get_first_commit_changes(self, ev: PushEvent) -> list[FileDiff]:
+        """新分支：only 首个提交的差量。"""
+        raise NotImplementedError
+
+    async def post_commit_summary(self, ev: PushEvent, text: str) -> None:
+        """push 总结回写到 head commit（MR 轨用 post_summary，push 无 MR 可挂）。"""
+        raise NotImplementedError
