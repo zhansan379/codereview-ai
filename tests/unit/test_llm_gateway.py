@@ -170,8 +170,11 @@ def test_parse_review_json_drops_findings_without_file_or_content():
 
 
 def test_parse_review_json_raises_on_undecodable_text():
-    with pytest.raises(LLMError):
+    with pytest.raises(LLMError) as ei:
         parse_review_json("garbage")
+    # 报错要带"情况分析"（长度 + 开头摘录），后台可直接展示为何失败
+    assert "garbage" in str(ei.value)
+    assert "无法解析为 JSON" in str(ei.value) and "字符" in str(ei.value)
 
 
 def test_parse_review_json_accepts_fenced_text():

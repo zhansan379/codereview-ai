@@ -11,13 +11,29 @@
         <el-descriptions-item label="事件类型">{{ detail.event_type }}</el-descriptions-item>
         <el-descriptions-item label="分支">{{ detail.branch }}</el-descriptions-item>
         <el-descriptions-item label="状态">
-          <el-tag :type="stateTag(detail.state)">{{ detail.state }}</el-tag>
+          <el-tag :type="stateTagType(detail.state)">{{ stateLabel(detail.state) }}</el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="评分">{{ detail.score_total }}</el-descriptions-item>
-        <el-descriptions-item label="Trace ID">{{ detail.trace_id }}</el-descriptions-item>
+        <el-descriptions-item label="提交 SHA">
+          <code class="sha">{{ detail.head_sha }}</code>
+        </el-descriptions-item>
+        <el-descriptions-item label="排队时间">{{ formatTime(detail.queued_at) }}</el-descriptions-item>
+        <el-descriptions-item label="完成时间">
+          {{ detail.finished_at ? formatTime(detail.finished_at) : '—' }}
+        </el-descriptions-item>
+        <el-descriptions-item label="Trace ID">{{ detail.trace_id || '—' }}</el-descriptions-item>
       </el-descriptions>
-      <div v-if="detail.error" class="error-box">
-        <b>错误信息：</b>{{ detail.error }}
+
+      <!-- 失败原因分析 -->
+      <div v-if="detail.state === 'failed'" class="analysis analysis-fail">
+        <b>失败原因分析</b>
+        <pre class="analysis-text">{{ detail.error || '（未知）' }}</pre>
+      </div>
+
+      <!-- 跳过原因 -->
+      <div v-if="detail.state === 'skipped'" class="analysis analysis-skip">
+        <b>跳过原因</b>
+        <pre class="analysis-text">{{ detail.error || 'push 审查未开启或该分支未命中规则，仅记录未审查。' }}</pre>
       </div>
     </el-card>
 
@@ -48,17 +64,13 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { getReview, type ReviewDetail } from '../api'
+import { formatTime, stateTagType, stateLabel } from '../utils/format'
 
 const route = useRoute()
 const id = Number(route.params.id)
 const detail = ref<ReviewDetail | null>(null)
 const loading = ref(false)
 
-function stateTag(state: string): any {
-  if (state === 'reviewed' || state === 'success') return 'success'
-  if (state === 'failed') return 'danger'
-  return 'warning'
-}
 function severityTag(sev: string): any {
   if (sev === 'critical' || sev === 'high' || sev === 'error') return 'danger'
   if (sev === 'medium' || sev === 'warning') return 'warning'
@@ -81,9 +93,28 @@ onMounted(load)
 .info-card {
   margin: 16px 0;
 }
-.error-box {
+.sha {
+  font-size: 12px;
+}
+.analysis {
   margin-top: 16px;
-  color: #f56c6c;
+  padding: 12px 16px;
+  border-radius: 6px;
+}
+.analysis-fail {
+  border: 1px solid #fbc4c4;
+  background: #fef0f0;
+}
+.analysis-skip {
+  border: 1px solid #d3dce6;
+  background: #f4f4f5;
+}
+.analysis-text {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.6;
 }
 .summary {
   white-space: pre-wrap;

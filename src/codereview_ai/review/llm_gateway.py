@@ -202,6 +202,17 @@ def _coerce_finding(item: Any) -> Finding | None:
     )
 
 
+def _undecodable_message(raw: str | Any) -> str:
+    """坏 JSON 的诊断信息（含长度与开头摘录），让后台直接看懂"为什么失败"。"""
+    sample = raw if isinstance(raw, str) else repr(raw)
+    excerpt = sample[:200] + ("…" if len(sample) > 200 else "")
+    return (
+        f"LLM 输出无法解析为 JSON：收到 {len(sample)} 个字符，"
+        f"既非合法 JSON 也无法自动修复。原文开头摘录：{excerpt!r}。"
+        f"可能原因：模型返回了非 JSON 文本 / 输出被截断 / 缺少结构化字段。"
+    )
+
+
 def parse_review_json(raw: str | dict[str, Any]) -> ReviewResult:
     """把 LLM 文本（或已修复的 dict）解析成干净的 `ReviewResult`。
 
@@ -212,7 +223,7 @@ def parse_review_json(raw: str | dict[str, Any]) -> ReviewResult:
         return _build_review_result(raw)
     repaired = repair_json(raw)
     if not isinstance(repaired, dict):
-        raise LLMError("LLM output is not a decodable JSON object")
+        raise LLMError(_undecodable_message(raw))
     return _build_review_result(repaired)
 
 

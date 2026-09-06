@@ -309,7 +309,7 @@ async def process_raw_event(
         logger.warning("mr 轨审查失败（%s pr#%s）：%s", pr.repo_full_name, pr.pr_number, exc)
         if task_id is not None:
             try:
-                await review_repo.mark_state(task_id, state="failed", error=str(exc)[:500])
+                await review_repo.mark_state(task_id, state="failed", error=str(exc)[:2000])
             except Exception:
                 pass  # 落库失败不遮蔽原始异常
         raise
@@ -352,14 +352,27 @@ async def _review_push_event(
         audit_id = tid
     try:
         if _is_all_zero(ev.after):
-            # 删分支：不审也不回写（只留审计行，标 skipped）
+            # 删分支：不审也不回写（只留审计行，标 skipped，带原因）
             if review_repo is not None:
-                await review_repo.mark_state(audit_id, state="skipped", error="delete_branch")
+                await review_repo.mark_state(
+                    audit_id, state="skipped", error="push 事件为删除分支，仅记录未审查",
+                )
             return
-        if push_gate is None or not push_gate.should(ev.branch):
-            # 默认关或分支规则未命中：审计行标 skipped，不审
+        if push_gate is None:
+            # 默认关闭：审计行标 skipped，带原因
             if review_repo is not None:
-                await review_repo.mark_state(audit_id, state="skipped")
+                await review_repo.mark_state(
+                    audit_id, state="skipped",
+                    error="push 审查未开启（默认关闭），仅记录未审查",
+                )
+            return
+        if not push_gate.should(ev.branch):
+            # 分支规则未命中：审计行标 skipped，带原因
+            if review_repo is not None:
+                await review_repo.mark_state(
+                    audit_id, state="skipped",
+                    error="该分支未命中 push 审查规则，仅记录未审查",
+                )
             return
         # 差量三分支：before 全 0 = 新分支 → 单 commit diff；其余 → compare（§7.7）
         if _is_all_zero(ev.before):
@@ -386,7 +399,7 @@ async def _review_push_event(
     except Exception as exc:
         logger.warning("push 轨审查失败（%s@%s）：%s", ev.repo_full_name, ev.after, exc)
         if review_repo is not None:
-            await review_repo.mark_state(audit_id, state="failed", error=str(exc))
+            await review_repo.mark_state(audit_id, state="failed", error=str(exc)[:2000])
         raise
 
 
