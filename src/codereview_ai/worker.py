@@ -309,64 +309,71 @@ async def process_raw_event(
         return  # 同一 commit 重放：已审过，跳过
     incremental = decision.is_incremental
 
-    refreshed = await forge.fetch_pull_request(pr)  # 补 diff_refs（行级评论 position 必填）
-    diffs = await forge.fetch_files(refreshed)
-    # 项目级文件扩展名过滤：只审命中的文件（DESIGN 文件扩展名过滤）
-    cfg = await _project_cfg(project_config_factory, refreshed.provider, refreshed.repo_id)
-    if cfg and cfg.file_extensions:
-        diffs = apply_extension_filter(diffs, cfg.file_extensions)
-    if not diffs:
-        # 全部被扩展名滤掉：不调 LLM（省 token）；有 review_repo 则记 completed-empty
-        if review_repo is not None:
-            task_id = await review_repo.ensure_task(
-                provider=refreshed.provider, repo_id=refreshed.repo_id,
-                pr_number=refreshed.pr_number, event_type="mr",
-                branch=refreshed.source_branch, head_sha=refreshed.head_sha,
-                base_sha=refreshed.base_sha,
-            )
+# 先落任务行（幂等，key 同 head）：fetch / LLM 失败也落 failed 可见、可重试，
+    # 避免坏 LLM 输出偶发时任务静默消失（与 push 轨 ensure_task-前置 一致）。
+    task_id: int | None = None
+    if review_repo is not None:
+        task_id = await review_repo.ensure_task(
+            provider=pr.provider, repo_id=pr.repo_id, pr_number=pr.pr_number,
+            event_type="mr", branch=pr.source_branch, head_sha=pr.head_sha,
+            base_sha=pr.base_sha,
+        )
+
+    try:
+        refreshed = await forge.fetch_pull_request(pr)  # 补 diff_refs（行级评论 position 必填）
+        diffs = await forge.fetch_files(refreshed)
+        # 项目级文件扩展名过滤：只审命中的文件（DESIGN 文件扩展名过滤）
+        cfg = await _project_cfg(project_config_factory, refreshed.provider, refreshed.repo_id)
+        if cfg and cfg.file_extensions:
+            diffs = apply_extension_filter(diffs, cfg.file_extensions)
+        if not diffs:
+            # 全部被扩展名滤掉：不调 LLM（省 token）；标 completed-empty
             if task_id is not None:
                 await review_repo.mark_state(task_id, state="completed",
                                              summary_md="_扩展名过滤后无待审文件_",
                                              score_total=0)
-        return
-    # 静态分析先跑（DESIGN §11）：失败降级为空，不影响主链
-    static_findings = await _run_static(static_analyzer, diffs)
-    result = await _review_agent_or_diff(
-        reviewer, grouper, pr=refreshed, commits_text=refreshed.title, diffs=diffs,
-        static_findings=static_findings, strategy=review_strategy,
-        agent_runtime=agent_runtime, agent_llm_factory=agent_llm_factory,
-    )
-
-    if incremental:
-        # 只审增量：按内容指纹滤掉上次已报过的 finding（DESIGN §7.3 / §13.3）
-        result.findings = dedup_findings(result.findings, ref)
-
-    await ResultWriter(forge).write(refreshed, diffs, result)
-
-    if review_repo is not None:
-        # mr 轨真落库（幂等；同 head 已存在则跳过，不重复写）
-        task_id = await review_repo.ensure_task(
-            provider=refreshed.provider, repo_id=refreshed.repo_id,
-            pr_number=refreshed.pr_number, event_type="mr",
-            branch=refreshed.source_branch, head_sha=refreshed.head_sha,
-            base_sha=refreshed.base_sha,
+            return
+        # 静态分析先跑（DESIGN §11）：失败降级为空，不影响主链
+        static_findings = await _run_static(static_analyzer, diffs)
+        result = await _review_agent_or_diff(
+            reviewer, grouper, pr=refreshed, commits_text=refreshed.title, diffs=diffs,
+            static_findings=static_findings, strategy=review_strategy,
+            agent_runtime=agent_runtime, agent_llm_factory=agent_llm_factory,
         )
-        if task_id is not None:
-            await review_repo.insert_findings(task_id, result.findings)
-            await review_repo.mark_state(
-                task_id, state="completed", summary_md=result.summary,
-                score_total=result.scores.total,
+
+        if incremental:
+            # 只审增量：按内容指纹滤掉上次已报过的 finding（DESIGN §7.3 / §13.3）
+            result.findings = dedup_findings(result.findings, ref)
+
+        await ResultWriter(forge).write(refreshed, diffs, result)
+
+        if review_repo is not None:
+            # mr 轨真落库（幂等；同 head 已存在则跳过，不重复写）
+            if task_id is not None:
+                await review_repo.insert_findings(task_id, result.findings)
+                await review_repo.mark_state(
+                    task_id, state="completed", summary_md=result.summary,
+                    score_total=result.scores.total,
+                )
+
+        if notifier is not None:
+            # F4.4 fire-and-forget：推送后台化，不拖慢也不阻断审查主链
+            notifier.launch(refreshed, result)
+
+        if increments is not None and refreshed.head_sha:
+            # 内存档才显式记录落点；DB 档 findigs 已落 review_finding，由 review_repo 读取
+            increments.record(
+                pr.provider, pr.pr_number, refreshed.head_sha, collect_fingerprints(result.findings)
             )
-
-    if notifier is not None:
-        # F4.4 fire-and-forget：推送后台化，不拖慢也不阻断审查主链
-        notifier.launch(refreshed, result)
-
-    if increments is not None and refreshed.head_sha:
-        # 内存档才显式记录落点；DB 档 findigs 已落 review_finding，由 review_repo 读取
-        increments.record(
-            pr.provider, pr.pr_number, refreshed.head_sha, collect_fingerprints(result.findings)
-        )
+    except Exception as exc:
+        # 失败落 failed 行（后台可见、可重试），再向上抛出由 worker 标队列 failed
+        logger.warning("mr 轨审查失败（%s pr#%s）：%s", pr.repo_full_name, pr.pr_number, exc)
+        if task_id is not None:
+            try:
+                await review_repo.mark_state(task_id, state="failed", error=str(exc)[:2000])
+            except Exception:
+                pass  # 落库失败不遮蔽原始异常
+        raise
 
 
 async def _review_push_event(
@@ -407,14 +414,27 @@ async def _review_push_event(
         audit_id = tid
     try:
         if _is_all_zero(ev.after):
-            # 删分支：不审也不回写（只留审计行，标 skipped）
+            # 删分支：不审也不回写（只留审计行，标 skipped，带原因）
             if review_repo is not None:
-                await review_repo.mark_state(audit_id, state="skipped", error="delete_branch")
+                await review_repo.mark_state(
+                    audit_id, state="skipped", error="push 事件为删除分支，仅记录未审查",
+                )
             return
-        if push_gate is None or not push_gate.should(ev.branch):
-            # 默认关或分支规则未命中：审计行标 skipped，不审
+        if push_gate is None:
+            # 默认关闭：审计行标 skipped，带原因
             if review_repo is not None:
-                await review_repo.mark_state(audit_id, state="skipped")
+                await review_repo.mark_state(
+                    audit_id, state="skipped",
+                    error="push 审查未开启（默认关闭），仅记录未审查",
+                )
+            return
+        if not push_gate.should(ev.branch):
+            # 分支规则未命中：审计行标 skipped，带原因
+            if review_repo is not None:
+                await review_repo.mark_state(
+                    audit_id, state="skipped",
+                    error="该分支未命中 push 审查规则，仅记录未审查",
+                )
             return
         # 差量三分支：before 全 0 = 新分支 → 单 commit diff；其余 → compare（§7.7）
         if _is_all_zero(ev.before):
@@ -451,7 +471,7 @@ async def _review_push_event(
     except Exception as exc:
         logger.warning("push 轨审查失败（%s@%s）：%s", ev.repo_full_name, ev.after, exc)
         if review_repo is not None:
-            await review_repo.mark_state(audit_id, state="failed", error=str(exc))
+            await review_repo.mark_state(audit_id, state="failed", error=str(exc)[:2000])
         raise
 
 

@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
+
 from codereview_ai.domain.models import Category, ChangeType, FileDiff, PullRequest, Severity
-from codereview_ai.review.llm_gateway import LLMGateway
+from codereview_ai.review.llm_gateway import LLMError, LLMGateway
 from codereview_ai.review.reviewer import (
     Reviewer,
     ReviewerConfig,
@@ -156,3 +158,40 @@ def test_review_unlocatable_finding_stays_line_none():
 
     result = asyncio.run(run())
     assert result.findings[0].line is None  # 上层可据此降级入总结评论
+
+
+def test_review_retries_once_on_malformed_json():
+    wanted = {"summary": "s", "scores": {}, "findings": [], "skipped_files": []}
+    calls = {"n": 0}
+
+    async def backend(messages):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "not valid json {{{"
+        return json.dumps(wanted, ensure_ascii=False)
+
+    r = _fake_reviewer(backend)
+
+    async def run():
+        return await r.review(pr=_pr(), commits_text="", diffs=[_diffs()[0]])
+
+    result = asyncio.run(run())
+    assert calls["n"] == 2  # 首次坏 JSON → 仅一次重试后成功
+    assert result.summary == "s"
+
+
+def test_review_raises_after_one_retry_on_persistent_bad_json():
+    calls = {"n": 0}
+
+    async def backend(messages):
+        calls["n"] += 1
+        return "definitely not json"
+
+    r = _fake_reviewer(backend)
+
+    async def run():
+        return await r.review(pr=_pr(), commits_text="", diffs=[_diffs()[0]])
+
+    with pytest.raises(LLMError):
+        asyncio.run(run())
+    assert calls["n"] == 2  # 仍只重试一次，不无限重试

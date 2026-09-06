@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from codereview_ai.domain.models import FileDiff, PullRequest, ReviewResult
-from codereview_ai.review.llm_gateway import LLMGateway, parse_review_json
+from codereview_ai.review.llm_gateway import LLMError, LLMGateway, parse_review_json
 from codereview_ai.review.location import resolve_findings
 
 #: 常见需忽略的路径片段（子串匹配即可覆盖整棵子树）
@@ -198,7 +198,12 @@ class Reviewer:
             static_findings_text=static_findings_text,
         )
         text = await self.gateway.complete(messages)
-        result = parse_review_json(text)
+        try:
+            result = parse_review_json(text)
+        except LLMError:
+            # 坏 JSON 多为偶发截断/格式误，仅一次重试；仍失败再抛（由 pipeline 落 failed）
+            text = await self.gateway.complete(messages)
+            result = parse_review_json(text)
         # 锚定定位：给每个 finding 填真实行号；仍无法定位的（line=None）由上层降级
         resolve_findings(result.findings, kept)
         return result

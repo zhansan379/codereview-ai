@@ -11,7 +11,8 @@
             @change="onFilterChange"
           >
             <el-option label="排队中" value="queued" />
-            <el-option label="成功" value="success" />
+            <el-option label="审查成功" value="completed" />
+            <el-option label="已跳过" value="skipped" />
             <el-option label="失败" value="failed" />
           </el-select>
         </el-form-item>
@@ -30,10 +31,12 @@
         <el-table-column prop="attempt" label="尝试次数" width="90" />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="stateTag(row.state)">{{ row.state }}</el-tag>
+            <el-tag :type="stateTagType(row.state)">{{ stateLabel(row.state) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="queued_at" label="排队时间" width="170" />
+        <el-table-column label="排队时间" width="150">
+          <template #default="{ row }">{{ formatTime(row.queued_at) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="110" fixed="right">
           <template #default="{ row }">
             <el-button
@@ -56,17 +59,12 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listTasks, retryTask, type TaskItem } from '../api'
+import { formatTime, stateTagType, stateLabel } from '../utils/format'
 
 const items = ref<TaskItem[]>([])
 const loading = ref(false)
 const retryingId = ref<number | null>(null)
 const query = reactive({ state: '' })
-
-function stateTag(state: string): any {
-  if (state === 'success') return 'success'
-  if (state === 'failed') return 'danger'
-  return 'warning'
-}
 
 // 服务端按 state 过滤
 async function load() {

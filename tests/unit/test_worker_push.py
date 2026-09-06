@@ -202,7 +202,9 @@ async def test_push_default_off_records_skipped_audit(tmp_path):
     async with session_factory(engine)() as s:
         task = (await s.execute(sa.select(ReviewTask).where(ReviewTask.event_type == "push"))
                 ).scalar_one()
-        assert task.state == "skipped" and task.error == ""
+        assert task.state == "skipped"
+        # 默认关闭时跳过也要带人话原因，后台可直接展示（不再是一串空 error）
+        assert task.error == "push 审查未开启（默认关闭），仅记录未审查"
     assert reviewer.calls == 0 and forge.summaries == []
     await engine.dispose()
 

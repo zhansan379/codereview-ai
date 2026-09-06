@@ -3,8 +3,8 @@
 未配置正确 api_key → 审查抛 `LLMError` → 任务标记 failed、MR 上不出现任何评论。
 全程离线：webhook → 队列 → worker 全链路，reviewer 注入抛 LLMError 的 fake。
 
-注：MR 轨的 `review_task` 行在审查成功后才落库（worker.process_raw_event 末尾），
-因此 LLM 失败时不留 completed 审计行、"任务标记 failed"落在队列 TaskState.FAILED。
+注：MR 轨 `ensure_task` 前置落库（worker.process_raw_event 开头），LLM 失败时任务
+落成 `failed` 行（后台可见、可重试）；队列侧同样标 TaskState.FAILED，且 MR 无评论。
 """
 
 from __future__ import annotations
@@ -116,7 +116,7 @@ async def test_c6_bad_api_key_marks_failed_and_no_comments(tmp_path):
         assert forge.posted_inline == []
         assert forge.posted_summary == []
 
-        # 无 completed 审计行（审查未成功，绝不落 completed）
+        # 无 completed 审计行（审查未成功，绝不落 completed）；但失败必须可见（failed 行）
         session = session_factory(engine)
         async with session() as s:
             completed = int((await s.execute(
@@ -124,6 +124,12 @@ async def test_c6_bad_api_key_marks_failed_and_no_comments(tmp_path):
                     ReviewTask.state == "completed",
                 )
             )).scalar_one() or 0)
+            failed = int((await s.execute(
+                select(func.count()).select_from(ReviewTask).where(
+                    ReviewTask.state == "failed",
+                )
+            )).scalar_one() or 0)
         assert completed == 0
+        assert failed == 1  # ensure_task 前置落库 + except 标 failed → 静默丢任务已消除
     finally:
         await engine.dispose()

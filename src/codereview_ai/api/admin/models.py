@@ -151,6 +151,8 @@ async def probe_model(cfg: ModelConfig, prompt: str, *, encryption_key: str) -> 
         model=cfg.model or cfg.name,
         api_key=api_key,
         base_url=cfg.base_url or None,
+        max_tokens=cfg.max_tokens,
+        temperature=cfg.temperature,
     )
     text = await gateway.complete([{"role": "user", "content": prompt}])
     return bool(text.strip())

@@ -12,8 +12,8 @@
             @change="onFilterChange"
           >
             <el-option label="排队中" value="queued" />
-            <el-option label="审查成功" value="reviewed" />
-            <el-option label="成功" value="success" />
+            <el-option label="审查成功" value="completed" />
+            <el-option label="已跳过" value="skipped" />
             <el-option label="失败" value="failed" />
           </el-select>
         </el-form-item>
@@ -23,18 +23,32 @@
 
     <el-card>
       <el-table :data="items" v-loading="loading" stripe>
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="provider" label="平台" width="90" />
-        <el-table-column prop="repo_id" label="仓库 ID" min-width="120" />
-        <el-table-column prop="pr_number" label="PR" width="80" />
-        <el-table-column prop="score_total" label="评分" width="90" />
-        <el-table-column label="状态" width="100">
+        <el-table-column type="expand">
           <template #default="{ row }">
-            <el-tag :type="stateTag(row.state)">{{ row.state }}</el-tag>
+            <div v-if="row.state === 'failed'" class="reason-box reason-fail">
+              <b>失败原因分析</b>
+              <pre class="reason-text">{{ row.error || '（未知）' }}</pre>
+            </div>
+            <div v-else-if="row.state === 'skipped'" class="reason-box reason-skip">
+              <b>跳过原因</b>
+              <p class="reason-text">{{ skippedReason(row) }}</p>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column prop="queued_at" label="排队时间" width="180" />
-        <el-table-column label="操作" width="120" fixed="right">
+        <el-table-column prop="id" label="ID" width="70" />
+        <el-table-column prop="provider" label="平台" width="80" />
+        <el-table-column prop="repo_id" label="仓库 ID" min-width="110" />
+        <el-table-column prop="pr_number" label="PR" width="70" />
+        <el-table-column prop="score_total" label="评分" width="80" />
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag :type="stateTagType(row.state)">{{ stateLabel(row.state) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="排队时间" width="150">
+          <template #default="{ row }">{{ formatTime(row.queued_at) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="goDetail(row.id)">详情</el-button>
           </template>
@@ -60,6 +74,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { listReviews, type ReviewItem } from '../api'
+import { formatTime, stateTagType, stateLabel } from '../utils/format'
 
 const router = useRouter()
 
@@ -68,10 +83,12 @@ const total = ref(0)
 const loading = ref(false)
 const query = reactive({ state: '', limit: 10, offset: 0 })
 
-function stateTag(state: string): any {
-  if (state === 'reviewed' || state === 'success') return 'success'
-  if (state === 'failed') return 'danger'
-  return 'warning'
+// 已跳过的详细原因：优先用后端 error；为空时按常见场景给出人话
+function skippedReason(row: ReviewItem): string {
+  const e = (row.error || '').trim()
+  if (e) return e
+  if (row.event_type === 'push') return 'push 审查未开启或该分支未命中规则，仅记录未审查。'
+  return '该事件无需审查，仅保留审计记录。'
 }
 
 // 翻页/过滤均重新请求后端（服务端分页）
@@ -117,5 +134,25 @@ onMounted(load)
 .pager {
   margin-top: 16px;
   justify-content: flex-end;
+}
+.reason-box {
+  margin: 4px 8px 4px 40px;
+  padding: 10px 14px;
+  border-radius: 6px;
+}
+.reason-fail {
+  border: 1px solid #fbc4c4;
+  background: #fef0f0;
+}
+.reason-skip {
+  border: 1px solid #d3dce6;
+  background: #f4f4f5;
+}
+.reason-text {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.6;
 }
 </style>

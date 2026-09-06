@@ -40,11 +40,15 @@ class LLMGateway:
         json_object: bool = False,
         api_key: str | None = None,
         base_url: str | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
     ) -> None:
         self.model = model
         self.json_object = json_object
         self.api_key = api_key
         self.base_url = base_url
+        self.max_tokens = max_tokens
+        self.temperature = temperature
         self._backend = backend or self._litellm_backend
 
     async def complete(self, messages: list[dict[str, Any]]) -> str:
@@ -71,6 +75,10 @@ class LLMGateway:
             kwargs["api_key"] = self.api_key
         if self.base_url:
             kwargs["base_url"] = self.base_url
+        if self.max_tokens:  # 输出预算透传，避免大 MR 被默认上限截断成坏 JSON
+            kwargs["max_tokens"] = self.max_tokens
+        if self.temperature is not None:
+            kwargs["temperature"] = self.temperature
         resp = await litellm.acompletion(**kwargs)
         content = resp.choices[0].message.content
         return content or ""
@@ -194,6 +202,17 @@ def _coerce_finding(item: Any) -> Finding | None:
     )
 
 
+def _undecodable_message(raw: str | Any) -> str:
+    """坏 JSON 的诊断信息（含长度与开头摘录），让后台直接看懂"为什么失败"。"""
+    sample = raw if isinstance(raw, str) else repr(raw)
+    excerpt = sample[:200] + ("…" if len(sample) > 200 else "")
+    return (
+        f"LLM 输出无法解析为 JSON：收到 {len(sample)} 个字符，"
+        f"既非合法 JSON 也无法自动修复。原文开头摘录：{excerpt!r}。"
+        f"可能原因：模型返回了非 JSON 文本 / 输出被截断 / 缺少结构化字段。"
+    )
+
+
 def parse_review_json(raw: str | dict[str, Any]) -> ReviewResult:
     """把 LLM 文本（或已修复的 dict）解析成干净的 `ReviewResult`。
 
@@ -204,7 +223,7 @@ def parse_review_json(raw: str | dict[str, Any]) -> ReviewResult:
         return _build_review_result(raw)
     repaired = repair_json(raw)
     if not isinstance(repaired, dict):
-        raise LLMError("LLM output is not a decodable JSON object")
+        raise LLMError(_undecodable_message(raw))
     return _build_review_result(repaired)
 
 
