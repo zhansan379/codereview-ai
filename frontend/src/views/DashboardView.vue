@@ -59,32 +59,25 @@
 
     <el-card class="table-card">
       <template #header>最近记录</template>
-      <el-table :data="recent" stripe>
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="repo_id" label="仓库 ID" min-width="120" />
-        <el-table-column prop="pr_number" label="PR" width="80" />
-        <el-table-column prop="score_total" label="评分" width="90" />
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="stateTagType(row.state)">{{ row.state }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="finished_at" label="完成时间" width="180" />
-      </el-table>
+      <ReviewsTable :items="recent" :loading="loading" time-field="finished_at" @detail="goDetail" />
     </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { getStats, listReviews, type DashboardStats, type ReviewItem } from '../api'
+import ReviewsTable from '../components/ReviewsTable.vue'
 
 const severityRef = ref<HTMLDivElement>()
 const trendRef = ref<HTMLDivElement>()
 const stateRef = ref<HTMLDivElement>()
 const providerRef = ref<HTMLDivElement>()
+const router = useRouter()
 const recent = ref<ReviewItem[]>([])
+const loading = ref(false)
 const stats = ref<DashboardStats>({
   total_tasks: 0,
   total_findings: 0,
@@ -97,12 +90,6 @@ const stats = ref<DashboardStats>({
   model_usage: [],
   provider_split: [],
 })
-
-function stateTagType(state: string): any {
-  if (state === 'completed' || state === 'reviewed' || state === 'success') return 'success'
-  if (state === 'failed') return 'danger'
-  return 'warning'
-}
 
 function drawSeverity() {
   if (!severityRef.value) return
@@ -144,18 +131,27 @@ function drawBar(el: HTMLDivElement, items: { key: string; count: number }[]) {
   })
 }
 
+function goDetail(id: number) {
+  router.push(`/reviews/${id}`)
+}
+
 async function loadDash() {
-  const [dash, list] = await Promise.all([
-    getStats(),
-    listReviews({ limit: 10 }),
-  ])
-  stats.value = dash
-  recent.value = list.items || []
-  await nextTick()
-  drawSeverity()
-  drawTrend()
-  if (stateRef.value) drawBar(stateRef.value, dash.tasks_by_state)
-  if (providerRef.value) drawBar(providerRef.value, dash.provider_split)
+  loading.value = true
+  try {
+    const [dash, list] = await Promise.all([
+      getStats(),
+      listReviews({ limit: 10 }),
+    ])
+    stats.value = dash
+    recent.value = list.items || []
+    await nextTick()
+    drawSeverity()
+    drawTrend()
+    if (stateRef.value) drawBar(stateRef.value, dash.tasks_by_state)
+    if (providerRef.value) drawBar(providerRef.value, dash.provider_split)
+  } finally {
+    loading.value = false
+  }
 }
 
 onMounted(loadDash)
