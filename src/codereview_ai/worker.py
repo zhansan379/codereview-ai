@@ -17,6 +17,13 @@ from typing import Any
 
 from codereview_ai.forges.base import ForgeAdapter
 from codereview_ai.queue.base import TaskMeta, TaskQueue
+from codereview_ai.review.increments import (
+    REASON_ALREADY,
+    IncrementStore,
+    collect_fingerprints,
+    decide_increment,
+    dedup_findings,
+)
 from codereview_ai.review.result_writer import ResultWriter
 from codereview_ai.review.reviewer import Reviewer
 
@@ -65,8 +72,20 @@ def _event_action(data: dict[str, Any]) -> str:
     return str(data.get("action") or "")
 
 
-async def process_raw_event(forge: ForgeAdapter, reviewer: Reviewer, raw: bytes) -> None:
-    """原始 webhook payload → 审查 + 回写。各阶段失败在此抛出，由 worker 标 failed。"""
+async def process_raw_event(
+    forge: ForgeAdapter,
+    reviewer: Reviewer,
+    raw: bytes,
+    *,
+    increments: IncrementStore | None = None,
+    chain_valid: Callable[[str, str], bool] | None = None,
+) -> None:
+    """原始 webhook payload → 审查 + 回写。各阶段失败在此抛出，由 worker 标 failed。
+
+    增量（DESIGN §7.3）：传入 `increments` 存储时按上次审查落点决定增量/全量；
+    `chain_valid(prior_sha, head_sha)` 校验上次 head 是否仍在本 PR 链上（平台 compare），
+    缺省 `None` 视为未知 → 保守回退全量。unknown chain 永不判为增量。
+    """
     try:
         data = json.loads(raw)
     except ValueError:
@@ -78,18 +97,48 @@ async def process_raw_event(forge: ForgeAdapter, reviewer: Reviewer, raw: bytes)
         return  # 非 merge_request 事件：任务即完成，无需回写
     if not forge.should_review(_event_action(data)):
         return  # close/merge 等动作不触发审查
+
+    if increments is not None:
+        # 先按"已记录的 head"做增量决定；chain 未知时不设链有效性
+        ref = increments.last(pr.provider, pr.pr_number)
+        valid = chain_valid(ref.head_sha, pr.head_sha) if chain_valid and ref else False
+        decision = decide_increment(increments, pr, chain_valid=valid)
+        if decision.reason == REASON_ALREADY:
+            return  # 同一 commit 重放：已审过，跳过
+        incremental = decision.is_incremental
+    else:
+        incremental = False
+
     refreshed = await forge.fetch_pull_request(pr)  # 补 diff_refs（行级评论 position 必填）
     diffs = await forge.fetch_files(refreshed)
     result = await reviewer.review(pr=refreshed, commits_text=refreshed.title, diffs=diffs)
+
+    if incremental and increments is not None:
+        # 只审增量：按内容指纹滤掉上次已报过的 finding（DESIGN §7.3 / §13.3）
+        prior = increments.last(pr.provider, pr.pr_number)
+        result.findings = dedup_findings(result.findings, prior)
+
     await ResultWriter(forge).write(refreshed, diffs, result)
+
+    if increments is not None and refreshed.head_sha:
+        # 记录本次落点，供下一轮增量决策
+        increments.record(
+            pr.provider, pr.pr_number, refreshed.head_sha, collect_fingerprints(result.findings)
+        )
 
 
 def make_processor(
     forge_factory: ForgeFactory,
     reviewer_factory: ReviewerFactory,
     store: EventStore,
+    *,
+    increments: IncrementStore | None = None,
+    chain_valid: Callable[[str, str], bool] | None = None,
 ) -> Callable[[TaskMeta], Awaitable[None]]:
-    """由 worker 主循环调用的处理函数：根据 task 取 payload 后走完整管线。"""
+    """由 worker 主循环调用的处理函数：根据 task 取 payload 后走完整管线。
+
+    `increments`/`chain_valid` 透传给 `process_raw_event`（缺省禁用增量，见其 docstring）。
+    """
 
     async def process(task: TaskMeta) -> None:
         item = store.get(task.task_id)
@@ -101,6 +150,8 @@ def make_processor(
         if forge is None:
             logger.warning("provider %s 未配置适配器，任务 %s 跳过", provider, task.task_id)
             return
-        await process_raw_event(forge, reviewer, raw)
+        await process_raw_event(
+            forge, reviewer, raw, increments=increments, chain_valid=chain_valid
+        )
 
     return process

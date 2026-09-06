@@ -127,6 +127,44 @@ async def test_process_runs_review_and_writes_back():
     assert forge.posted_summary  # 总结评论
 
 
+# ── 增量（DESIGN §7.3）：IncrementStore + chain_valid ───────────────────
+
+
+async def test_process_same_head_skips_when_increments_enabled():
+    from codereview_ai.review.increments import IncrementStore
+
+    store = IncrementStore()
+    store.record("gitlab", 7, "h")  # 上次审过 head=h
+    forge = _FakeForge()
+    reviewer = _FakeReviewer(forge)
+    await process_raw_event(  # type: ignore[arg-type]
+        forge, reviewer, _mr_payload(), increments=store, chain_valid=lambda a, b: True
+    )
+    assert reviewer.calls == []  # 已审过，跳过
+
+
+async def test_process_incremental_dedups_previous_finding():
+    from codereview_ai.domain.models import Category, Finding, Severity
+    from codereview_ai.review.increments import IncrementStore, collect_fingerprints
+
+    store = IncrementStore()
+    # 上次以 HEAD=h0 审查过，已报到该 finding → 本轮同名内容应被去重
+    prior = Finding(content="新增行问题", category=Category.BUG, severity=Severity.HIGH,
+                    existing_code="+added\n", file="a.py", line=2)
+    store.record("gitlab", 7, "h0", collect_fingerprints([prior]))
+
+    forge = _FakeForge()
+    reviewer = _FakeReviewer(forge)
+    # 本轮 fake 解析出的 head 是 "h"（≠h0），chain_valid=True → 增量
+    await process_raw_event(  # type: ignore[arg-type]
+        forge, reviewer, _mr_payload(), increments=store, chain_valid=lambda a, b: True
+    )
+    assert reviewer.calls  # 走了一次 review
+    # 该 finding 与上次内容指纹相同 → 被 dedup 掉，无行级评论；总结仍回写
+    assert forge.posted_inline == []
+    assert forge.posted_summary
+
+
 # ── 端到端：enqueue → worker ────────────────────────────────────────────
 
 
