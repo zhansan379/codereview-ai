@@ -18,6 +18,7 @@ dependencies = [
     "prometheus-client>=0.20",
     "aiosqlite>=0.20",
     "pyjwt>=2.13.0",
+    "litellm>=1.40",  # LLM 网关（DESIGN §2）：统一多厂商 + JSON mode + acompletion
 ]
 
 [dependency-groups]
