@@ -159,6 +159,20 @@ class NotifierConfig(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class ForgeConfig(Base):
+    """平台接入配置（GitHub/GitLab）：url + 加密 token（DESIGN §16 同 model_config）。"""
+
+    __tablename__ = "forge_config"
+    __table_args__ = (Index("uq_forge_provider", "provider", unique=True),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(32))  # github | gitlab
+    url: Mapped[str] = mapped_column(String(1024), default="")
+    token_encrypted: Mapped[str] = mapped_column(Text, default="")  # Fernet 密文
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class ProjectRule(Base):
     """path/glob 追加规则，首个匹配者胜（F5.3 规则引擎，DESIGN §12.2）。"""
 
