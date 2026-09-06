@@ -17,6 +17,8 @@ from typing import Any
 
 from codereview_ai.forges.base import ForgeAdapter
 from codereview_ai.queue.base import TaskMeta, TaskQueue
+from codereview_ai.review.group_review import review_in_groups
+from codereview_ai.review.grouping import SemanticGrouper
 from codereview_ai.review.increments import (
     REASON_ALREADY,
     IncrementReference,
@@ -81,13 +83,15 @@ async def process_raw_event(
     *,
     increments: IncrementStore | None = None,
     review_repo: ReviewRepository | None = None,
+    grouper: SemanticGrouper | None = None,
     chain_valid: Callable[[str, str], bool] | None = None,
 ) -> None:
     """原始 webhook payload → 审查 + 回写。各阶段失败在此抛出，由 worker 标 failed。
 
     增量（DESIGN §7.3）落点可来自 `review_repo`（DB 持久，M4 起主用）或进程内
-    `increments`（M3 内存档兼容）。`chain_valid(prior_sha, head_sha)` 校验上次 head
-    是否仍在本 PR 链上（平台 compare），缺省 `None` 视为未知 → 保守回退全量。
+    `increments`（M3 内存档兼容）。`grouper` 给定且改动 ≥ 4 个文件时走语义分组并
+    发审查（DESIGN §7.5，见 review.group_review）。`chain_valid(prior_sha, head_sha)`
+    校验上次 head 是否仍在本 PR 链上（平台 compare），缺省 `None` → 保守回退全量。
     """
     try:
         data = json.loads(raw)
@@ -116,7 +120,12 @@ async def process_raw_event(
 
     refreshed = await forge.fetch_pull_request(pr)  # 补 diff_refs（行级评论 position 必填）
     diffs = await forge.fetch_files(refreshed)
-    result = await reviewer.review(pr=refreshed, commits_text=refreshed.title, diffs=diffs)
+    if grouper is not None:
+        result = await review_in_groups(
+            reviewer, grouper, pr=refreshed, commits_text=refreshed.title, diffs=diffs
+        )
+    else:
+        result = await reviewer.review(pr=refreshed, commits_text=refreshed.title, diffs=diffs)
 
     if incremental:
         # 只审增量：按内容指纹滤掉上次已报过的 finding（DESIGN §7.3 / §13.3）
@@ -138,12 +147,13 @@ def make_processor(
     *,
     increments: IncrementStore | None = None,
     review_repo: ReviewRepository | None = None,
+    grouper: SemanticGrouper | None = None,
     chain_valid: Callable[[str, str], bool] | None = None,
 ) -> Callable[[TaskMeta], Awaitable[None]]:
     """由 worker 主循环调用的处理函数：根据 task 取 payload 后走完整管线。
 
-    `increments`/`review_repo`/`chain_valid` 透传给 `process_raw_event`
-    （都缺省时禁用增量，见其 docstring）。
+    `increments`/`review_repo`/`grouper`/`chain_valid` 透传给 `process_raw_event`
+    （都缺省时禁用增量/分组，见其 docstring）。
     """
 
     async def process(task: TaskMeta) -> None:
@@ -162,6 +172,7 @@ def make_processor(
             raw,
             increments=increments,
             review_repo=review_repo,
+            grouper=grouper,
             chain_valid=chain_valid,
         )
 
