@@ -17,6 +17,7 @@ dependencies = [
     "cryptography>=42",
     "prometheus-client>=0.20",
     "aiosqlite>=0.20",
+    "pyjwt>=2.13.0",
 ]
 
 [dependency-groups]

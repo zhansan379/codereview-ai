@@ -21,6 +21,7 @@ def test_app_health_and_ready_after_lifespan(tmp_path):
         secret_key="s",
         webhook_secret="w",
         encryption_key=_valid_fernet_key(),
+        admin_password="admin",
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'app.db'}",
     )
     app = create_app(settings)

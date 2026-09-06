@@ -20,6 +20,7 @@ def _env(**kw):
         secret_key="s",
         webhook_secret="w",
         encryption_key=_valid_fernet_key(),
+        admin_password="a",
     )
     defaults.update(kw)
     return defaults

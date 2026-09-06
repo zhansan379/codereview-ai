@@ -29,6 +29,10 @@ REQUIRED_SECRETS = {
         "CR_ENCRYPTION_KEY",
         "python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())'",
     ),
+    "admin_password": (
+        "CR_ADMIN_PASSWORD",
+        "python -c 'import secrets;print(secrets.token_urlsafe(24))'",
+    ),
 }
 
 
@@ -46,6 +50,7 @@ class Settings(BaseSettings):
     secret_key: str = ""
     webhook_secret: str = ""
     encryption_key: str = ""
+    admin_password: str = ""  # 后台登录口令（单用户，F5.1）
 
     # —— 运行时 ——
     database_url: str = "sqlite:///./data/app.db"

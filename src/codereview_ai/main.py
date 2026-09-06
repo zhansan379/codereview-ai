@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 
+from codereview_ai.api.auth import router as auth_router
 from codereview_ai.api.webhook import router as webhook_router
 from codereview_ai.config import Settings
 from codereview_ai.forges.registry import build_adapter, registered_providers
@@ -91,6 +92,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.add_middleware(TraceMiddleware)
     app.include_router(health_router)
+    app.include_router(auth_router, prefix="/api")
     app.include_router(webhook_router)
     return app
 

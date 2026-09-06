@@ -19,7 +19,7 @@ DUMMY = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response
 def _settings(**kw) -> Settings:
     """构造带默认密钥的 Settings，供 registry 读取平台配置。"""
     opts = dict(
-        secret_key="s", webhook_secret="w", encryption_key="ZGVmZg==A",
+        secret_key="s", webhook_secret="w", encryption_key="ZGVmZg==A", admin_password="a",
     )
     # Fermet 格式：44 位 urlsafe base64 结尾驼 =。给出合法占位。
     from cryptography.fernet import Fernet
