@@ -1,0 +1,59 @@
+[project]
+name = "codereview-ai"
+version = "0.1.0"
+description = "自托管、开源的 AI 代码审查平台。LiteLLM 多模型接入，Webhook 自动审查 MR/PR，行级 inline 评论，钉钉/飞书/企微推送，Vue 管理后台。"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "fastapi>=0.133",
+    "uvicorn[standard]>=0.41",
+    "pydantic>=2.12",
+    "pydantic-settings>=2.14",
+    "sqlalchemy[asyncio]>=2.0",
+    "alembic>=1.13",
+    "httpx>=0.28",
+    "orjson>=3.12",
+    "cryptography>=42",
+    "prometheus-client>=0.20",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/codereview_ai"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "ASYNC"]
+ignore = ["B008"]  # FastAPI 依赖注入常用 pydantic Field 默认值
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+plugins = ["pydantic.mypy"]
+strict = true
+ignore_missing_imports = true
