@@ -27,10 +27,6 @@
           <el-icon><Bell /></el-icon>
           <span>IM 通知</span>
         </el-menu-item>
-        <el-menu-item index="/tasks">
-          <el-icon><List /></el-icon>
-          <span>任务</span>
-        </el-menu-item>
         <el-menu-item index="/settings">
           <el-icon><Setting /></el-icon>
           <span>设置</span>
@@ -61,7 +57,6 @@ import {
   Folder,
   Cpu,
   Bell,
-  List,
   Setting,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'

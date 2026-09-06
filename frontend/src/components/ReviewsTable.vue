@@ -1,10 +1,19 @@
 <template>
   <el-table :data="items" v-loading="loading" stripe>
-    <el-table-column prop="id" label="ID" width="70" />
+    <el-table-column prop="id" label="ID" width="50" />
     <el-table-column prop="provider" label="平台" width="80" />
-    <el-table-column prop="repo_id" label="仓库 ID" min-width="110" />
-    <el-table-column prop="pr_number" label="PR" width="70" />
-    <el-table-column prop="score_total" label="评分" width="80" />
+    <el-table-column prop="repo_id" label="仓库 ID" min-width="200" show-overflow-tooltip />
+    <el-table-column prop="pr_number" label="PR" width="50" />
+    <el-table-column v-if="showProcess" prop="event_type" label="事件类型" width="80" />
+    <el-table-column
+        v-if="showProcess"
+        prop="branch"
+        label="分支"
+        width="240"
+        show-overflow-tooltip
+      />
+    <el-table-column v-if="showProcess" prop="attempt" label="尝试次数" width="80" />
+    <el-table-column prop="score_total" label="评分" width="60" />
     <el-table-column label="状态" width="100">
       <template #default="{ row }">
         <el-tag :type="stateTagType(row.state)">{{ stateLabel(row.state) }}</el-tag>
@@ -13,9 +22,16 @@
     <el-table-column :label="timeLabel" :width="timeWidth">
       <template #default="{ row }">{{ formatTime(row[timeField]) }}</template>
     </el-table-column>
-    <el-table-column v-if="showAction" label="操作" width="90" fixed="right">
+    <el-table-column v-if="showAction || showRetry" label="操作" width="120" fixed="right">
       <template #default="{ row }">
-        <el-button link type="primary" @click="$emit('detail', row.id)">详情</el-button>
+        <el-button v-if="showAction" link type="primary" @click="$emit('detail', row.id)">详情</el-button>
+        <el-button
+          v-if="showRetry && row.state === 'failed'"
+          link
+          type="danger"
+          :loading="retryingId === row.id"
+          @click="$emit('retry', row)"
+        >重试</el-button>
       </template>
     </el-table-column>
   </el-table>
@@ -26,25 +42,36 @@ import { computed } from 'vue'
 import { formatTime, stateTagType, stateLabel } from '../utils/format'
 import type { ReviewItem } from '../api'
 
-// 审查记录 / 仪表盘"最近记录"共用的表格：列统一，改动一处两处生效。
-// timeField 决定显示"排队时间"还是"完成时间"（标签与列宽随之切换）。
+// 审查记录 / 仪表盘"最近记录"共用的表格：列统一，改动一处多处生效。
+// - timeField 决定显示"排队时间"还是"完成时间"（标签与列宽随之切换）。
+// - showProcess 控制是否显示"事件类型/分支/尝试次数"过程列（审查记录页合并任务后开启）。
+// - showRetry 控制"重试"按钮（仅 failed 行），配合 retryingId 显示该行按钮 loading。
 const props = withDefaults(
   defineProps<{
     items: ReviewItem[]
     loading?: boolean
-    /** 是否显示"详情"操作列（审查记录页显示，仪表盘摘要可关闭） */
+    /** 是否显示"详情"按钮 */
     showAction?: boolean
+    /** 是否显示"事件类型/分支/尝试次数"过程列（审查记录页开启；仪表盘精简关） */
+    showProcess?: boolean
+    /** 是否显示"重试"按钮（仅 failed 行；审查记录页开启；仪表盘关） */
+    showRetry?: boolean
+    /** 当前正在重试的行 id，用于锁住对应"重试"按钮的 loading 态 */
+    retryingId?: number | null
     /** 展示哪个时间字段：排队时间或完成时间 */
     timeField?: 'queued_at' | 'finished_at'
   }>(),
   {
     loading: false,
     showAction: true,
+    showProcess: false,
+    showRetry: false,
+    retryingId: null,
     timeField: 'queued_at',
   },
 )
 
-defineEmits<{ (e: 'detail', id: number): void }>()
+defineEmits<{ (e: 'detail', id: number): void; (e: 'retry', row: ReviewItem): void }>()
 
 const timeLabel = computed(() => (props.timeField === 'finished_at' ? '完成时间' : '排队时间'))
 const timeWidth = computed(() => (props.timeField === 'finished_at' ? 360 : 300))
