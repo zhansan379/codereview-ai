@@ -22,6 +22,9 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
 RUN uv sync --frozen --no-dev
 
+# 拷前端构建产物（/admin SPA；mount_admin 找不到 frontend/dist 时后台页 404，见 admin_ui.py）
+COPY frontend/dist ./frontend/dist
+
 # 非 root 运行，降低容器被攻破后的影响面
 RUN useradd --create-home appuser && chown -R appuser:appuser /app
 USER appuser

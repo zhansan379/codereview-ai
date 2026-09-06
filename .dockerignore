@@ -8,7 +8,12 @@ data
 .git
 .gitignore
 node_modules
-frontend
+# 只带前端构建产物 frontend/dist；源码/配置/依赖不进上下文（node_modules 已被上面全局覆盖）
+frontend/src
+frontend/package.json
+frontend/package-lock.json
+frontend/tsconfig.json
+frontend/vite.config.ts
 docs
 .claude
 tests
