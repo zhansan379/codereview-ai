@@ -7,12 +7,30 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import jwt
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
+from codereview_ai.storage.db import session_factory
+
 _bearer = HTTPBearer(auto_error=False)
+
+
+async def get_db(request: Request) -> AsyncIterator[AsyncSession]:
+    """每请求一个会话；引擎来自 `app.state.engine`（生命周期已建）。"""
+    engine = getattr(request.app.state, "engine", None)
+    if engine is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "数据库未就绪")
+    async with session_factory(engine)() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
 
 
 def get_current_user(
