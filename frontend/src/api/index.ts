@@ -198,8 +198,16 @@ export interface PollReport {
   skipped: number
   errors: string[]
 }
-export function pollPulls(): Promise<PollReport> {
+export interface PollStatus {
+  running: boolean
+  report: PollReport | null
+  error: string | null
+}
+export function pollPulls(): Promise<PollStatus> {
   return client.post('/pulls/poll').then((r) => r.data)
+}
+export function pollPullStatus(): Promise<PollStatus> {
+  return client.get('/pulls/poll/status').then((r) => r.data)
 }
 
 // ===== 通知渠道 =====

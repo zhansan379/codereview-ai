@@ -5,14 +5,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import time
 from collections.abc import AsyncIterator
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from codereview_ai.api.admin import forges, notifiers, projects, reviews, tasks
+from codereview_ai.api.admin import forges, notifiers, projects, pull, reviews, tasks
 from codereview_ai.api.admin import models as admin_models
 from codereview_ai.api.auth import issue_token
 from codereview_ai.api.auth import router as auth_router
@@ -45,6 +47,7 @@ async def app(tmp_path) -> AsyncIterator[tuple[FastAPI, str]]:
     fast.include_router(forges.router, prefix="/api")
     fast.include_router(reviews.router, prefix="/api")
     fast.include_router(tasks.router, prefix="/api")
+    fast.include_router(pull.router, prefix="/api")
 
     token = issue_token(settings.secret_key)
     try:
@@ -601,3 +604,42 @@ def test_forges_probe_invalid_provider_404(app):
     with _client(fast, token) as c:
         assert c.put("/api/forges/gitee", json={"url": "u", "token": "t"}).status_code == 404
         assert c.post("/api/forges/gitee/test", json={}).status_code == 404
+
+
+def test_pull_poll_503_and_status_without_worker(app):
+    """无 poller（worker 未启动）→ /pulls/poll 与 /pulls/poll/status 均 503。"""
+    fast, token = app
+    assert getattr(fast.state, "poller", None) is None
+    with _client(fast, token) as c:
+        r = c.post("/api/pulls/poll")
+        assert r.status_code == 503
+        assert "worker 未启动" in r.json()["detail"]
+        assert c.get("/api/pulls/poll/status").status_code == 503
+
+
+def test_pull_poll_background_and_status(app, monkeypatch):
+    """有 poller → POST 立即返回 running=true；后台跑完 /status 返回报告。"""
+    fast, token = app
+
+    class FakePoller:
+        async def run_once(self):
+            await asyncio.sleep(0.01)
+            return {"projects": 1, "prs": 2, "new": 1, "skipped": 1, "errors": []}
+
+    fast.state.poller = FakePoller()
+    fast.state.poll_running = False
+    fast.state.poll_last = None
+    fast.state.poll_error = None
+    fast.state.poll_run_task = None
+    with _client(fast, token) as c:
+        r = c.post("/api/pulls/poll")
+        assert r.status_code == 200, r.text
+        assert r.json()["running"] is True
+        for _ in range(50):
+            s = c.get("/api/pulls/poll/status").json()
+            if not s["running"]:
+                break
+            time.sleep(0.02)
+        assert s["running"] is False
+        assert s["report"]["new"] == 1
+        assert s["report"]["skipped"] == 1
