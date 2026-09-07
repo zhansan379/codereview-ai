@@ -101,6 +101,7 @@ export interface ReviewItem {
   repo_id: string
   pr_number: number | null
   pr_title: string | null
+  web_url: string | null
   push_commits: string | null
   event_type: string | null
   branch: string | null
@@ -269,6 +270,9 @@ export function listReviews(params: ReviewFilter): Promise<ReviewList> {
 }
 export function getReview(id: number): Promise<ReviewDetail> {
   return client.get(`/reviews/${id}`).then((r) => r.data)
+}
+export function deleteReview(id: number): Promise<any> {
+  return client.delete(`/reviews/${id}`).then((r) => r.data)
 }
 export function setFindingStatus(id: number, status: 'waived' | 'active'): Promise<ReviewFinding> {
   return client.post(`/reviews/findings/${id}/status`, { status }).then((r) => r.data)

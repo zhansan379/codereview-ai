@@ -315,7 +315,8 @@ async def scribble_queued_task(
     await review_repo.ensure_task(
         provider=pr.provider, repo_id=pr.repo_id, pr_number=pr.pr_number,
         event_type="mr", branch=pr.source_branch, head_sha=pr.head_sha,
-        base_sha=pr.base_sha, pr_title=pr.title, payload=raw.decode("utf-8", "replace"),
+        base_sha=pr.base_sha, pr_title=pr.title, web_url=pr.web_url,
+        payload=raw.decode("utf-8", "replace"),
     )
 
 
@@ -376,7 +377,7 @@ async def review_pull_request(
         task_id = await review_repo.ensure_task(
             provider=pr.provider, repo_id=pr.repo_id, pr_number=pr.pr_number,
             event_type="mr", branch=pr.source_branch, head_sha=pr.head_sha,
-            base_sha=pr.base_sha, pr_title=pr.title, payload=raw_payload,
+            base_sha=pr.base_sha, pr_title=pr.title, web_url=pr.web_url, payload=raw_payload,
         )
         if task_id is None:
             # 同 head 已被另一生产者认领（排队/在审）→ 幂等跳过，防止并发重复审查、重复
@@ -567,11 +568,13 @@ async def _review_push_event(
         force = bool(existing and existing.force_rerun)
         if existing is not None and not force:
             return  # 重复 webhook：该分支该 after 已审过/已跳过，跳过（§7.7）
+        # push 直达链接：拼「{项目仓库 web_url}/commit/{head_sha}」（项目未配 web_url → 留空，详情页隐藏）
+        push_url = f"{cfg.web_url}/commit/{ev.after}" if cfg and cfg.web_url else ""
         tid = await review_repo.ensure_task(
             provider=ev.provider, repo_id=ev.repo_id, pr_number=None, event_type="push",
             branch=ev.branch, head_sha=ev.after, base_sha=ev.before,
             # push 无 PR 标题；提交消息多行过长，不当标题占 pr_title/表格列，落 push_commits 详情展示
-            pr_title="", push_commits=_commits_text(ev), payload=raw_payload,
+            pr_title="", web_url=push_url, push_commits=_commits_text(ev), payload=raw_payload,
         )
         if tid is None:
             return  # 并发下另一 worker 抢先插入 → 幂等跳过（§7.7）

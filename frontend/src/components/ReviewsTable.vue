@@ -6,13 +6,7 @@
     <el-table-column prop="provider" label="平台" width="80" />
     <el-table-column prop="repo_id" label="仓库 ID" min-width="200" show-overflow-tooltip />
     <el-table-column v-if="showProcess" prop="event_type" label="事件" width="60" />
-    <el-table-column
-        v-if="showProcess"
-        prop="branch"
-        label="分支"
-        width="200"
-        show-overflow-tooltip
-      />
+    <el-table-column v-if="showProcess" prop="branch" label="分支" width="200" show-overflow-tooltip />
     <el-table-column v-if="showProcess" prop="attempt" label="重试" width="80" />
     <el-table-column prop="score_total" label="评分" width="60" />
     <el-table-column label="状态" width="100">
@@ -23,16 +17,13 @@
     <el-table-column :label="timeLabel" :width="160">
       <template #default="{ row }">{{ formatTime(row[timeField]) }}</template>
     </el-table-column>
-    <el-table-column v-if="showAction || showRetry" label="操作" width="120" fixed="right">
+    <el-table-column v-if="showAction || showRetry || showDelete" :label="'操作'" :width="showDelete ? 160 : 120"
+      fixed="right">
       <template #default="{ row }">
         <el-button v-if="showAction" link type="primary" @click="$emit('detail', row.id)">详情</el-button>
-        <el-button
-          v-if="showRetry && isRetryable(row)"
-          link
-          type="danger"
-          :loading="retryingId === row.id"
-          @click="$emit('retry', row)"
-        >{{ row.state === 'skipped' ? '补审' : '重试' }}</el-button>
+        <el-button v-if="showDelete" link type="danger" @click="$emit('delete', row.id)">删除</el-button>
+        <el-button v-if="showRetry && isRetryable(row)" link type="danger" :loading="retryingId === row.id"
+          @click="$emit('retry', row)">{{ row.state === 'skipped' ? '补审' : '重试' }}</el-button>
       </template>
     </el-table-column>
   </el-table>
@@ -57,6 +48,8 @@ const props = withDefaults(
     showProcess?: boolean
     /** 是否显示"重试"按钮（仅 failed 行；审查记录页开启；仪表盘关） */
     showRetry?: boolean
+    /** 是否显示"删除"按钮（审查记录页开启；仪表盘共用表格关，默认关） */
+    showDelete?: boolean
     /** 当前正在重试的行 id，用于锁住对应"重试"按钮的 loading 态 */
     retryingId?: number | null
     /** 展示哪个时间字段：排队时间或完成时间 */
@@ -67,12 +60,17 @@ const props = withDefaults(
     showAction: true,
     showProcess: false,
     showRetry: false,
+    showDelete: false,
     retryingId: null,
     timeField: 'queued_at',
   },
 )
 
-defineEmits<{ (e: 'detail', id: number): void; (e: 'retry', row: ReviewItem): void }>()
+defineEmits<{
+  (e: 'detail', id: number): void
+  (e: 'retry', row: ReviewItem): void
+  (e: 'delete', id: number): void
+}>()
 
 const timeLabel = computed(() => (props.timeField === 'finished_at' ? '完成时间' : '排队时间'))
 

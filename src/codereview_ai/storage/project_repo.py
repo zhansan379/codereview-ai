@@ -26,6 +26,8 @@ class ProjectConfig:
     file_extensions: str = ""
     push_enabled: bool | None = None
     push_branch_globs: str = ""
+    # 项目仓库主页 URL：push 轨据此拼「{web_url}/commit/{head_sha}」直达链接
+    web_url: str = ""
     # F3.7 评分阈值：enforce 开通时，总分低于 score_threshold 发 failed 阻塞合并
     score_threshold: int = 80
     enforce_score_threshold: bool = False
@@ -61,6 +63,7 @@ class ProjectRepository:
             file_extensions=row.file_extensions or "",
             push_enabled=row.push_enabled,
             push_branch_globs=row.push_branch_globs or "",
+            web_url=row.web_url or "",
             score_threshold=row.score_threshold,
             enforce_score_threshold=row.enforce_score_threshold,
         )

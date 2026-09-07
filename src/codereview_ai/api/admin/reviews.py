@@ -62,6 +62,7 @@ class ReviewListItem(BaseModel):
     repo_id: str
     pr_number: int | None
     pr_title: str
+    web_url: str = ""  # mr: MR/PR 页 URL；push: {仓库}/commit/{head_sha}
     push_commits: str = ""
     event_type: str
     branch: str
@@ -304,6 +305,21 @@ async def get_review(review_id: int, session: AsyncSession = Depends(get_db)) ->
     detail = ReviewDetail(**ReviewListItem.model_validate(row).model_dump())
     detail.findings = [ReviewFindingOut.model_validate(f) for f in findings]
     return detail
+
+
+@router.delete("/{review_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_review(review_id: int, session: AsyncSession = Depends(get_db)) -> None:
+    """删除一条审查记录（含其 findings，级联）。管理员清理脏数据用。
+
+    `review_finding.task_id` 为 `ondelete="CASCADE"`（SQLite 已开 foreign_keys），
+    删 task 时 finding 自动级联。注意：删 `completed` 行会移除其「下次增量基线/
+    指标统计」锚点，同 head 可能被重新全量审查（预期副作用的直删实现）。
+    """
+    row = (await session.execute(select(ReviewTask).where(ReviewTask.id == review_id))).scalar_one_or_none()  # noqa: E501
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "审查记录不存在")
+    await session.delete(row)
+    await session.commit()
 
 
 @router.post("/findings/{finding_id}/status", response_model=ReviewFindingOut)

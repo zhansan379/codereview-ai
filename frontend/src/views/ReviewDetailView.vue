@@ -26,6 +26,11 @@
           {{ detail.finished_at ? formatTime(detail.finished_at) : '—' }}
         </el-descriptions-item>
         <el-descriptions-item label="Trace ID">{{ detail.trace_id || '—' }}</el-descriptions-item>
+        <el-descriptions-item v-if="detail.web_url" label="直达链接">
+          <el-link :href="detail.web_url" target="_blank" type="primary">
+            {{ detail.event_type === 'push' ? '打开提交' : '打开 MR/PR' }}
+          </el-link>
+        </el-descriptions-item>
       </el-descriptions>
 
       <!-- 失败原因分析 -->
