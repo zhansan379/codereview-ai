@@ -88,6 +88,7 @@ export interface ReviewItem {
   repo_id: string
   pr_number: number | null
   pr_title: string | null
+  push_commits: string | null
   event_type: string | null
   branch: string | null
   head_sha: string | null

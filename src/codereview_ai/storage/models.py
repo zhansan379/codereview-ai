@@ -85,7 +85,9 @@ class ReviewTask(Base):
     branch: Mapped[str] = mapped_column(String(255), default="")
     head_sha: Mapped[str] = mapped_column(String(64))
     base_sha: Mapped[str] = mapped_column(String(64), default="")
-    pr_title: Mapped[str] = mapped_column(String(255), default="")  # PR/MR 标题（展示用）
+    pr_title: Mapped[str] = mapped_column(String(255), default="")  # PR/MR 标题（展示用；push 轨留空）
+    # push 轨提交消息（多行、太长不当标题）；详情页单独展示，不占 pr_title/表格列
+    push_commits: Mapped[str] = mapped_column(Text, default="")
     state: Mapped[str] = mapped_column(String(16), default="queued")
     attempt: Mapped[int] = mapped_column(Integer, default=0)
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

@@ -510,7 +510,8 @@ async def _review_push_event(
         tid = await review_repo.ensure_task(
             provider=ev.provider, repo_id=ev.repo_id, pr_number=None, event_type="push",
             branch=ev.branch, head_sha=ev.after, base_sha=ev.before,
-            pr_title=_commits_text(ev), payload=raw_payload,
+            # push 无 PR 标题；提交消息多行过长，不当标题占 pr_title/表格列，落 push_commits 详情展示
+            pr_title="", push_commits=_commits_text(ev), payload=raw_payload,
         )
         if tid is None:
             return  # 并发下另一 worker 抢先插入 → 幂等跳过（§7.7）
