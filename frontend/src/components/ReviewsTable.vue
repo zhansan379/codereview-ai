@@ -1,9 +1,10 @@
 <template>
   <el-table :data="items" v-loading="loading" stripe>
     <el-table-column prop="id" label="ID" width="50" />
+    <el-table-column prop="pr_number" label="PR" width="50" />
+    <el-table-column prop="pr_title" label="标题" min-width="180" show-overflow-tooltip />
     <el-table-column prop="provider" label="平台" width="80" />
     <el-table-column prop="repo_id" label="仓库 ID" min-width="200" show-overflow-tooltip />
-    <el-table-column prop="pr_number" label="PR" width="50" />
     <el-table-column v-if="showProcess" prop="event_type" label="事件类型" width="80" />
     <el-table-column
         v-if="showProcess"

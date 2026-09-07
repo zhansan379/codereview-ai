@@ -26,6 +26,7 @@ class ReviewListItem(BaseModel):
     provider: str
     repo_id: str
     pr_number: int | None
+    pr_title: str
     event_type: str
     branch: str
     head_sha: str
