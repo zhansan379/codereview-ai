@@ -53,7 +53,14 @@
           <el-input v-model="form.repo_full_name" placeholder="owner/repo" />
         </el-form-item>
         <el-form-item label="Web URL">
-          <el-input v-model="form.web_url" />
+          <el-input
+            v-model="form.web_url"
+            placeholder="粘贴仓库链接后点「解析」，自动回填 仓库ID / 仓库全名"
+          >
+            <template #append>
+              <el-button :loading="resolving" @click="onResolve">解析</el-button>
+            </template>
+          </el-input>
         </el-form-item>
         <el-form-item label="分支规则">
           <el-input v-model="form.branch_rule" placeholder="如 main" />
@@ -94,11 +101,11 @@
         <el-form-item label="得分阈值">
           <el-input-number v-model="form.score_threshold" :min="0" :max="100" />
         </el-form-item>
-        <el-form-item label="低于阈值阻塞合并">
+        <el-form-item label="阻塞合并">
           <el-switch v-model="form.enforce_score_threshold" />
-          <span class="field-hint">开：总分低于阈值时对该 MR 发 failed 状态，阻塞合并</span>
+          <span class="field-hint">开：总分低于阈值时对 head commit 发失败状态（阻塞合并）。分平台效果：<br>· GitHub 写 commit status「failure」(context codereview-ai)，分支保护要求该检查通过才真正阻塞合并<br>· GitLab 写 commit status「failed」，合并检查「Pipeline must succeed」开启时才阻塞<br>· Gitea / Gitee 暂未实现该状态回写，开启无效果</span>
         </el-form-item>
-        <el-form-item label="启用">
+        <el-form-item label="仓库启用">
           <el-switch v-model="form.enabled" />
         </el-form-item>
       </el-form>
@@ -113,12 +120,20 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listProjects, createProject, updateProject, deleteProject, type Project } from '../api'
+import {
+  listProjects,
+  createProject,
+  updateProject,
+  deleteProject,
+  resolveRepo,
+  type Project,
+} from '../api'
 import { pollBusy, pollProgress, triggerPoll, resumePollWatchIfBusy } from './usePoll'
 
 const items = ref<Project[]>([])
 const loading = ref(false)
 const saving = ref(false)
+const resolving = ref(false)
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const editingId = ref<number | null>(null)
@@ -204,6 +219,48 @@ async function onSave() {
 
 async function onPoll() {
   await triggerPoll()
+}
+
+// 从仓库链接本地解析 "owner/repo"（Gitea/Gitee 用；GitHub 语义同，但走后端统一处理）
+function parseOwnerRepo(url: string): string {
+  try {
+    const u = new URL(url.trim())
+    const segs = u.pathname.split('/').filter(Boolean)
+    if (segs.length >= 2) {
+      const repo = segs[1].replace(/\.git$/, '')
+      return `${segs[0]}/${repo}`
+    }
+  } catch {
+    /* ignore */
+  }
+  return ''
+}
+
+async function onResolve() {
+  const url = form.web_url.trim()
+  if (!form.provider) return ElMessage.warning('请先选择平台')
+  if (!url) return ElMessage.warning('请先填入仓库链接')
+  resolving.value = true
+  try {
+    if (form.provider === 'github' || form.provider === 'gitlab') {
+      const meta = await resolveRepo({ provider: form.provider, url })
+      form.repo_id = meta.repo_id
+      form.repo_full_name = meta.repo_full_name
+      if (meta.web_url) form.web_url = meta.web_url
+      ElMessage.success('解析成功')
+    } else {
+      // Gitea / Gitee：平台暂无后端解析，本地取 owner/repo（repo_id 同为该路径）
+      const path = parseOwnerRepo(url)
+      if (!path) return ElMessage.warning('无法从链接解析出仓库')
+      form.repo_id = path
+      form.repo_full_name = path
+      ElMessage.success('解析成功')
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '解析失败')
+  } finally {
+    resolving.value = false
+  }
 }
 
 async function onDelete(row: Project) {

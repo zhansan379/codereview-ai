@@ -150,8 +150,17 @@ export function login(password: string): Promise<LoginResult> {
 }
 
 // ===== 项目 =====
+export interface ResolvedRepo {
+  repo_id: string
+  repo_full_name: string
+  web_url: string
+}
+
 export function listProjects(): Promise<Project[]> {
   return client.get('/projects').then((r) => r.data)
+}
+export function resolveRepo(data: { provider: string; url: string }): Promise<ResolvedRepo> {
+  return client.post('/forges/resolve-repo', data).then((r) => r.data)
 }
 export function createProject(data: Partial<Project>): Promise<Project> {
   return client.post('/projects', data).then((r) => r.data)

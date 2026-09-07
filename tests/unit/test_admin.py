@@ -79,6 +79,11 @@ def test_projects_crud_roundtrip(app):
         lst = c.get("/api/projects").json()
         assert len(lst) == 1 and lst[0]["repo_full_name"] == "a/b"
 
+        # 重复 (provider, repo_id) 新建 → 409 友好提示而非 500
+        dup = c.post("/api/projects", json={"provider": "gitlab", "repo_id": "123"})
+        assert dup.status_code == 409
+        assert "已存在" in dup.json()["detail"]
+
         upd = c.put(f"/api/projects/{pid}", json={
             "provider": "gitlab", "repo_id": "123", "branch_rule": "dev",
             "score_threshold": 60, "enforce_score_threshold": True,

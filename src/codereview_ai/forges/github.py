@@ -18,7 +18,7 @@ from typing import Any
 import httpx
 
 from codereview_ai.domain.models import ChangeType, CommitInfo, FileDiff, PullRequest, PushEvent
-from codereview_ai.forges.base import ForgeAdapter
+from codereview_ai.forges.base import ForgeAdapter, repo_path_from_url
 from codereview_ai.forges.signatures import GITHUB
 
 #: 空 files 数组时指数退避的初始/最大延时（秒）。
@@ -353,6 +353,16 @@ class GitHubForge(ForgeAdapter):
             },
         )
         resp.raise_for_status()
+
+    async def resolve_repo_meta(self, url: str) -> dict[str, str] | None:
+        """GitHub 的 repo_id = repo_full_name = "owner/name"（DESIGN §5），纯解析 URL 即可。
+
+        首个 host 路径两段是仓库地址；不需要平台凭据在线。`
+        """
+        path = repo_path_from_url(url, GITHUB)
+        if "/" not in path:
+            return None
+        return {"repo_id": path, "repo_full_name": path, "web_url": url.rstrip("/")}
 
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token}", "Accept": "application/vnd.github.v3+json"}  # noqa: E501
