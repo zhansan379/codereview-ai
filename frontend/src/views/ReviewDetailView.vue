@@ -4,6 +4,7 @@
 
     <el-card v-if="detail" class="info-card">
       <el-descriptions :column="3" border>
+        <el-descriptions-item label="标题">{{ detail.pr_title || '—' }}</el-descriptions-item>
         <el-descriptions-item label="ID">{{ detail.id }}</el-descriptions-item>
         <el-descriptions-item label="平台">{{ detail.provider }}</el-descriptions-item>
         <el-descriptions-item label="仓库 ID">{{ detail.repo_id }}</el-descriptions-item>

@@ -86,6 +86,7 @@ _COLUMN_FALLBACKS: dict[str, list[tuple[str, str, str]]] = {
     "review_task": [
         ("skip_reason", "VARCHAR(32)", "DEFAULT ''"),
         ("force_rerun", "BOOLEAN", "DEFAULT 0"),
+        ("pr_title", "VARCHAR(255)", "DEFAULT ''"),
     ],
 }
 

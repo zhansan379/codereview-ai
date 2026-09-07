@@ -110,6 +110,7 @@ class ReviewRepository:
         branch: str,
         head_sha: str,
         base_sha: str = "",
+        pr_title: str = "",
         payload: str = "",
     ) -> int | None:
         """按幂等键幂等落一条 `queued` 审计行并返回 id；已存在/并发冲突返回 None。
@@ -136,7 +137,7 @@ class ReviewRepository:
             task = ReviewTask(
                 provider=provider, repo_id=repo_id, pr_number=pr_number,
                 event_type=event_type, branch=branch, head_sha=head_sha,
-                base_sha=base_sha, state="queued", payload=payload,
+                base_sha=base_sha, pr_title=pr_title, state="queued", payload=payload,
             )
             s.add(task)
             try:
