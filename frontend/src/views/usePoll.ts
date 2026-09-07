@@ -3,10 +3,13 @@
 // 「展示在途状态 + 轮询 /pulls/poll/status 直到结束并弹结果」。
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { pollPulls, pollPullStatus } from '../api'
+import { pollPulls, pollPullStatus, type PollProgress } from '../api'
 
 /** 是否有补拉正在后台跑（按钮 loading / 页内提示共用，切页回来仍为 true）。 */
 export const pollBusy = ref(false)
+
+/** 补拉进行中的逐条进度（模块级，切页保持；结束置 null）。 */
+export const pollProgress = ref<PollProgress | null>(null)
 
 let loop: ReturnType<typeof setInterval> | null = null
 let resolved = false // 本轮结果是否已弹给用户（避免重复弹）
@@ -19,9 +22,13 @@ async function watchOnce(): Promise<void> {
   } catch {
     return // 瞬时错误：下一拍再试
   }
-  if (s.running) return
+  if (s.running) {
+    if (s.progress) pollProgress.value = s.progress
+    return
+  }
   // 本轮结束
   pollBusy.value = false
+  pollProgress.value = null
   if (loop) {
     clearInterval(loop)
     loop = null
@@ -33,11 +40,11 @@ async function watchOnce(): Promise<void> {
   } else if (s.report) {
     const parts = [
       `扫描 ${s.report.prs} 个打开 PR/MR`,
-      `新审 ${s.report.new}`,
+      `新入队 ${s.report.new} 条审查`,
       `已审过跳过 ${s.report.skipped}`,
     ]
     if (s.report.errors.length) parts.push(`失败 ${s.report.errors.length}`)
-    ElMessage.success(`补拉完成：${parts.join('，')}`)
+    ElMessage.success(`补拉完成：${parts.join('，')}，审查在后台进行，可在审查记录页查看`)
     if (s.report.errors.length) console.warn('补拉失败明细', s.report.errors)
   }
 }
@@ -65,6 +72,7 @@ export async function triggerPoll(): Promise<void> {
     return
   }
   pollBusy.value = true
+  pollProgress.value = null
   resolved = false
   startWatch()
 }

@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -226,15 +227,19 @@ async def _run_static(
 
 
 class EventStore:
-    """task_id → (provider, raw_body) 的进程内暂存。"""
+    """task_id → (provider, payload) 的进程内暂存。
+
+    payload 为 `bytes`（webhook 原始 body）或 `PullRequest`（补拉已解析的打开 PR）；worker
+    消费时据此分流：前者走 `process_raw_event` 解析，后者直接 `review_pull_request`。
+    """
 
     def __init__(self) -> None:
-        self._items: dict[str, tuple[str, bytes]] = {}
+        self._items: dict[str, tuple[str, bytes | PullRequest]] = {}
 
-    def put(self, task_id: str, provider: str, raw: bytes) -> None:
-        self._items[task_id] = (provider, raw)
+    def put(self, task_id: str, provider: str, payload: bytes | PullRequest) -> None:
+        self._items[task_id] = (provider, payload)
 
-    def get(self, task_id: str) -> tuple[str, bytes] | None:
+    def get(self, task_id: str) -> tuple[str, bytes | PullRequest] | None:
         return self._items.get(task_id)
 
     def drop(self, task_id: str) -> None:
@@ -267,6 +272,18 @@ class QueueEnqueuer:
                 await self.on_enqueue(provider, raw)
             except Exception as exc:  # noqa: BLE001 建行失败不阻断入队：审计/重试仍由 process 兜底
                 logger.warning("入队建行失败（%s）：%s", provider, exc)
+        return meta.task_id
+
+    async def enqueue_pr(self, provider: str, pr: PullRequest) -> str:
+        """补拉专用入队：携带一个**已解析**的 `PullRequest`（非原始 webhook body）。
+
+        供 PRPoller 把打开的 PR 投给后台 worker 异步审查。**不触发** `on_enqueue`
+        （`scribble_queued_task` 要 parse 原始 body 才建行，PR 没有）；调用方（补拉）
+        已在入队前用 `ensure_task` 自己建好 queued 审计行，worker 消费时 `review_pull_request`
+        的 `ensure_task` 命中该行 → 标 running → 异步审查。
+        """
+        meta = await self._queue.enqueue(provider)
+        self._store.put(meta.task_id, provider, pr)
         return meta.task_id
 
 
@@ -328,7 +345,38 @@ def _event_action(data: dict[str, Any]) -> str:
     return str(data.get("action") or "")
 
 
+# ── 并发防重：按 (provider, repo_id, head_sha) 键控的进程内锁 ─────────────
+# 手动补拉、定时补拉、webhook worker 皆同一进程/同一事件循环，因此用 per-head
+# `asyncio.Lock` 即可关死 `ensure_task` 落 queued 到 mark running 之间的并发窗口
+# （删记录后重拉同 head，第二生产者会在该窗口拿到同一 task id → 双评论/双通知）。
+# 第二生产者等锁后再算增量决策，读到的已是 first 写好的 completed 锚点 → REASON_ALREADY
+# → 返回 "already"，不会重复。
+_head_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
+_head_locks_guard = asyncio.Lock()
+
+
+async def _head_lock(key: tuple[str, str, str]) -> asyncio.Lock:
+    async with _head_locks_guard:
+        lock = _head_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _head_locks[key] = lock
+        return lock
+
+
 async def review_pull_request(
+    forge: ForgeAdapter,
+    reviewer: Reviewer,
+    pr: PullRequest,
+    **kwargs: Any,
+) -> str:
+    """mr 轨审查唯一入口（薄壳）：按 head 加锁，防并发重复审查，再委托 `_do_review_pull_request`。"""
+    lock = await _head_lock((pr.provider, pr.repo_id, pr.head_sha))
+    async with lock:
+        return await _do_review_pull_request(forge, reviewer, pr, **kwargs)
+
+
+async def _do_review_pull_request(
     forge: ForgeAdapter,
     reviewer: Reviewer,
     pr: PullRequest,
@@ -687,16 +735,36 @@ def make_processor(
         item = store.get(task.task_id)
         if item is None:
             return  # 无暂存 payload（如直接入队的调试任务），视为已处理
-        provider, raw = item
+        provider, payload = item
         forge = forge_factory(provider)
         reviewer = reviewer_factory(provider)
         if forge is None:
             logger.warning("provider %s 未配置适配器，任务 %s 跳过", provider, task.task_id)
             return
+        if isinstance(payload, PullRequest):
+            # 补拉入队的已解析 PR → 直接跑 mr 轨核心（无需再 parse 原始 body）。
+            # 不转发 push_gate（review_pull_request 不接）；其余与 process_raw_event 一致。
+            await review_pull_request(
+                forge,
+                reviewer,
+                payload,
+                increments=increments,
+                review_repo=review_repo,
+                grouper=grouper,
+                chain_valid=chain_valid,
+                notifier=notifier,
+                static_analyzer=static_analyzer,
+                review_strategy=review_strategy,
+                agent_runtime=agent_runtime,
+                agent_llm_factory=agent_llm_factory,
+                project_config_factory=project_config_factory,
+                raw_payload="",
+            )
+            return
         await process_raw_event(
             forge,
             reviewer,
-            raw,
+            payload,
             increments=increments,
             review_repo=review_repo,
             grouper=grouper,

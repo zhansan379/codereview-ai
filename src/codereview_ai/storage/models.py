@@ -241,3 +241,15 @@ class ModelUsage(Base):
     status: Mapped[str] = mapped_column(String(16), default="ok")
     cost: Mapped[float] = mapped_column(default=0.0)
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class AppSetting(Base):
+    """全局运行时设置（key-value）。每键一行，供阈值/开关/并发等可热更参数落库。
+
+    由 `init_db.create_all` 自动建表（现有库重启即补），无外键——只承载标量字符串值。
+    """
+
+    __tablename__ = "app_setting"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(255), default="")

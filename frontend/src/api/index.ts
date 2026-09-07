@@ -219,6 +219,19 @@ export function runSchedule(id: number): Promise<any> {
   return client.post(`/schedules/${id}/run`).then((r) => r.data)
 }
 
+// ===== 全局运行时设置（审查并发）=====
+export interface ConcurrencySetting {
+  concurrency: number
+  active: boolean
+  applied: boolean
+}
+export function getConcurrency(): Promise<ConcurrencySetting> {
+  return client.get('/settings/concurrency').then((r) => r.data)
+}
+export function setConcurrency(data: { concurrency: number }): Promise<ConcurrencySetting> {
+  return client.post('/settings/concurrency', data).then((r) => r.data)
+}
+
 // ===== 主动补拉 PR/MR =====
 export interface PollReport {
   projects: number
@@ -227,10 +240,18 @@ export interface PollReport {
   skipped: number
   errors: string[]
 }
+export interface PollProgress {
+  done: number
+  total: number
+  new: number
+  skipped: number
+}
 export interface PollStatus {
   running: boolean
   report: PollReport | null
   error: string | null
+  /** 进行中逐条进度（仅 running 时有意义） */
+  progress?: PollProgress | null
 }
 export function pollPulls(): Promise<PollStatus> {
   return client.post('/pulls/poll').then((r) => r.data)

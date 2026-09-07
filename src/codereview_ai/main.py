@@ -30,6 +30,9 @@ from codereview_ai.api.admin import (
     stats,
     tasks,
 )
+from codereview_ai.api.admin import (
+    settings as admin_settings,  # 全局运行时设置（并发数）
+)
 from codereview_ai.api.admin_ui import mount_admin
 from codereview_ai.api.auth import router as auth_router
 from codereview_ai.api.webhook import router as webhook_router
@@ -44,11 +47,12 @@ from codereview_ai.ops.poller import PRPoller
 from codereview_ai.ops.scheduler import ScheduleManager
 from codereview_ai.ops.tracing import TraceMiddleware
 from codereview_ai.queue.asyncio import AsyncioTaskQueue
-from codereview_ai.queue.worker import run_worker
+from codereview_ai.queue.concurrency import WorkerPool
 from codereview_ai.review.static_analysis import StaticAnalyzer
 from codereview_ai.storage.db import create_engine, init_db
 from codereview_ai.storage.project_repo import ProjectRepository
 from codereview_ai.storage.review_repo import ReviewRepository
+from codereview_ai.storage.setting_repo import SettingRepository
 from codereview_ai.worker import (
     EventStore,
     PushGate,
@@ -89,7 +93,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         queue = AsyncioTaskQueue()
         app.state.queue = queue
         app.state.enqueuer = QueueEnqueuer(queue, store)
-        worker_task: asyncio.Task[None] | None = None
         scheduler: ScheduleManager | None = None
         poll: PRPoller | None = None
         http: httpx.AsyncClient | None = None
@@ -134,15 +137,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 notifier=notifier, push_gate=push_gate, static_analyzer=static_analyzer,
                 project_config_factory=project_repo.config_for,
             )
-            worker_task = asyncio.create_task(run_worker(queue, processor))
+            # 并发审查：固定数量 worker 循环 + 并发闸（上限可热更、落 DB 保留，
+            # 见 /settings/concurrency）
+            init_concurrency = await SettingRepository(engine).get_int(
+                "worker_concurrency", settings.max_concurrent_reviews
+            )
+            worker_pool = WorkerPool(queue, processor, limit=init_concurrency)
+            app.state.worker_pool = worker_pool
             # M5.7 日报 + §9 补拉：统一由 ScheduleManager 按 schedule_job 表驱动（落 DB + 热更）
             reporter = DailyReporter(engine, notifier)
-            poll = PRPoller(
-                engine, forge_registry, reviewer, notifier=notifier,
-                static_analyzer=static_analyzer,
-                project_config_factory=project_repo.config_for,
-                grouper=None, chain_valid=None,  # 补拉走全量/增量决策，平台 compare 留给平台侧
-            )
+            # 补拉只发现+落 queued 行+入队到 worker 队列异步审查，递 enqueuer 即可。
+            poll = PRPoller(engine, forge_registry, app.state.enqueuer)
             app.state.poller = poll
             # 手动补拉的后台任务状态（POST /pulls/poll → run_once 放入后台，/status 读取）
             app.state.poll_running = False
@@ -180,14 +185,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             if scheduler is not None:
                 await scheduler.stop()  # 停定时任务（日报/补拉循环）并清理
-            tasks = [worker_task, getattr(app.state, "poll_run_task", None)]
-            for t in tasks:
-                if t is not None:
-                    t.cancel()
-                    try:
-                        await t
-                    except asyncio.CancelledError:
-                        pass
+            pool = getattr(app.state, "worker_pool", None)
+            if pool is not None:
+                await pool.stop()  # 停全部 worker 循环（并发闸随池回收）
+            poll_task = getattr(app.state, "poll_run_task", None)
+            if poll_task is not None:
+                poll_task.cancel()
+                try:
+                    await poll_task
+                except asyncio.CancelledError:
+                    pass
             if http is not None:
                 await http.aclose()
             await engine.dispose()
@@ -212,6 +219,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(reviews.router, prefix="/api")
     app.include_router(pull.router, prefix="/api")
     app.include_router(schedules.router, prefix="/api")
+    app.include_router(admin_settings.router, prefix="/api")
     app.include_router(tasks.router, prefix="/api")
     app.include_router(stats.router, prefix="/api")
     app.include_router(webhook_router)
