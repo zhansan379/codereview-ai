@@ -367,7 +367,17 @@ async def process_raw_event(
         if review_repo is not None:
             # mr 轨真落库（幂等；同 head 已存在则跳过，不重复写）
             if task_id is not None:
-                await review_repo.insert_findings(task_id, result.findings)
+                # 非增量全量轮：finding 生命周期对账（DESIGN §7.3）。
+                # 缺席→resolved / 复现→回 active+reopened；复现指纹返回作 skip 去重。
+                skip: frozenset[str] = frozenset()
+                if not incremental and ref is not None:
+                    covered = {p for d in diffs for p in (d.old_path, d.new_path)}
+                    skip = await review_repo.reconcile_findings(
+                        provider=pr.provider, repo_id=pr.repo_id, pr_number=pr.pr_number,
+                        current_findings=result.findings, covered_files=covered,
+                        exclude_task_id=task_id,
+                    )
+                await review_repo.insert_findings(task_id, result.findings, skip_fingerprints=skip)
                 await review_repo.mark_state(
                     task_id, state="completed", summary_md=result.summary,
                     score_total=result.scores.total,
