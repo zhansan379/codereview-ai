@@ -6,7 +6,6 @@
         <el-button :loading="pollBusy" @click="onPoll">
           {{ pollBusy ? '补拉中…' : '补拉 PR/MR' }}
         </el-button>
-        <span class="poll-hint">后台按轮询间隔自动补拉，仅审 head 未变过的打开 PR/MR（新 head 才会审）</span>
       </div>
       <div v-if="pollBusy" class="poll-progress">
         <span class="spinner" /> 补拉进行中… 正在后台审查打开 PR/MR，可切换页面，完成后将弹出结果

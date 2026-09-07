@@ -27,6 +27,10 @@
           <el-icon><Bell /></el-icon>
           <span>IM 通知</span>
         </el-menu-item>
+        <el-menu-item index="/schedules">
+          <el-icon><Timer /></el-icon>
+          <span>定时任务</span>
+        </el-menu-item>
         <el-menu-item index="/settings">
           <el-icon><Setting /></el-icon>
           <span>设置</span>
@@ -58,6 +62,7 @@ import {
   Cpu,
   Bell,
   Setting,
+  Timer,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 

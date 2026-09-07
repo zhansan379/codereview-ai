@@ -201,6 +201,28 @@ class ProjectRule(Base):
     priority: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class ScheduleJob(Base):
+    """定时任务（主动补拉 / 日报；DESIGN §9 补拉通道 + M5.7 日报调度）。
+
+    每行 = 一条待调度的定时任务实例，`job_type` 限定现存动作：`poll`（补拉轮询，
+    params={interval_seconds}）| `daily`（日报，params={hour}）。DB 为唯一事实源；空表
+    时由 env 播种默认两条，此后全由后台「定时任务」页 CRUD 驱动运行时热更。
+    """
+
+    __tablename__ = "schedule_job"
+    __table_args__ = (Index("uq_sched_name", "name", unique=True),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64))  # 任务标签（展示用，唯一）
+    job_type: Mapped[str] = mapped_column(String(32))  # poll | daily
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    params: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
 class ModelUsage(Base):
     """每轮 LLM 请求一条，成本归因与审计（DESIGN §5 / §10）。"""
 

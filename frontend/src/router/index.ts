@@ -46,6 +46,11 @@ const router = createRouter({
           component: () => import('../views/NotifiersView.vue'),
         },
         {
+          path: '/schedules',
+          name: 'Schedules',
+          component: () => import('../views/SchedulesView.vue'),
+        },
+        {
           // 任务页已并入审查记录页，保留旧地址兜底跳转
           path: '/tasks',
           redirect: '/reviews',
