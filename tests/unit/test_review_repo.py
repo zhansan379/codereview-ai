@@ -128,6 +128,32 @@ async def test_pending_for_replay_picks_stuck_queued_and_running(engine):
     assert st == "queued"
 
 
+async def test_mark_state_running_sets_started_at(engine):
+    """worker 开审跑 `mark_state(running)`：写 started_at、不写 finished_at。"""
+    session = session_factory(engine)
+    async with session() as s:
+        t = ReviewTask(provider="gitlab", repo_id="9", pr_number=7, event_type="mr",
+                       branch="f", head_sha="h1", state="queued")
+        s.add(t)
+        await s.commit()
+        tid = t.id
+
+    repo = ReviewRepository(engine)
+    await repo.mark_state(tid, state="running")
+
+    async with session() as s:
+        row = (await s.execute(select(ReviewTask).where(ReviewTask.id == tid))).scalar_one()
+    assert row.state == "running"
+    assert row.started_at is not None
+    assert row.finished_at is None
+
+    await repo.mark_state(tid, state="completed", summary_md="ok", score_total=80)
+    async with session() as s:
+        row = (await s.execute(select(ReviewTask).where(ReviewTask.id == tid))).scalar_one()
+    assert row.state == "completed"
+    assert row.finished_at is not None  # 收尾写 finished_at
+
+
 async def test_replay_pending_tasks_requeues_into_queue(engine):
     """回放协调：把遗留 payload 重新投进内存队列，worker 重启后能真正拾取续跑。"""
     session = session_factory(engine)
