@@ -254,6 +254,23 @@ class QueueEnqueuer:
         return meta.task_id
 
 
+async def replay_pending_tasks(
+    review_repo: ReviewRepository, enqueuer: QueueEnqueuer
+) -> int:
+    """启动回放（DESIGN §9.2 / 崩溃恢复）：把遗留 queued/running 且带 payload 的任务
+    重新投回内存队列，让上次被杀死的审查续跑。
+
+    内存队列「重启即清空」(`queue.asyncio`)，DB 侧遗留的 queued 行不会被消费而变成
+    孤死任务、无失败原因可查。此函数在 worker 启动前调用，扫描 DB 待回放行并据此
+    重新入队。幂等安全：同 head 已 completed 的重放由增量决策/`ensure_task` 短路，
+    不重复审查也不重复写 finding。
+    """
+    rows = await review_repo.pending_for_replay()
+    for _task_id, provider, payload in rows:
+        await enqueuer.enqueue(provider, payload.encode())
+    return len(rows)
+
+
 def _event_action(data: dict[str, Any]) -> str:
     """归一事件 action：优先 GitLab 的 object_attributes.action，其次顶层 action。"""
     oa = data.get("object_attributes")

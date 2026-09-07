@@ -9,12 +9,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from codereview_ai.queue.asyncio import AsyncioTaskQueue
 from codereview_ai.review.increments import REASON_ALREADY, REASON_INCREMENTAL, decide_from_ref
 from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.models import ReviewFinding, ReviewTask
 from codereview_ai.storage.review_repo import ReviewRepository
+from codereview_ai.worker import EventStore, QueueEnqueuer, replay_pending_tasks
 
 
 @pytest.fixture
@@ -93,3 +96,53 @@ async def test_latest_completed_wins(engine):
     repo = ReviewRepository(engine)
     ref = await repo.last_ok_review("gitlab", "9", 42)
     assert ref is not None and ref.head_sha == "newest"
+
+
+# ── 启动回放（崩溃恢复）──────────────────────────────────────────────────
+
+
+async def test_pending_for_replay_picks_stuck_queued_and_running(engine):
+    """连续拿 `queued/running` 且带 payload 的行；completed/failed/空 payload 不入选。"""
+    session = session_factory(engine)
+    async with session() as s:
+        s.add(ReviewTask(provider="gitlab", repo_id="9", pr_number=1, event_type="mr",
+                         branch="f", head_sha="h1", state="queued", payload='{"x":1}'))
+        s.add(ReviewTask(provider="github", repo_id="9", pr_number=2, event_type="mr",
+                         branch="f", head_sha="h2", state="running", payload='{"y":2}'))
+        s.add(ReviewTask(provider="gitlab", repo_id="9", pr_number=3, event_type="mr",
+                         branch="f", head_sha="h3", state="completed", payload='{"z":3}'))
+        s.add(ReviewTask(provider="gitlab", repo_id="9", pr_number=4, event_type="mr",
+                         branch="f", head_sha="h4", state="failed", payload='{"a":4}'))
+        s.add(ReviewTask(provider="gitlab", repo_id="9", pr_number=5, event_type="mr",
+                         branch="f", head_sha="h5", state="queued", payload=""))
+        await s.commit()
+
+    rows = await ReviewRepository(engine).pending_for_replay()
+    assert {(p, v) for _, p, v in rows} == {("gitlab", '{"x":1}'), ("github", '{"y":2}')}
+
+    # running 崩溃残留已复位回 queued，不再悬死
+    async with session() as s:
+        st = (await s.execute(
+            select(ReviewTask.state).where(ReviewTask.head_sha == "h2")
+        )).scalar_one()
+    assert st == "queued"
+
+
+async def test_replay_pending_tasks_requeues_into_queue(engine):
+    """回放协调：把遗留 payload 重新投进内存队列，worker 重启后能真正拾取续跑。"""
+    session = session_factory(engine)
+    async with session() as s:
+        s.add(ReviewTask(provider="gitlab", repo_id="9", pr_number=7, event_type="mr",
+                         branch="f", head_sha="hh", state="queued", payload='{"k":"v"}'))
+        await s.commit()
+
+    queue = AsyncioTaskQueue()
+    store = EventStore()
+    enqueuer = QueueEnqueuer(queue, store)
+    n = await replay_pending_tasks(ReviewRepository(engine), enqueuer)
+
+    assert n == 1
+    meta = await queue.claim()
+    assert meta is not None
+    # payload 与 provider 已随事件重新暂存，重放可继续走完整管线
+    assert store.get(meta.task_id) == ("gitlab", b'{"k":"v"}')
