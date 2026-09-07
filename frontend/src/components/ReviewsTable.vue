@@ -5,22 +5,22 @@
     <el-table-column prop="pr_title" label="标题" min-width="180" show-overflow-tooltip />
     <el-table-column prop="provider" label="平台" width="80" />
     <el-table-column prop="repo_id" label="仓库 ID" min-width="200" show-overflow-tooltip />
-    <el-table-column v-if="showProcess" prop="event_type" label="事件类型" width="80" />
+    <el-table-column v-if="showProcess" prop="event_type" label="事件" width="60" />
     <el-table-column
         v-if="showProcess"
         prop="branch"
         label="分支"
-        width="240"
+        width="200"
         show-overflow-tooltip
       />
-    <el-table-column v-if="showProcess" prop="attempt" label="尝试次数" width="80" />
+    <el-table-column v-if="showProcess" prop="attempt" label="重试" width="80" />
     <el-table-column prop="score_total" label="评分" width="60" />
     <el-table-column label="状态" width="100">
       <template #default="{ row }">
         <el-tag :type="stateTagType(row.state)">{{ stateLabel(row.state) }}</el-tag>
       </template>
     </el-table-column>
-    <el-table-column :label="timeLabel" :width="timeWidth">
+    <el-table-column :label="timeLabel" :width="160">
       <template #default="{ row }">{{ formatTime(row[timeField]) }}</template>
     </el-table-column>
     <el-table-column v-if="showAction || showRetry" label="操作" width="120" fixed="right">
@@ -75,7 +75,6 @@ const props = withDefaults(
 defineEmits<{ (e: 'detail', id: number): void; (e: 'retry', row: ReviewItem): void }>()
 
 const timeLabel = computed(() => (props.timeField === 'finished_at' ? '完成时间' : '排队时间'))
-const timeWidth = computed(() => (props.timeField === 'finished_at' ? 360 : 300))
 
 // 该行是否可重试/补审：failed 可重试；push 轨门控/配置类 skipped 可补审。
 // 删分支（无 head 可审）禁止。旧数据 skip_reason 为空时保守依赖 error 文本。

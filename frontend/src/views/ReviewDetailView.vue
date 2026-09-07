@@ -78,7 +78,7 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="severity" label="严重度" width="90">
+        <el-table-column prop="severity" label="严重度" width="100">
           <template #default="{ row }">
             <el-tag :type="severityTag(row.severity)">{{ row.severity }}</el-tag>
           </template>

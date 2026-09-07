@@ -6,8 +6,8 @@
         <div class="card-head">
           <span class="card-title">筛选条件</span>
           <span class="card-actions">
-            <el-button size="small" @click="onFilterChange">刷新</el-button>
-            <el-button size="small" type="success" :icon="Download" @click="openExport">
+            <el-button @click="onFilterChange">刷新</el-button>
+            <el-button type="success" :icon="Download" @click="openExport">
               导出 Excel
             </el-button>
           </span>
@@ -384,7 +384,7 @@ onMounted(() => {
 
 <style scoped>
 .filter-card {
-  margin-bottom: 16px;
+  margin-bottom: 5px;
 }
 .card-head {
   display: flex;
