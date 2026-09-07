@@ -27,6 +27,7 @@ class ReviewListItem(BaseModel):
     repo_id: str
     pr_number: int | None
     pr_title: str
+    push_commits: str = ""
     event_type: str
     branch: str
     head_sha: str

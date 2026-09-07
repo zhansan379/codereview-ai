@@ -4,7 +4,7 @@
 
     <el-card v-if="detail" class="info-card">
       <el-descriptions :column="3" border>
-        <el-descriptions-item label="标题">{{ detail.pr_title || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="标题">{{ detail.event_type === 'push' ? '—' : (detail.pr_title || '—') }}</el-descriptions-item>
         <el-descriptions-item label="ID">{{ detail.id }}</el-descriptions-item>
         <el-descriptions-item label="平台">{{ detail.provider }}</el-descriptions-item>
         <el-descriptions-item label="仓库 ID">{{ detail.repo_id }}</el-descriptions-item>
@@ -39,6 +39,12 @@
         <b>跳过原因</b>
         <pre class="analysis-text">{{ detail.error || 'push 审查未开启或该分支未命中规则，仅记录未审查。' }}</pre>
       </div>
+    </el-card>
+
+    <!-- push 轨：提交消息（多行）单独展示，不当标题 -->
+    <el-card v-if="detail?.event_type === 'push' && detail.push_commits" class="info-card">
+      <template #header>推送提交</template>
+      <pre class="summary summary-commits">{{ detail.push_commits }}</pre>
     </el-card>
 
     <el-card class="info-card">

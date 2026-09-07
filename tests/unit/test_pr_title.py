@@ -14,6 +14,7 @@ from codereview_ai.storage.models import ReviewTask
 from codereview_ai.storage.review_repo import ReviewRepository
 
 from scripts.backfill_pr_titles import main as backfill_main
+from scripts.backfill_push_commits import main as backfill_push_main
 
 
 async def _make_task(engine, *, payload: str | None = None, provider="github",
@@ -97,3 +98,51 @@ async def test_backfill_skips_non_mr_rows(tmp_path):
     async with session_factory(engine)() as s:
         row = (await s.execute(sa.select(ReviewTask))).scalars().one()
     assert row.pr_title == ""
+
+
+# ── push 轨：提交消息落 push_commits，pr_title 留空 ─────────────────────
+
+
+async def test_ensure_task_push_commits_and_blank_title(tmp_path):
+    """push 轨 pr_title 留空，commit 消息落 push_commits（不当标题）。"""
+    engine = create_engine(f"sqlite:///{tmp_path}/t.db")
+    await init_db(engine)
+    repo = ReviewRepository(engine)
+    tid = await repo.ensure_task(
+        provider="github", repo_id="9", pr_number=None, event_type="push",
+        branch="main", head_sha="h1", base_sha="b",
+        pr_title="", push_commits="feat: a\nfix: b",
+    )
+    async with session_factory(engine)() as s:
+        row = (await s.execute(sa.select(ReviewTask).where(ReviewTask.id == tid))).scalars().one()
+    assert row.pr_title == ""
+    assert row.push_commits == "feat: a\nfix: b"
+
+
+async def test_backfill_push_commits_migrates_legacy_title(tmp_path):
+    """存量 push 行 pr_title 里的 commit 消息迁到 push_commits 并清空 pr_title；幂等。"""
+    engine = create_engine(f"sqlite:///{tmp_path}/t.db")
+    await init_db(engine)
+    async with session_factory(engine)() as s:
+        # 历史行：commit 消息被塞进了 pr_title
+        s.add(ReviewTask(provider="github", repo_id="9", pr_number=None, event_type="push",
+                         branch="main", head_sha="h1", pr_title="feat: legacy\ndocs: x",
+                         push_commits=""))
+        # mr 行不应被动
+        s.add(ReviewTask(provider="github", repo_id="9", pr_number=5, event_type="mr",
+                         branch="f", head_sha="h2", pr_title="feat(mr): 标题", push_commits=""))
+        await s.commit()
+
+    await backfill_push_main(f"sqlite:///{tmp_path}/t.db")
+
+    async with session_factory(engine)() as s:
+        rows = (await s.execute(sa.select(ReviewTask).order_by(ReviewTask.id))).scalars().all()
+    push, mr = rows[0], rows[1]
+    assert push.pr_title == "" and push.push_commits == "feat: legacy\ndocs: x"
+    assert mr.pr_title == "feat(mr): 标题" and mr.push_commits == ""  # mr 不动
+
+    # 幂等二跑 0
+    await backfill_push_main(f"sqlite:///{tmp_path}/t.db")
+    async with session_factory(engine)() as s:
+        rows = (await s.execute(sa.select(ReviewTask).order_by(ReviewTask.id))).scalars().all()
+    assert rows[0].pr_title == "" and rows[0].push_commits == "feat: legacy\ndocs: x"

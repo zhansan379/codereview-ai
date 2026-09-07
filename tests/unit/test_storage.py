@@ -64,12 +64,12 @@ async def test_schema_backfill_adds_new_columns_idempotently(tmp_path):
             return {r[1] for r in (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()}
 
     assert not ({"push_enabled", "push_branch_globs"} & await _cols("project"))
-    assert not ({"skip_reason", "force_rerun", "pr_title"} & await _cols("review_task"))
+    assert not ({"skip_reason", "force_rerun", "pr_title", "push_commits"} & await _cols("review_task"))
 
     await _ensure_latest_schema(engine)
     await _ensure_latest_schema(engine)  # 幂等：再跑一次不炸、不加重复列
     assert {"push_enabled", "push_branch_globs"} <= await _cols("project")
-    assert {"skip_reason", "force_rerun", "pr_title"} <= await _cols("review_task")
+    assert {"skip_reason", "force_rerun", "pr_title", "push_commits"} <= await _cols("review_task")
     await engine.dispose()
 
 
