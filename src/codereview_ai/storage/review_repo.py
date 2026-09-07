@@ -179,8 +179,10 @@ class ReviewRepository:
         score_total: int = 0,
         skip_reason: str = "",
     ) -> None:
-        """更新一条审查任务的状态（queued→skipped/completed/failed）。
+        """更新一条审查任务的状态（queued→running→skipped/completed/failed）。
 
+        `running` 写入 `started_at`（worker 开审即标），completed/failed 写 `finished_at`，
+        供前端区分「正在跑」（running）与「等待/崩溃孤儿」（queued）。
         `skip_reason` 给 skipped 分型（push_disabled/branch_mismatch/branch_deleted，
         DESIGN §7.7），供前端/重试判定该跳过是否可补审。
         """
@@ -202,6 +204,12 @@ class ReviewRepository:
                 from codereview_ai.storage.models import _utcnow
 
                 row.finished_at = _utcnow()
+            elif state == "running":
+                # worker 开审即标 running（DESIGN §9.2）：落 started_at，前端可区分
+                # 「正在跑」（running）与「排队/孤儿」（queued）。
+                from codereview_ai.storage.models import _utcnow
+
+                row.started_at = _utcnow()
             await s.commit()
 
     async def insert_findings(

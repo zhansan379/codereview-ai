@@ -132,6 +132,40 @@ async def test_process_runs_review_and_writes_back():
 # ── 增量（DESIGN §7.3）：IncrementStore + chain_valid ───────────────────
 
 
+class _RecordingReviewRepo:
+    """记录 mark_state 状态的 review_repo 桩：验证 worker「开审即标 running」。"""
+
+    def __init__(self) -> None:
+        self.states: list[str] = []
+
+    async def last_ok_review(self, *a, **k):
+        return None
+
+    async def ensure_task(self, *a, **k):
+        return 1
+
+    async def mark_state(self, task_id, *, state, **k):
+        self.states.append(state)
+
+    async def insert_findings(self, *a, **k):
+        pass
+
+    async def reconcile_findings(self, **k):
+        return frozenset()
+
+
+async def test_process_marks_running_then_completed():
+    """mr 轨开审即标 running，收尾翻 completed（供管理页区分「正在跑」）。"""
+    forge = _FakeForge()
+    reviewer = _FakeReviewer(forge)
+    repo = _RecordingReviewRepo()
+    await process_raw_event(  # type: ignore[arg-type]
+        forge, reviewer, _mr_payload(), review_repo=repo
+    )
+    assert "running" in repo.states
+    assert repo.states[-1] == "completed"
+
+
 async def test_process_same_head_skips_when_increments_enabled():
     from codereview_ai.review.increments import IncrementStore
 

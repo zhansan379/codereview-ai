@@ -352,6 +352,10 @@ async def process_raw_event(
             event_type="mr", branch=pr.source_branch, head_sha=pr.head_sha,
             base_sha=pr.base_sha, pr_title=pr.title, payload=raw.decode("utf-8", "replace"),
         )
+        # 开审即标 running（DESIGN §9.2）：让「正在跑」与「排队/孤儿」在管理页可区分；
+        # 后续 failed/completed 的 mark_state 会覆盖。
+        if task_id is not None:
+            await review_repo.mark_state(task_id, state="running")
 
     try:
         refreshed = await forge.fetch_pull_request(pr)  # 补 diff_refs（行级评论 position 必填）
@@ -463,6 +467,9 @@ async def _review_push_event(
         if tid is None:
             return  # 并发下另一 worker 抢先插入 → 幂等跳过（§7.7）
         audit_id = tid
+        # 开审即标 running（DESIGN §9.2）：区分「正在跑」与「排队/孤儿」；
+        # 门控 skipped / 删分支分支随后会覆盖。
+        await review_repo.mark_state(audit_id, state="running")
         if force:
             # 手动重试意图本次消费：清掉标记，本事件按强制重跑处理而非幂等跳过
             await review_repo.clear_force_rerun(audit_id)

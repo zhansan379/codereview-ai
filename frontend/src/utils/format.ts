@@ -16,14 +16,16 @@ export function formatTime(v: string | null | undefined): string {
 export function stateTagType(state: string): string {
   if (state === 'completed' || state === 'success' || state === 'reviewed') return 'success'
   if (state === 'failed') return 'danger'
-  if (state === 'skipped') return 'info'
-  return 'warning' // queued 等
+  if (state === 'running') return 'warning' // 正在被 worker 审查（活跃）
+  if (state === 'skipped' || state === 'queued') return 'info' // queued 只剩崩溃孤儿/重放前
+  return 'warning'
 }
 
 // 状态 → 中文标签
 export function stateLabel(state: string): string {
   switch (state) {
     case 'queued': return '排队中'
+    case 'running': return '运行中'
     case 'completed': return '审查成功'
     case 'success': return '成功'
     case 'reviewed': return '已审'
