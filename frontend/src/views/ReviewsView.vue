@@ -1,7 +1,18 @@
 <template>
   <div>
-    <!-- 服务端过滤：按 state 筛选 -->
+    <!-- 服务端过滤：筛选项 + 头部操作按钮 -->
     <el-card class="filter-card">
+      <template #header>
+        <div class="card-head">
+          <span class="card-title">筛选条件</span>
+          <span class="card-actions">
+            <el-button size="small" @click="onFilterChange">刷新</el-button>
+            <el-button size="small" type="success" :icon="Download" @click="openExport">
+              导出 Excel
+            </el-button>
+          </span>
+        </div>
+      </template>
       <el-form inline class="filter-form" @submit.prevent>
         <el-form-item label="状态">
           <el-select
@@ -78,13 +89,6 @@
             style="width: 260px"
             @change="onFilterChange"
           />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="onFilterChange">刷新</el-button>
-        </el-form-item>
-        <el-form-item class="spacer" />
-        <el-form-item>
-          <el-button type="success" :icon="Download" @click="openExport">导出 Excel</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -382,18 +386,32 @@ onMounted(() => {
 .filter-card {
   margin-bottom: 16px;
 }
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.card-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .filter-form {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  row-gap: 4px;
-  column-gap: 12px;
+  row-gap: 12px;
+  column-gap: 24px;
 }
 .filter-form .el-form-item {
   margin: 0;
 }
-.filter-form .spacer {
-  flex: 1;
+.filter-form .el-form-item__label {
+  color: #606266;
 }
 .score-sep {
   margin: 0 6px;
