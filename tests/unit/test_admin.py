@@ -232,6 +232,59 @@ def test_reviews_list_pagination_and_detail(app):
         assert c.get("/api/reviews/999").status_code == 404
 
 
+def test_reviews_export_xlsx_filters(app):
+    """导出端点：按 state/severity/status 过滤生成 .xlsx，且不受分页限制。"""
+    fast, token = app
+
+    async def _seed() -> None:
+        session = session_factory(fast.state.engine)
+        async with session() as s:
+            t1 = ReviewTask(provider="gitlab", repo_id="1", pr_number=1, event_type="mr",
+                            branch="main", head_sha="aaa", state="completed",
+                            score_total=80, summary_md="# ok")
+            t2 = ReviewTask(provider="gitlab", repo_id="2", pr_number=2, event_type="mr",
+                            branch="dev", head_sha="bbb", state="completed")
+            s.add_all([t1, t2])
+            await s.flush()
+            s.add(ReviewFinding(task_id=t1.id, fingerprint="h", severity="high",
+                                category="bug", file="a.py", title="t", status="active"))
+            s.add(ReviewFinding(task_id=t1.id, fingerprint="m", severity="medium",
+                                category="perf", file="b.py", title="mm", status="waived"))
+            s.add(ReviewFinding(task_id=t2.id, fingerprint="c", severity="low",
+                                category="style", file="c.py", title="cc", status="active"))
+            await s.commit()
+
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(_seed())
+
+    from io import BytesIO
+    from openpyxl import load_workbook
+
+    with _client(fast, token) as c:
+        # 全量导出：三条问题都在，表头第一行。
+        resp = c.get("/api/reviews/export")
+        assert resp.status_code == 200
+        assert "spreadsheetml" in resp.headers["content-type"]
+        assert 'attachment; filename="review_issues_' in resp.headers["content-disposition"]
+        ws = load_workbook(BytesIO(resp.content)).active
+        assert ws.max_row == 4  # 表头 + 3
+        assert ws["A1"].value == "评审ID"
+        # review 信息列已带上（PR号/仓库）；task_id DESC 所以 t2 在前、t1 high 在第三行。
+        assert ws["D2"].value == 2 and ws["D3"].value == 1 and ws["G3"].value == "高"
+
+        # 严重度+状态过滤 → 只剩 high/active 那条（t1 的第一条）。
+        ws2 = load_workbook(BytesIO(c.get(
+            "/api/reviews/export", params={"severities": "high", "statuses": "active"}
+        ).content)).active
+        assert ws2.max_row == 2 and ws2["G2"].value == "高" and ws2["L2"].value == "待处理"
+
+        # state 过滤 → 只剩 t2 的那条（PR号=2）。
+        ws3 = load_workbook(BytesIO(c.get(
+            "/api/reviews/export", params={"state": "completed", "severities": "low"}
+        ).content)).active
+        assert ws3.max_row == 2 and ws3["D2"].value == 2
+
+
 def test_tasks_list_and_retry(app):
     fast, token = app
 

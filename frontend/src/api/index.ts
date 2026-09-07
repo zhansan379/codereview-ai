@@ -202,6 +202,16 @@ export function getReview(id: number): Promise<ReviewDetail> {
 export function setFindingStatus(id: number, status: 'waived' | 'active'): Promise<ReviewFinding> {
   return client.post(`/reviews/findings/${id}/status`, { status }).then((r) => r.data)
 }
+// Excel 导出：以 blob 请求，返回下载文件原始字节。
+export function exportReviews(params: {
+  state?: string
+  severities?: string[]
+  statuses?: string[]
+}): Promise<Blob> {
+  return client
+    .get('/reviews/export', { params, responseType: 'blob' })
+    .then((r) => r.data as Blob)
+}
 
 // ===== 任务 =====
 export function listTasks(params: { state?: string }): Promise<TaskItem[]> {

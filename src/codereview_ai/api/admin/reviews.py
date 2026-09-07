@@ -6,12 +6,17 @@
 from __future__ import annotations
 
 from datetime import datetime
+from io import BytesIO
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
+from starlette.responses import StreamingResponse
 
 from codereview_ai.api.deps import get_current_user, get_db
 from codereview_ai.storage.models import ReviewFinding, ReviewTask
@@ -98,6 +103,142 @@ async def list_reviews(
     )).scalars().all()
     items = [ReviewListItem.model_validate(r) for r in rows]
     return ReviewPage(items=items, total=total, limit=limit, offset=offset)
+
+
+# 严重度/状态/来源 → 中文标签（导出 Excel 用，与前端展示一致）。
+_SEVERITY_LABELS = {
+    "critical": "严重",
+    "high": "高",
+    "error": "错误",
+    "medium": "中",
+    "warning": "警告",
+    "low": "低",
+    "info": "提示",
+}
+_STATUS_LABELS = {
+    "active": "待处理",
+    "resolved": "已解决",
+    "waived": "已搁置",
+}
+_SOURCE_LABELS = {"llm": "LLM", "static": "静态分析"}
+
+# Excel 列定义：(表头, 取值回调)。回调入参为 (review, finding) 元组。
+_EXPORT_HEADERS: list[tuple[str, str]] = [
+    ("评审ID", "review_id"),
+    ("平台", "provider"),
+    ("仓库", "repo_id"),
+    ("PR号", "pr_number"),
+    ("事件类型", "event_type"),
+    ("分支", "branch"),
+    ("严重度", "severity"),
+    ("类别", "category"),
+    ("文件", "file"),
+    ("行号", "new_line"),
+    ("来源", "source"),
+    ("状态", "status"),
+    ("问题标题", "title"),
+    ("详细分析", "detail"),
+    ("原代码", "existing_code"),
+    ("建议修复", "suggestion"),
+]
+
+
+def _label(value: str | None, mapping: dict[str, str]) -> str:
+    if not value:
+        return ""
+    return mapping.get(value, value)
+
+
+def _build_export_xlsx(rows: list[tuple[ReviewTask, ReviewFinding]]) -> BytesIO:
+    """把 (task, finding) 行写入 .xlsx 内存流。"""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "评审问题"
+    ws.append([label for label, _key in _EXPORT_HEADERS])
+
+    # 表头样式：加粗 + 灰底 + 居中；冻结首行。
+    header_fill = PatternFill("solid", fgColor="D9E1F2")
+    header_font = Font(bold=True)
+    for cell in ws[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(vertical="center")
+    ws.freeze_panes = "A2"
+
+    for review, finding in rows:
+        ws.append([_cell_value(_key, review, finding) for _, _key in _EXPORT_HEADERS])
+
+    # 文本列开启自动换行并设定列宽，避免「详细分析/源码」被截断。
+    for idx, (_, key) in enumerate(_EXPORT_HEADERS, start=1):
+        letter = get_column_letter(idx)
+        width = 60 if key in {"detail", "existing_code", "suggestion", "title"} else 16
+        ws.column_dimensions[letter].width = width
+        ws[f"{letter}1"].alignment = Alignment(vertical="center")
+        for cell in ws[letter][1:]:
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def _cell_value(key: str, review: ReviewTask, finding: ReviewFinding) -> object:
+    if key == "severity":
+        return _label(finding.severity, _SEVERITY_LABELS)
+    if key == "status":
+        return _label(finding.status, _STATUS_LABELS)
+    if key == "source":
+        if finding.source and finding.source.startswith("static"):
+            return "静态分析"
+        return _label(finding.source, _SOURCE_LABELS)
+    if key in {"new_line", "old_line"}:
+        value = getattr(finding, key)
+        return "" if value is None else value
+    # 其余列直接读取 finding 字段（保留协商列名）；findings 没有则回退到 review。
+    if hasattr(finding, key):
+        value = getattr(finding, key)
+        return "" if value is None else value
+    return getattr(review, key, "")
+
+
+@router.get("/export")
+async def export_reviews(
+    session: AsyncSession = Depends(get_db),
+    state: str | None = None,
+    severities: list[str] | None = Query(None),
+    statuses: list[str] | None = Query(None),
+) -> StreamingResponse:
+    """导出筛选结果的全部评审问题明细为 .xlsx（不受分页限制）。
+
+    `severities` / `statuses` 用于过滤要导出的问题条目；缺省导出全部。沿用
+    get_current_user 鉴权（router 级依赖）。
+    """
+    stmt = (
+        select(ReviewTask, ReviewFinding)
+        .join(ReviewFinding, ReviewFinding.task_id == ReviewTask.id)
+        .order_by(ReviewTask.id.desc(), ReviewFinding.id)
+    )
+    if state:
+        stmt = stmt.where(ReviewTask.state == state)
+    if severities:
+        stmt = stmt.where(ReviewFinding.severity.in_(severities))
+    if statuses:
+        stmt = stmt.where(ReviewFinding.status.in_(statuses))
+
+    rows: list[tuple[ReviewTask, ReviewFinding]] = [
+        (review, finding) for review, finding in (await session.execute(stmt)).all()
+    ]
+    buf = _build_export_xlsx(rows)
+
+    filename = datetime.now().strftime("review_issues_%Y%m%d_%H%M%S.xlsx")
+    return StreamingResponse(
+        buf,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{review_id}", response_model=ReviewDetail)
