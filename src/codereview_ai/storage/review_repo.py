@@ -19,6 +19,17 @@ from codereview_ai.review.increments import IncrementReference, finding_fingerpr
 from codereview_ai.storage.db import session_factory
 from codereview_ai.storage.models import ReviewFinding, ReviewTask
 
+#: 短标题缺失时（静态/旧 LLM）由完整分析 content 兜底截断。
+_MAX_TITLE = 40
+
+
+def _finding_title(f: Finding) -> str:
+    t = (f.title or "").strip()
+    if t:
+        return t
+    c = (f.content or "").strip()
+    return c if len(c) <= _MAX_TITLE else c[:_MAX_TITLE - 1] + "…"
+
 
 class ReviewRepository:
     """读写 `review_task`/`review_finding` 的仓储：增量决策读路径 + 结果持久化写路径。"""
@@ -192,7 +203,7 @@ class ReviewRepository:
                     old_line=f.old_line if f.side == "LEFT" else None,
                     new_line=f.line if f.side == "RIGHT" else None,
                     existing_code=f.existing_code,
-                    title=f.content,
+                    title=_finding_title(f),
                     detail=f.content,
                     suggestion=f.suggestion_code or "",
                     source=f.source,

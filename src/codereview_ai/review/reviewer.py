@@ -146,7 +146,7 @@ def build_messages(
 ### 输出
 严格按以下 JSON schema 输出，不要输出 schema 之外的任何文字：
 {{"summary": "...", "scores": {{"correctness": 0, "security": 0, "practices": 0, "performance": 0, "commit_quality": 0}},
-"findings": [{{"content":"...","category":"bug|security|performance|maintainability|test|style|documentation|other",
+"findings": [{{"title":"≤30字简短标题，概述本问题(中文、不含代码、不含换行)","content":"...","category":"bug|security|performance|maintainability|test|style|documentation|other",
 "severity":"critical|high|medium|low","file":"相对仓库根的路径","existing_code":"原样粘贴的代码片段或 null",
 "suggestion_code":"替换代码或 null","thinking":"内部推理或 null"}}],
 "skipped_files": ["被过滤掉的文件路径"]}}"""

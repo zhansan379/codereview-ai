@@ -181,6 +181,7 @@ def _coerce_finding(item: Any) -> Finding | None:
     file = str(item.get("file") or "").strip()
     if not content or not file:
         return None
+    title = str(item.get("title") or "").strip()
     cat_raw = item.get("category")
     cat = _CATEGORIES.get(cat_raw) if isinstance(cat_raw, str) else Category.OTHER
     if cat is None:
@@ -194,6 +195,7 @@ def _coerce_finding(item: Any) -> Finding | None:
         category=cat,
         severity=sev,
         file=file,
+        title=title,
         existing_code=str(item.get("existing_code") or "").strip(),
         suggestion_code=(
             str(item["suggestion_code"]).strip() if item.get("suggestion_code") else None
