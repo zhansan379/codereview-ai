@@ -409,3 +409,77 @@ async def test_scribble_skips_non_review_action_and_non_json(tmp_path):
     async with session_factory(engine)() as s:
         rows = (await s.execute(select(ReviewTask))).scalars().all()
     assert rows == []  # 都不建行（process 同样跳过）
+
+
+# ── F3.7：评分低于阈值 → 阻塞合并（commit status）──────────────────────────
+
+
+class _StatusForge(_MultiForge):
+    """在 _MultiForge 记录 post_commit_status 调用。"""
+
+    def __init__(self, paths: list[tuple[str, str]]) -> None:
+        super().__init__(paths)
+        self.statuses: list[tuple[bool, str]] = []
+
+    async def post_commit_status(self, pr, *, passed: bool, description: str = "") -> None:
+        self.statuses.append((passed, description))
+
+
+class _TotalReviewer(_RecordingReviewer):
+    """返回指定总分的审查结果（正确性 40 + 安全 30 + 工程 20 + 性能 5 + 提交 5 = 100）。"""
+
+    def __init__(self, total: int) -> None:
+        super().__init__()
+        self._total = total
+
+    async def review(self, *, pr, commits_text, diffs):
+        from codereview_ai.domain.models import ReviewResult, ReviewScores
+
+        self.received.append([d.new_path or d.old_path for d in diffs])
+        correctness = min(self._total, 40)
+        security = min(self._total - correctness, 30)
+        practices = min(self._total - correctness - security, 20)
+        performance = min(self._total - correctness - security - practices, 5)
+        commit_quality = max(self._total - correctness - security - practices - performance, 0)
+        return ReviewResult(summary="s", scores=ReviewScores(
+            correctness=correctness, security=security, practices=practices,
+            performance=performance, commit_quality=commit_quality))
+
+
+async def test_enforce_score_threshold_below_posts_failed():
+    forge = _StatusForge([("a.py", "a.py")])
+    reviewer = _TotalReviewer(5)  # 总分 5 < 90
+
+    async def factory(provider, repo_id):
+        from codereview_ai.storage.project_repo import ProjectConfig
+        return ProjectConfig(enforce_score_threshold=True, score_threshold=90)
+
+    await process_raw_event(forge, reviewer, _mr_payload(),  # type: ignore[arg-type]
+                            project_config_factory=factory)
+    assert forge.statuses == [(False, "AI 审查 5/100")]
+
+
+async def test_enforce_score_threshold_reached_posts_success():
+    forge = _StatusForge([("a.py", "a.py")])
+    reviewer = _TotalReviewer(95)  # 总分 95 ≥ 90
+
+    async def factory(provider, repo_id):
+        from codereview_ai.storage.project_repo import ProjectConfig
+        return ProjectConfig(enforce_score_threshold=True, score_threshold=90)
+
+    await process_raw_event(forge, reviewer, _mr_payload(),  # type: ignore[arg-type]
+                            project_config_factory=factory)
+    assert forge.statuses == [(True, "AI 审查 95/100")]
+
+
+async def test_enforce_score_threshold_disabled_no_status():
+    forge = _StatusForge([("a.py", "a.py")])
+    reviewer = _TotalReviewer(5)
+
+    async def factory(provider, repo_id):
+        from codereview_ai.storage.project_repo import ProjectConfig
+        return ProjectConfig(enforce_score_threshold=False, score_threshold=90)
+
+    await process_raw_event(forge, reviewer, _mr_payload(),  # type: ignore[arg-type]
+                            project_config_factory=factory)
+    assert forge.statuses == []  # 开关关 → 不发状态（回归：默认行为不变）

@@ -32,6 +32,7 @@ class ProjectOut(BaseModel):
     review_strategy: str
     prompt_suffix: str
     score_threshold: int
+    enforce_score_threshold: bool = False
     notifier_routing: dict[str, Any]
     enabled: bool
     push_enabled: bool | None = None
@@ -48,6 +49,7 @@ class ProjectWrite(BaseModel):
     review_strategy: str = "diff"
     prompt_suffix: str = ""
     score_threshold: int = 80
+    enforce_score_threshold: bool = False
     notifier_routing: dict[str, Any] = {}
     enabled: bool = True
     # push 审查（DESIGN §7.7）：None=继承全局 env 默认；True/False=显式覆盖；glob 非空则覆盖全局分支规则

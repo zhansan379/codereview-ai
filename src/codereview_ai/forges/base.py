@@ -83,3 +83,13 @@ class ForgeAdapter(ABC):
     async def post_commit_summary(self, ev: PushEvent, text: str) -> None:
         """push 总结回写到 head commit（MR 轨用 post_summary，push 无 MR 可挂）。"""
         raise NotImplementedError
+
+    async def post_commit_status(
+        self, pr: PullRequest, *, passed: bool, description: str = ""
+    ) -> None:
+        """设一条 head commit 的 CI status（F3.7）：低于阈值 blocked 时 passed=False。
+
+        只传语义布尔 `passed`，各平台自行映射成 state（GitLab success/failed，
+        GitHub success/failure）。未实现的分析/测试子类可不覆盖。
+        """
+        raise NotImplementedError

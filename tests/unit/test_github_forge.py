@@ -278,3 +278,37 @@ def test_post_summary_uses_issues_comments():
     asyncio.run(f.post_summary(_pr(), "总体还行"))
     assert len(urls) == 1
     assert "/issues/" in urls[0]
+
+
+# ── F3.7：commit status ─────────────────────────────────────────────────
+
+
+def test_post_commit_status_success():
+    url = ""
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        nonlocal url
+        url = str(r.url)
+        assert r.method == "POST"
+        import json as _json
+        assert _json.loads(r.read()) == {
+            "state": "success", "context": "codereview-ai", "description": "",
+        }
+        return httpx.Response(200, json={})
+
+    f = _forge(handler)
+    asyncio.run(f.post_commit_status(_pr(), passed=True))
+    assert "/repos/acme/widgets/statuses/abc123" in url
+
+
+def test_github_uses_failure_state_on_failed():
+    states: list[str] = []
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        import json as _json
+        states.append(_json.loads(r.read())["state"])
+        return httpx.Response(200, json={})
+
+    f = _forge(handler)
+    asyncio.run(f.post_commit_status(_pr(), passed=False, description="AI 审查 60/100"))
+    assert states == ["failure"]  # GitHub 用 failure 而非 failed

@@ -26,6 +26,7 @@ export interface Project {
   review_strategy: string | null
   prompt_suffix: string | null
   score_threshold: number | null
+  enforce_score_threshold: boolean
   notifier_routing: Record<string, any> | null
   enabled: boolean
   push_enabled: boolean | null
