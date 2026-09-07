@@ -17,9 +17,15 @@ from codereview_ai.storage.models import Project
 
 @dataclass(frozen=True)
 class ProjectConfig:
-    """解析出的项目级审查配置（现仅文件扩展名；未来可扩展 review_strategy 等）。"""
+    """解析出的项目级审查配置（文件扩展名 + push 轨审查覆盖；DESIGN §7.7）。
+
+    `push_enabled` 为 None 表示「继承全局 env 默认」（`CR_PUSH_REVIEW_ENABLED`），
+    True/False 为显式覆盖；`push_branch_globs` 非空则覆盖全局分支规则。
+    """
 
     file_extensions: str = ""
+    push_enabled: bool | None = None
+    push_branch_globs: str = ""
 
 
 class ProjectRepository:
@@ -40,4 +46,8 @@ class ProjectRepository:
             )).scalars().first()
         if row is None:
             return None
-        return ProjectConfig(file_extensions=row.file_extensions or "")
+        return ProjectConfig(
+            file_extensions=row.file_extensions or "",
+            push_enabled=row.push_enabled,
+            push_branch_globs=row.push_branch_globs or "",
+        )

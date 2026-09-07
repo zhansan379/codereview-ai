@@ -55,18 +55,19 @@ class ReviewRepository:
             )).scalars().all()
         return IncrementReference(row.head_sha, frozenset(fingerprint_rows))
 
-    async def push_already_audited(
+    async def push_existing_audit(
         self, *, provider: str, repo_id: str, branch: str, head_sha: str
-    ) -> bool:
+    ) -> ReviewTask | None:
         """push 轨幂等预检：同 `(provider, repo_id, branch, head_sha)` 是否已有审计行。
 
-        有则视为「该分支该 after 已审过/已跳过」（DESIGN §7.7），调用方据此直接跳过，
-        避免同一 (branch, after) 重复审查、重复追加 commit 评论。
+        返回行对象（而非 bool），供调用方读 `force_rerun` 判断是否为手动重试：
+        - 普通重复 webhook（force_rerun=false）→ 该分支该 after 已处理过，跳过（DESIGN §7.7）；
+        - 手动重试（force_rerun=true）→ 调用方据此绕过跳过、强制执行。
         """
         session = session_factory(self._engine)
         async with session() as s:
             existing = (await s.execute(
-                select(ReviewTask.id).where(
+                select(ReviewTask).where(
                     ReviewTask.provider == provider,
                     ReviewTask.repo_id == repo_id,
                     ReviewTask.event_type == "push",
@@ -74,7 +75,19 @@ class ReviewRepository:
                     ReviewTask.head_sha == head_sha,
                 ).limit(1)
             )).scalar_one_or_none()
-        return existing is not None
+        return existing
+
+    async def clear_force_rerun(self, task_id: int) -> None:
+        """手动重试意图已消费，清掉 `force_rerun`（worker 强制执行后调用）。"""
+        session = session_factory(self._engine)
+        async with session() as s:
+            row = (await s.execute(
+                select(ReviewTask).where(ReviewTask.id == task_id)
+            )).scalar_one_or_none()
+            if row is None:
+                return
+            row.force_rerun = False
+            await s.commit()
 
     async def ensure_task(
         self,
@@ -130,8 +143,13 @@ class ReviewRepository:
         error: str = "",
         summary_md: str = "",
         score_total: int = 0,
+        skip_reason: str = "",
     ) -> None:
-        """更新一条审查任务的状态（queued→skipped/completed/failed）。"""
+        """更新一条审查任务的状态（queued→skipped/completed/failed）。
+
+        `skip_reason` 给 skipped 分型（push_disabled/branch_mismatch/branch_deleted，
+        DESIGN §7.7），供前端/重试判定该跳过是否可补审。
+        """
         session = session_factory(self._engine)
         async with session() as s:
             row = (await s.execute(
@@ -141,6 +159,8 @@ class ReviewRepository:
                 return
             row.state = state
             row.error = error
+            if skip_reason:
+                row.skip_reason = skip_reason
             if summary_md:
                 row.summary_md = summary_md
             row.score_total = score_total

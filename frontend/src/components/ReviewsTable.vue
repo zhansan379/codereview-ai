@@ -26,12 +26,12 @@
       <template #default="{ row }">
         <el-button v-if="showAction" link type="primary" @click="$emit('detail', row.id)">详情</el-button>
         <el-button
-          v-if="showRetry && row.state === 'failed'"
+          v-if="showRetry && isRetryable(row)"
           link
           type="danger"
           :loading="retryingId === row.id"
           @click="$emit('retry', row)"
-        >重试</el-button>
+        >{{ row.state === 'skipped' ? '补审' : '重试' }}</el-button>
       </template>
     </el-table-column>
   </el-table>
@@ -45,7 +45,7 @@ import type { ReviewItem } from '../api'
 // 审查记录 / 仪表盘"最近记录"共用的表格：列统一，改动一处多处生效。
 // - timeField 决定显示"排队时间"还是"完成时间"（标签与列宽随之切换）。
 // - showProcess 控制是否显示"事件类型/分支/尝试次数"过程列（审查记录页合并任务后开启）。
-// - showRetry 控制"重试"按钮（仅 failed 行），配合 retryingId 显示该行按钮 loading。
+// - showRetry 控制"重试/补审"按钮（failed 或可补审的 push skipped 行），配合 retryingId 显示该行按钮 loading。
 const props = withDefaults(
   defineProps<{
     items: ReviewItem[]
@@ -75,4 +75,15 @@ defineEmits<{ (e: 'detail', id: number): void; (e: 'retry', row: ReviewItem): vo
 
 const timeLabel = computed(() => (props.timeField === 'finished_at' ? '完成时间' : '排队时间'))
 const timeWidth = computed(() => (props.timeField === 'finished_at' ? 360 : 300))
+
+// 该行是否可重试/补审：failed 可重试；push 轨门控/配置类 skipped 可补审。
+// 删分支（无 head 可审）禁止。旧数据 skip_reason 为空时保守依赖 error 文本。
+function isRetryable(row: ReviewItem): boolean {
+  if (row.state === 'failed') return true
+  if (row.state !== 'skipped') return false
+  if (row.event_type !== 'push') return false
+  if (row.skip_reason === 'branch_deleted') return false
+  if (row.skip_reason) return true
+  return !(row.error || '').includes('删除分支')
+}
 </script>

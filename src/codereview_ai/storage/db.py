@@ -75,12 +75,47 @@ def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(engine, expire_on_commit=False)
 
 
+#: create_all 只建新表、不 ALTER 存量表（Alembic 已移除）。此处登记【存量表增量补列】
+#: 的列定义：每次启动按 PRAGMA 检查缺失即 ALTER ADD（幂等、非破坏，保留既有数据）。
+#: push_enabled 无默认 → 存量行 NULL = 继承全局 env 默认（DESIGN §7.7 项目覆盖）。
+_COLUMN_FALLBACKS: dict[str, list[tuple[str, str, str]]] = {
+    "project": [
+        ("push_enabled", "BOOLEAN", ""),          # 存量行 NULL=继承全局
+        ("push_branch_globs", "VARCHAR(255)", "DEFAULT ''"),
+    ],
+    "review_task": [
+        ("skip_reason", "VARCHAR(32)", "DEFAULT ''"),
+        ("force_rerun", "BOOLEAN", "DEFAULT 0"),
+    ],
+}
+
+
+async def _ensure_latest_schema(engine: AsyncEngine) -> None:
+    """为存量表补上缺失的新列（SQLite）；幂等。非 SQLite 由 create_all/正式迁移负责。"""
+    if not _is_sqlite(str(engine.url)):
+        return
+    from sqlalchemy import text
+
+    async with engine.begin() as conn:
+        for table, cols in _COLUMN_FALLBACKS.items():
+            existing = {
+                row[1]
+                for row in (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()
+            }
+            for name, ddl, default in cols:
+                if name not in existing:
+                    await conn.execute(
+                        text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl} {default}")
+                    )
+
+
 async def init_db(engine: AsyncEngine) -> None:
-    """建表（M1 冒烟用；正式迁移走 Alembic）。"""
+    """建表（create_all）+ 存量表补列（幂等，保留数据）。"""
     from codereview_ai.storage.models import Base
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await _ensure_latest_schema(engine)
 
 
 async def get_session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:

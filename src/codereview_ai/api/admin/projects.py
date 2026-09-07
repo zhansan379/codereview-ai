@@ -34,6 +34,8 @@ class ProjectOut(BaseModel):
     score_threshold: int
     notifier_routing: dict[str, Any]
     enabled: bool
+    push_enabled: bool | None = None
+    push_branch_globs: str = ""
 
 
 class ProjectWrite(BaseModel):
@@ -48,6 +50,9 @@ class ProjectWrite(BaseModel):
     score_threshold: int = 80
     notifier_routing: dict[str, Any] = {}
     enabled: bool = True
+    # push 审查（DESIGN §7.7）：None=继承全局 env 默认；True/False=显式覆盖；glob 非空则覆盖全局分支规则
+    push_enabled: bool | None = None
+    push_branch_globs: str = ""
 
 
 async def _get_or_404(session: AsyncSession, project_id: int) -> Project:

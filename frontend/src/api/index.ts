@@ -28,6 +28,8 @@ export interface Project {
   score_threshold: number | null
   notifier_routing: Record<string, any> | null
   enabled: boolean
+  push_enabled: boolean | null
+  push_branch_globs: string | null
 }
 
 export interface ModelItem {
@@ -87,6 +89,7 @@ export interface ReviewItem {
   state: string
   attempt: number
   error: string | null
+  skip_reason: string | null
   trace_id: string | null
   summary_md: string | null
   score_total: number | null
@@ -116,6 +119,7 @@ export interface TaskItem {
   state: string
   attempt: number
   error: string | null
+  skip_reason: string | null
   queued_at: string | null
 }
 

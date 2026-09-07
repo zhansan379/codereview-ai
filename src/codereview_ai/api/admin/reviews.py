@@ -32,6 +32,7 @@ class ReviewListItem(BaseModel):
     state: str
     attempt: int
     error: str
+    skip_reason: str
     trace_id: str
     summary_md: str
     score_total: int

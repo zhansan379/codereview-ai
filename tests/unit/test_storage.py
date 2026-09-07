@@ -46,6 +46,33 @@ async def test_tables_created(engine):
     assert expected <= set(tables)
 
 
+async def test_schema_backfill_adds_new_columns_idempotently(tmp_path):
+    """存量表缺新列时 `_ensure_latest_schema` 幂等补列，重复调用不报错、不重复加。"""
+    from codereview_ai.storage.db import _ensure_latest_schema
+
+    engine = create_engine(f"sqlite:///{tmp_path}/old.db")
+    # 模拟"旧 schema"表（仅建表、不含新列；create_all 不会 ALTER，故需补列）
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "CREATE TABLE project (id INTEGER PRIMARY KEY, provider VARCHAR(32) NOT NULL, "
+            "repo_id VARCHAR(255) NOT NULL, file_extensions VARCHAR(255) DEFAULT '')"))
+        await conn.execute(text(
+            "CREATE TABLE review_task (id INTEGER PRIMARY KEY, state VARCHAR(16) DEFAULT 'queued')"))
+
+    async def _cols(table: str) -> set[str]:
+        async with engine.connect() as conn:
+            return {r[1] for r in (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()}
+
+    assert not ({"push_enabled", "push_branch_globs"} & await _cols("project"))
+    assert not ({"skip_reason", "force_rerun"} & await _cols("review_task"))
+
+    await _ensure_latest_schema(engine)
+    await _ensure_latest_schema(engine)  # 幂等：再跑一次不炸、不加重复列
+    assert {"push_enabled", "push_branch_globs"} <= await _cols("project")
+    assert {"skip_reason", "force_rerun"} <= await _cols("review_task")
+    await engine.dispose()
+
+
 async def test_model_config_insert_read(engine):
     session = session_factory(engine)
     async with session() as s:

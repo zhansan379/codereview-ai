@@ -26,6 +26,7 @@ from codereview_ai.forges.base import ForgeAdapter
 from codereview_ai.forges.gitlab import parse_push_event_payload
 from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.models import ReviewFinding, ReviewTask
+from codereview_ai.storage.project_repo import ProjectConfig
 from codereview_ai.storage.review_repo import ReviewRepository
 from codereview_ai.worker import PushGate, build_push_summary, process_raw_event
 
@@ -205,7 +206,69 @@ async def test_push_default_off_records_skipped_audit(tmp_path):
         assert task.state == "skipped"
         # 默认关闭时跳过也要带人话原因，后台可直接展示（不再是一串空 error）
         assert task.error == "push 审查未开启（默认关闭），仅记录未审查"
+        # skipped 分型：门控/配置类 → 可供「补审」（DESIGN §7.7）
+        assert task.skip_reason == "push_disabled"
     assert reviewer.calls == 0 and forge.summaries == []
+    await engine.dispose()
+
+
+# ── 项目级 push 开关（覆盖全局 env 默认）+ 手动补审绕过 ─────────────────────
+
+
+async def test_push_project_override_enables_when_global_off():
+    """全局默认关，但项目 `push_enabled=True` → 该项目 push 轨开门（DESIGN §7.7 项目覆盖）。"""
+    forge = _FakePushForge()
+    reviewer = _FakeReviewer()
+
+    async def cfg(p, r):
+        return ProjectConfig(push_enabled=True)
+
+    await process_raw_event(forge, reviewer, _gl_push(), project_config_factory=cfg)
+    assert reviewer.calls == 1 and len(forge.summaries) == 1
+
+
+async def test_push_project_override_disables_when_global_on():
+    """全局门开，但项目 `push_enabled=False` → 该项目 push 轨关闭，标 skipped。"""
+    forge = _FakePushForge()
+    reviewer = _FakeReviewer()
+
+    async def cfg(p, r):
+        return ProjectConfig(push_enabled=False)
+
+    await process_raw_event(forge, reviewer, _gl_push(), push_gate=PushGate(enabled=True),
+                            project_config_factory=cfg)
+    assert reviewer.calls == 0 and forge.summaries == []
+
+
+async def test_push_force_rerun_bypasses_gate_and_idempotency(tmp_path):
+    """手动补审：同 (branch, after) 已 skipped 且 force_rerun=true → 绕过幂等预检 + 门控强审。"""
+    engine = create_engine(f"sqlite:///{tmp_path}/t.db")
+    await init_db(engine)
+    review_repo = ReviewRepository(engine)
+    raw = _gl_push()
+
+    # 第一遍：默认关 → 落 skipped(push_disabled)
+    await process_raw_event(_FakePushForge(), _FakeReviewer(), raw, review_repo=review_repo)
+
+    # 模拟 retry_task 对 push 任务置 force_rerun 标记
+    async with session_factory(engine)() as s:
+        task = (await s.execute(sa.select(ReviewTask).where(ReviewTask.event_type == "push"))
+                ).scalar_one()
+        assert task.state == "skipped"
+        task.force_rerun = True
+        await s.commit()
+
+    # 第二遍：仍默认关 + 已有审计行 → 因 force 强制重跑并达 completed
+    forge = _FakePushForge()
+    reviewer = _FakeReviewer()
+    await process_raw_event(forge, reviewer, raw, review_repo=review_repo)
+    assert reviewer.calls == 1 and len(forge.summaries) == 1
+
+    async with session_factory(engine)() as s:
+        task = (await s.execute(sa.select(ReviewTask).where(ReviewTask.event_type == "push"))
+                ).scalar_one()
+        assert task.state == "completed"
+        assert task.force_rerun is False  # 补审意图已消费清除
     await engine.dispose()
 
 
