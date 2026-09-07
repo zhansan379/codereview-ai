@@ -29,7 +29,33 @@
             </div>
           </el-form-item>
         </el-form>
-        <el-button :loading="testing[prov]" @click="onTest(prov)">测试连接</el-button>
+        <el-row :gutter="8" class="test-row">
+          <el-button :loading="testing[prov]" @click="onTest(prov)">测试连接</el-button>
+        </el-row>
+
+        <div v-if="caps[prov]" class="capability-matrix">
+          <div class="capability-title">
+            能力矩阵<span class="capability-hint">（本 Token 支持系统哪些能力）</span>
+          </div>
+          <el-table :data="caps[prov]" size="small" border>
+            <el-table-column prop="label" label="能力" min-width="160" />
+            <el-table-column label="状态" width="110">
+              <template #default="{ row }">
+                <el-tag
+                  :type="row.status === 'ok' ? 'success' : row.status === 'missing' ? 'danger' : 'info'"
+                  disable-transitions
+                >
+                  {{ row.status === 'ok' ? '可用' : row.status === 'missing' ? '缺权限' : '未知' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="detail" label="说明" min-width="200">
+              <template #default="{ row }">
+                <span class="capability-detail">{{ row.detail || '—' }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
       </div>
 
       <div class="save-bar">
@@ -58,6 +84,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listForges, updateForge, testForge } from '../api'
+import type { ForgeCapability } from '../api'
 
 const MASK = '******'
 const providers = ['github', 'gitlab'] as const
@@ -79,6 +106,7 @@ const form: Record<'github' | 'gitlab', ForgeForm> = reactive({
 })
 const envActive = reactive({ github: false, gitlab: false })
 const testing = reactive({ github: false, gitlab: false })
+const caps = reactive<Record<string, ForgeCapability[] | undefined>>({ github: undefined, gitlab: undefined })
 const saving = ref(false)
 
 async function load() {
@@ -97,7 +125,8 @@ async function onTest(provider: 'github' | 'gitlab') {
     const f = form[provider]
     // token 为真实新值 → 带上传测；为 ******/空 → 交给后端按当前有效配置（env/DB）解析
     const body = f.token && f.token !== MASK ? { url: f.url, token: f.token } : {}
-    await testForge(provider, body)
+    const result = await testForge(provider, body)
+    caps[provider] = result.capabilities
     ElMessage.success(`「${provLabels[provider]}」连接正常`)
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || `连接测试失败`)
@@ -149,6 +178,26 @@ onMounted(load)
 }
 .save-bar {
   margin-top: 4px;
+}
+.test-row {
+  margin-top: 12px;
+}
+.capability-matrix {
+  margin-top: 12px;
+}
+.capability-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 6px;
+}
+.capability-hint {
+  font-weight: 400;
+  color: #909399;
+}
+.capability-detail {
+  font-size: 12px;
+  color: #606266;
 }
 .note-card {
   margin-top: 16px;

@@ -65,6 +65,18 @@ export interface ForgeConfig {
   enabled: boolean
 }
 
+export interface ForgeCapability {
+  name: string
+  label: string
+  status: 'ok' | 'missing' | 'unknown'
+  detail: string
+}
+
+export interface ForgeProbeResult {
+  ok: boolean
+  capabilities: ForgeCapability[]
+}
+
 export interface ReviewFinding {
   id: number
   severity: string
@@ -174,8 +186,20 @@ export function listForges(): Promise<ForgeConfig[]> {
 export function updateForge(provider: string, data: Partial<ForgeConfig>): Promise<ForgeConfig> {
   return client.put(`/forges/${provider}`, data).then((r) => r.data)
 }
-export function testForge(provider: string, data?: { url?: string; token?: string }): Promise<{ ok: boolean }> {
+export function testForge(provider: string, data?: { url?: string; token?: string }): Promise<ForgeProbeResult> {
   return client.post(`/forges/${provider}/test`, data || {}).then((r) => r.data)
+}
+
+// ===== 主动补拉 PR/MR =====
+export interface PollReport {
+  projects: number
+  prs: number
+  new: number
+  skipped: number
+  errors: string[]
+}
+export function pollPulls(): Promise<PollReport> {
+  return client.post('/pulls/poll').then((r) => r.data)
 }
 
 // ===== 通知渠道 =====

@@ -135,6 +135,38 @@ def _new_file_content_from_patch(patch: str, change: ChangeType) -> str:
     return "\n".join(lines)
 
 
+def pull_request_from_item(item: dict[str, Any], repo_id: str = "") -> PullRequest | None:
+    """从 GitHub `GET /pulls` 列表项构造中立 PullRequest（无 webhook 层嵌套）。
+
+    列表项结构与 webhook 的 `pull_request` 对象同构，但直接是项本身；字段口径与
+    `parse_pull_request_payload` 对齐（DESIGN §9 补拉通道）。`head.ref`→source_branch、
+    `base.ref`→target_branch、`head.sha`/`base.sha`→ head_sha/base_sha。
+    """
+    if not isinstance(item, dict) or not item.get("number"):
+        return None
+    base = item.get("base") or {}
+    head = item.get("head") or {}
+    if not isinstance(base, dict):
+        base = {}
+    if not isinstance(head, dict):
+        head = {}
+    full_name = str(((base.get("repo") or {}) or {}).get("full_name") or "") or repo_id
+    return PullRequest(
+        provider=GITHUB,
+        repo_id=full_name or repo_id,
+        repo_full_name=full_name,
+        web_url=str(item.get("html_url") or ""),
+        pr_number=int(item.get("number") or 0),
+        title=str(item.get("title") or ""),
+        source_branch=str(head.get("ref") or ""),
+        target_branch=str(base.get("ref") or ""),
+        head_sha=str(head.get("sha") or ""),
+        base_sha=str(base.get("sha") or ""),
+        author=str(((item.get("user") or {}) or {}).get("login") or ""),
+        is_draft=bool(item.get("draft")),
+    )
+
+
 def _owner_repo(repo_id: str) -> tuple[str, str]:
     """repo_id="owner/name" → (owner, name)。"""
     parts = str(repo_id).split("/")
@@ -180,6 +212,25 @@ class GitHubForge(ForgeAdapter):
             base_sha=str((base if isinstance(base, dict) else {}).get("sha") or pr.base_sha),
             title=str(body.get("title") or pr.title),
         )
+
+    async def list_open_pulls(self, repo_id: str) -> list[PullRequest]:
+        """主动补拉：GET /repos/{owner}/{repo}/pulls?state=open 列出打开 PR（DESIGN §9）。
+
+        逐项归一成中立 PullRequest（含 head_sha/base_sha），供 `review_pull_request` 复用；
+        已审过的同 head 由增量决策短路，天然幂等。仅返回打开态（补拉目标）。
+        """
+        owner, repo = _owner_repo(repo_id)
+        if not owner or not repo:
+            return []
+        resp = await self._http.get(
+            f"{self._base}/repos/{owner}/{repo}/pulls?state=open&per_page=100",
+            headers=self._auth_headers(),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        if not isinstance(body, list):
+            return []
+        return [item for pr in body if (item := pull_request_from_item(pr, repo_id)) is not None]
 
     async def fetch_files(self, pr: PullRequest) -> list[FileDiff]:
         """GET /pulls/{n}/files；空数组时指数退避重试。"""

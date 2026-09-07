@@ -79,6 +79,54 @@ def test_parse_missing_number_is_none():
     assert parse_pull_request_payload(payload) is None
 
 
+# ── 主动补拉 list_open_pulls ─────────────────────────────────────────────
+
+
+def _open_pulls_body() -> list[dict]:
+    return [
+        {
+            "number": 101,
+            "title": "feat: polling",
+            "html_url": "https://github.com/acme/widgets/pull/101",
+            "head": {"ref": "feat-polling", "sha": "h1"},
+            "base": {"ref": "main", "sha": "b0", "repo": {"full_name": "acme/widgets"}},
+            "user": {"login": "bob"},
+            "draft": False,
+        }
+    ]
+
+
+def test_list_open_pulls_maps_items():
+    def handler(request: httpx.Request):
+        assert "state=open" in str(request.url)
+        return httpx.Response(200, json=_open_pulls_body())
+
+    forge = _forge(handler)
+    prs = asyncio.run(forge.list_open_pulls("acme/widgets"))
+    assert len(prs) == 1
+    pr = prs[0]
+    assert pr.provider == GITHUB
+    assert pr.repo_id == "acme/widgets"
+    assert pr.repo_full_name == "acme/widgets"
+    assert pr.pr_number == 101
+    assert pr.source_branch == "feat-polling"
+    assert pr.target_branch == "main"
+    assert pr.head_sha == "h1"
+    assert pr.base_sha == "b0"
+    assert pr.author == "bob"
+
+
+def test_list_open_pulls_empty_body():
+    forge = _forge(lambda req: httpx.Response(200, json=[]))
+    assert asyncio.run(forge.list_open_pulls("acme/widgets")) == []
+
+
+def test_list_open_pulls_bad_repo_id_returns_empty():
+    # repo_id 不构成 owner/name → 不发请求直接空（防炸 URL）
+    forge = _forge(lambda req: httpx.Response(200, json=[]))
+    assert asyncio.run(forge.list_open_pulls("not-a-slash")) == []
+
+
 def test_parse_pr_non_dict_repo_head_base():
     payload = _sample_pr_payload()
     payload["repository"] = "nope"  # 非 dict → 兜底

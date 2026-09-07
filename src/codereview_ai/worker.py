@@ -327,57 +327,35 @@ def _event_action(data: dict[str, Any]) -> str:
     return str(data.get("action") or "")
 
 
-async def process_raw_event(
+async def review_pull_request(
     forge: ForgeAdapter,
     reviewer: Reviewer,
-    raw: bytes,
+    pr: PullRequest,
     *,
     increments: IncrementStore | None = None,
     review_repo: ReviewRepository | None = None,
     grouper: SemanticGrouper | None = None,
     chain_valid: Callable[[str, str], bool] | None = None,
     notifier: NotifierDispatcher | None = None,
-    push_gate: PushGate | None = None,
     static_analyzer: StaticAnalyzer | None = None,
     review_strategy: str = "diff",
     agent_runtime: SandboxRuntime | None = None,
     agent_llm_factory: Callable[[], AgentLLM] | None = None,
     project_config_factory: ProjectConfigFactory | None = None,
-) -> None:
-    """原始 webhook payload → 审查 + 回写。各阶段失败在此抛出，由 worker 标 failed。
+    raw_payload: str = "",
+) -> str:
+    """审查一条**已解析**的 PR（mr 轨核心，webhook 与主动补拉共用，DESIGN §7.3/§9）。
 
-    事件解析分双轨：mr（`parse_merge_request`）、push（`parse_push_event`，DESIGN §7.7）。
-    增量（DESIGN §7.3）落点可来自 `review_repo`（DB 持久，M4 起主用）或进程内
-    `increments`（M3 内存档兼容）。`grouper` 给定且改动 ≥ 4 个文件时走语义分组并
-    发审查（DESIGN §7.5，见 review.group_review）。`chain_valid(prior_sha, head_sha)`
-    校验上次 head 是否仍在本 PR 链上（平台 compare），缺省 `None` → 保守回退全量。
-    `notifier`（DESIGN F4）给定时，审查+回写成功后后台推送 IM 通知（失败不影响主链）。
-    `push_gate` 给定时判定 push 轨是否走 LLM（默认关）；给定 `review_repo` 时两轨结果
-    真落库（review_task/review_finding）。`project_config_factory`（可选）按项目取
-    `file_extensions` 过滤 diff（DESIGN 文件扩展名过滤）；未给定 → 不过滤。
+    入参是中立 `PullRequest`（webhook 由 `parse_merge_request` 产出；补拉由
+    `forge.list_open_pulls` 产出），避免两条入口各写一份审查编排。**不重做**动作门控
+    （调用方负责：webhook 先过 `should_review(action)`，补拉天然审打开 PR）。其余全部
+    逻辑与 webhook 原 mr 轨一致：增量决策(`decide_from_ref`)→ 幂等 ensure_task →
+    fetch→过滤→审查→对账落库→commit status→通知。`raw_payload` 仅在 webhook 路径真传
+    原始 body（供 payload 重放/重试）；补拉路径为空字符串（新 head 再轮询即重审）。
+
+    返回状态串供补拉统计：`"already"`（同 head 已审过，跳过）、`"empty"`（扩展名过滤
+    后无待审文件，标 completed-empty）、`"reviewed"`（本次完成审查）。异常向上抛。
     """
-    try:
-        data = json.loads(raw)
-    except ValueError:
-        return  # 非 JSON 忽略（签名已验，恶意/畸形 payload 不触发审查）
-    if not isinstance(data, dict):
-        return
-    pr = forge.parse_merge_request(data)
-    if pr is None:
-        ev = forge.parse_push_event(data)
-        if ev is None:
-            return  # 非 merge_request 也非 push 事件：任务即完成，无需回写
-        await _review_push_event(
-            forge, reviewer, ev, review_repo=review_repo, grouper=grouper,
-            notifier=notifier, push_gate=push_gate, static_analyzer=static_analyzer,
-            review_strategy=review_strategy, agent_runtime=agent_runtime,
-            agent_llm_factory=agent_llm_factory, project_config_factory=project_config_factory,
-            raw_payload=raw.decode("utf-8", "replace"),
-        )
-        return
-    if not forge.should_review(_event_action(data)):
-        return  # close/merge 等动作不触发审查
-
     # 取上次成功审查落点：DB 仓储优先，其次内存 store；都没有 → 全量
     ref: IncrementReference | None = None
     if review_repo is not None:
@@ -388,17 +366,17 @@ async def process_raw_event(
     valid = chain_valid(ref.head_sha, pr.head_sha) if chain_valid and ref else False
     decision = decide_from_ref(ref, pr, chain_valid=valid)
     if decision.reason == REASON_ALREADY:
-        return  # 同一 commit 重放：已审过，跳过
+        return "already"  # 同一 commit 重放：已审过，跳过
     incremental = decision.is_incremental
 
-# 先落任务行（幂等，key 同 head）：fetch / LLM 失败也落 failed 可见、可重试，
+    # 先落任务行（幂等，key 同 head）：fetch / LLM 失败也落 failed 可见、可重试，
     # 避免坏 LLM 输出偶发时任务静默消失（与 push 轨 ensure_task-前置 一致）。
     task_id: int | None = None
     if review_repo is not None:
         task_id = await review_repo.ensure_task(
             provider=pr.provider, repo_id=pr.repo_id, pr_number=pr.pr_number,
             event_type="mr", branch=pr.source_branch, head_sha=pr.head_sha,
-            base_sha=pr.base_sha, pr_title=pr.title, payload=raw.decode("utf-8", "replace"),
+            base_sha=pr.base_sha, pr_title=pr.title, payload=raw_payload,
         )
         # 开审即标 running（DESIGN §9.2）：让「正在跑」与「排队/孤儿」在管理页可区分；
         # 后续 failed/completed 的 mark_state 会覆盖。
@@ -418,7 +396,7 @@ async def process_raw_event(
                 await review_repo.mark_state(task_id, state="completed",
                                              summary_md="_扩展名过滤后无待审文件_",
                                              score_total=0)
-            return
+            return "empty"
         # 静态分析先跑（DESIGN §11）：失败降级为空，不影响主链
         static_findings = await _run_static(static_analyzer, diffs)
         result = await _review_agent_or_diff(
@@ -476,6 +454,7 @@ async def process_raw_event(
             increments.record(
                 pr.provider, pr.pr_number, refreshed.head_sha, collect_fingerprints(result.findings)
             )
+        return "reviewed"
     except Exception as exc:
         # 失败落 failed 行（后台可见、可重试），再向上抛出由 worker 标队列 failed
         logger.warning("mr 轨审查失败（%s pr#%s）：%s", pr.repo_full_name, pr.pr_number, exc)
@@ -485,6 +464,69 @@ async def process_raw_event(
             except Exception:
                 pass  # 落库失败不遮蔽原始异常
         raise
+
+
+async def process_raw_event(
+    forge: ForgeAdapter,
+    reviewer: Reviewer,
+    raw: bytes,
+    *,
+    increments: IncrementStore | None = None,
+    review_repo: ReviewRepository | None = None,
+    grouper: SemanticGrouper | None = None,
+    chain_valid: Callable[[str, str], bool] | None = None,
+    notifier: NotifierDispatcher | None = None,
+    push_gate: PushGate | None = None,
+    static_analyzer: StaticAnalyzer | None = None,
+    review_strategy: str = "diff",
+    agent_runtime: SandboxRuntime | None = None,
+    agent_llm_factory: Callable[[], AgentLLM] | None = None,
+    project_config_factory: ProjectConfigFactory | None = None,
+) -> None:
+    """原始 webhook payload → 审查 + 回写。各阶段失败在此抛出，由 worker 标 failed。
+
+    事件解析分双轨：mr（`parse_merge_request`）、push（`parse_push_event`，DESIGN §7.7）。
+    增量（DESIGN §7.3）落点可来自 `review_repo`（DB 持久，M4 起主用）或进程内
+    `increments`（M3 内存档兼容）。`grouper` 给定且改动 ≥ 4 个文件时走语义分组并
+    发审查（DESIGN §7.5，见 review.group_review）。`chain_valid(prior_sha, head_sha)`
+    校验上次 head 是否仍在本 PR 链上（平台 compare），缺省 `None` → 保守回退全量。
+    `notifier`（DESIGN F4）给定时，审查+回写成功后后台推送 IM 通知（失败不影响主链）。
+    `push_gate` 给定时判定 push 轨是否走 LLM（默认关）；给定 `review_repo` 时两轨结果
+    真落库（review_task/review_finding）。`project_config_factory`（可选）按项目取
+    `file_extensions` 过滤 diff（DESIGN 文件扩展名过滤）；未给定 → 不过滤。
+    """
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return  # 非 JSON 忽略（签名已验，恶意/畸形 payload 不触发审查）
+    if not isinstance(data, dict):
+        return
+    pr = forge.parse_merge_request(data)
+    if pr is None:
+        ev = forge.parse_push_event(data)
+        if ev is None:
+            return  # 非 merge_request 也非 push 事件：任务即完成，无需回写
+        await _review_push_event(
+            forge, reviewer, ev, review_repo=review_repo, grouper=grouper,
+            notifier=notifier, push_gate=push_gate, static_analyzer=static_analyzer,
+            review_strategy=review_strategy, agent_runtime=agent_runtime,
+            agent_llm_factory=agent_llm_factory, project_config_factory=project_config_factory,
+            raw_payload=raw.decode("utf-8", "replace"),
+        )
+        return
+    if not forge.should_review(_event_action(data)):
+        return  # close/merge 等动作不触发审查
+
+    # mr 轨核心（webhook 与主动补拉共用）：增量决策 / fetch / 过滤 / 审查 / 回写。
+    # 主动补拉（ops.poller）直接构造 PullRequest 后也走这里，幂等由 head_sha 兜底。
+    await review_pull_request(
+        forge, reviewer, pr,
+        increments=increments, review_repo=review_repo, grouper=grouper,
+        chain_valid=chain_valid, notifier=notifier, static_analyzer=static_analyzer,
+        review_strategy=review_strategy, agent_runtime=agent_runtime,
+        agent_llm_factory=agent_llm_factory, project_config_factory=project_config_factory,
+        raw_payload=raw.decode("utf-8", "replace"),
+    )
 
 
 async def _review_push_event(

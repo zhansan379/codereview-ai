@@ -4,15 +4,16 @@
 `ForgeRegistry` 用 `ConfigRepository.resolve_forge`（env 优先、DB 兜底）解析，保存成功后
 热更运行中的 worker（无需重启）。
 
-`POST /forges/{provider}/test` 用给定（或当前有效）凭据向平台 API 发一次探测；探测函数独立
-可注入，便于离线测试。
+`POST /forges/{provider}/test` 用给定（或当前有效）凭据向平台 API 发一次连接探测，并返回
+**能力矩阵**（`probe_capabilities`，见 forges/scopes.py）——按系统所需能力逐项判定
+「可用 / 缺权限 / 未知」，让用户看清 token 到底能补拉/拉取、评论、写状态里哪些可用。
+探测函数独立可注入，便于离线测试。
 """
 
 from __future__ import annotations
 
 import os
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
@@ -23,6 +24,7 @@ from codereview_ai.api.deps import get_current_user, get_db
 from codereview_ai.config.repository import DEFAULT_FORGE_URLS
 from codereview_ai.crypto import MASK, encrypt, is_masked
 from codereview_ai.forges.registry import SUPPORTED_PROVIDERS
+from codereview_ai.forges.scopes import Capability, probe_capabilities
 from codereview_ai.storage.models import ForgeConfig, _utcnow
 
 
@@ -130,29 +132,21 @@ async def update_forge(
     )
 
 
-async def probe_forge(provider: str, url: str, token: str) -> bool:
-    """发一条最少请求探测平台连通性；非 2xx 抛错由上层转 502（离线测试可 monkeypatch）。"""
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        base = url.rstrip("/")
-        if provider == "github":
-            resp = await client.get(f"{base}/user", headers={"Authorization": f"Bearer {token}"})
-        else:  # gitlab
-            resp = await client.get(f"{base}/api/v4/user", headers={"PRIVATE-TOKEN": token})
-    if resp.status_code >= 400:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            f"{provider} 连接失败（HTTP {resp.status_code}）：{resp.text[:200]}",
-        )
-    return True
+async def probe_forge(provider: str, url: str, token: str) -> list[Capability]:
+    """探测平台连通 + 能力矩阵（独立可注入，便于离线测试 monkeypatch）。
+
+    内部委托 `forges.scopes.probe_capabilities`；网络/解析异常向上抛，由端点转 502。
+    """
+    return await probe_capabilities(provider, url, token)
 
 
-@router.post("/{provider}/test", response_model=dict[str, bool])
+@router.post("/{provider}/test", response_model=dict)
 async def test_forge(
     provider: str,
     body: ForgeProbeBody,
     request: Request,
     session: AsyncSession = Depends(get_db),
-) -> dict[str, bool]:
+) -> dict:
     provider = _provider_or_404(provider)
     url = (body.url or "").strip() or None
     token = (body.token or "").strip() or None
@@ -167,9 +161,11 @@ async def test_forge(
     if not url or not token:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "未配置该平台凭据，无法测试")
     try:
-        await probe_forge(provider, url, token)
+        caps = await probe_forge(provider, url, token)
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"测试失败: {exc}") from exc
-    return {"ok": True}
+    # 兼容旧前端：`ok` 语义 = 平台连通通过（不必全能力 ok，读/写缺权也先告诉「连上了」）。
+    ok = any(c.name == "connect" and c.status == "ok" for c in caps)
+    return {"ok": ok, "capabilities": [c.__dict__ for c in caps]}

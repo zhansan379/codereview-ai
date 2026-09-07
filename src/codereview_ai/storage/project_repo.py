@@ -37,6 +37,14 @@ class ProjectRepository:
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
 
+    async def list_enabled(self) -> list[Project]:
+        """返回全部**启用**项目行（主动补拉 PR/MR 的扫描范围，DESIGN §9 补拉通道）。"""
+        session = session_factory(self._engine)
+        async with session() as s:
+            return list((await s.execute(
+                select(Project).where(Project.enabled.is_(True)).order_by(Project.id)
+            )).scalars().all())
+
     async def config_for(self, provider: str, repo_id: str) -> ProjectConfig | None:
         session = session_factory(self._engine)
         async with session() as s:

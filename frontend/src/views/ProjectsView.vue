@@ -3,6 +3,8 @@
     <el-card>
       <div class="toolbar">
         <el-button type="primary" @click="openCreate">新增项目</el-button>
+        <el-button :loading="polling" @click="onPoll">补拉 PR/MR</el-button>
+        <span class="poll-hint">后台按轮询间隔自动补拉，仅审 head 未变过的打开 PR/MR（新 head 才会审）</span>
       </div>
       <el-table :data="items" v-loading="loading" stripe>
         <el-table-column prop="id" label="ID" width="70" />
@@ -103,11 +105,12 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listProjects, createProject, updateProject, deleteProject, type Project } from '../api'
+import { listProjects, createProject, updateProject, deleteProject, pollPulls, type Project } from '../api'
 
 const items = ref<Project[]>([])
 const loading = ref(false)
 const saving = ref(false)
+const polling = ref(false)
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const editingId = ref<number | null>(null)
@@ -191,6 +194,23 @@ async function onSave() {
   }
 }
 
+async function onPoll() {
+  polling.value = true
+  try {
+    const r = await pollPulls()
+    const parts = [`扫描 ${r.prs} 个打开 PR/MR`, `新审 ${r.new}`, `已审过跳过 ${r.skipped}`]
+    if (r.errors.length) parts.push(`失败 ${r.errors.length}`)
+    ElMessage.success(`补拉完成：${parts.join('，')}`)
+    if (r.errors.length) {
+      console.warn('补拉失败明细', r.errors)
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '补拉失败（worker 未启动？）')
+  } finally {
+    polling.value = false
+  }
+}
+
 async function onDelete(row: Project) {
   await ElMessageBox.confirm(`确认删除项目「${row.repo_full_name}」？`, '提示', { type: 'warning' })
   await deleteProject(row.id)
@@ -204,6 +224,12 @@ onMounted(load)
 <style scoped>
 .toolbar {
   margin-bottom: 12px;
+  align-items: center;
+}
+.poll-hint {
+  margin-left: 12px;
+  font-size: 12px;
+  color: #909399;
 }
 .field-hint {
   margin-left: 8px;

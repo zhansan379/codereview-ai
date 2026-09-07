@@ -563,12 +563,31 @@ def test_forges_probe_zero_network_via_injected_probe(app, monkeypatch):
 
         async def fake_probe(provider, url, token):
             captured.update(provider=provider, url=url, token=token)
-            return True
+            from codereview_ai.forges.scopes import Capability
+
+            return [
+                Capability(name="connect", label="平台连通 / 认证", status="ok"),
+                Capability(name="read_pull", label="拉取打开 PR/MR", status="missing",
+                           detail="缺 scope：repo"),
+            ]
 
         monkeypatch.setattr(forges, "probe_forge", fake_probe)
         r = c.post("/api/forges/github/test", json={})
         assert r.status_code == 200, r.text
         assert captured == {"provider": "github", "url": "https://gh.example", "token": "tok"}
+        body = r.json()
+        assert body["ok"] is True
+        caps = {cap["name"]: cap["status"] for cap in body["capabilities"]}
+        assert caps == {"connect": "ok", "read_pull": "missing"}
+        # 连通 ok 但读权限缺失 → ok 仍为 True（连上了，但告知缺权限）
+        async def read_only_probe(provider, url, token):
+            from codereview_ai.forges.scopes import Capability
+
+            return [Capability(name="connect", label="平台连通 / 认证", status="ok"),
+                    Capability(name="read_pull", label="拉取打开 PR/MR", status="missing")]  # noqa: E501
+
+        monkeypatch.setattr(forges, "probe_forge", read_only_probe)
+        assert c.post("/api/forges/github/test", json={}).json()["ok"] is True
 
         async def fail_probe(provider, url, token):
             raise RuntimeError("boom")

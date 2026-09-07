@@ -55,6 +55,16 @@ class ForgeAdapter(ABC):
         """按需补齐 PR 元数据（diff_refs / 标题 / 作者），默认原样返回。"""
         return pr
 
+    async def list_open_pulls(self, repo_id: str) -> list[PullRequest]:
+        """主动补拉：列出仓库当前**打开**状态的 PR/MR（不依赖 webhook，DESIGN §9 补拉通道）。
+
+        非抽象默认返回空——未实现此能力（如推送轨专用的分析/测试子类）直接留白，
+        补拉对该仓库自然跳过而非报错。实现者用 `repo_id` 定位仓库并逐项归一成中立
+        `PullRequest`（字段口径与 `parse_merge_request` 一致，含 head_sha/base_sha/
+        diff_refs——GitLab 行级评论 position 依赖后者）。
+        """
+        return []
+
     @abstractmethod
     async def fetch_files(self, pr: PullRequest) -> list[FileDiff]:
         """拉取 PR 涉及文件的 diff（含 full new_file_content 则更好）。"""
