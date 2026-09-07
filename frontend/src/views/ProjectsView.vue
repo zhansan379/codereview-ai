@@ -3,8 +3,13 @@
     <el-card>
       <div class="toolbar">
         <el-button type="primary" @click="openCreate">新增项目</el-button>
-        <el-button :loading="polling" @click="onPoll">补拉 PR/MR</el-button>
+        <el-button :loading="pollBusy" @click="onPoll">
+          {{ pollBusy ? '补拉中…' : '补拉 PR/MR' }}
+        </el-button>
         <span class="poll-hint">后台按轮询间隔自动补拉，仅审 head 未变过的打开 PR/MR（新 head 才会审）</span>
+      </div>
+      <div v-if="pollBusy" class="poll-progress">
+        <span class="spinner" /> 补拉进行中… 正在后台审查打开 PR/MR，可切换页面，完成后将弹出结果
       </div>
       <el-table :data="items" v-loading="loading" stripe>
         <el-table-column prop="id" label="ID" width="70" />
@@ -103,14 +108,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listProjects, createProject, updateProject, deleteProject, pollPulls, pollPullStatus, type Project } from '../api'
+import { listProjects, createProject, updateProject, deleteProject, type Project } from '../api'
+import { pollBusy, triggerPoll, resumePollWatchIfBusy } from './usePoll'
 
 const items = ref<Project[]>([])
 const loading = ref(false)
 const saving = ref(false)
-const polling = ref(false)
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const editingId = ref<number | null>(null)
@@ -194,52 +199,9 @@ async function onSave() {
   }
 }
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
-let pollUid = 0 // 组件卸载/重复触发时丢弃过期回调
-
 async function onPoll() {
-  polling.value = true
-  const uid = ++pollUid
-  try {
-    await pollPulls() // 后台触发；若已在跑会返回 409
-  } catch (e: any) {
-    if (e?.response?.status === 409) {
-      // 上一轮仍在后台进行 → 继续等它
-    } else {
-      ElMessage.error(e?.response?.data?.detail || '补拉触发失败')
-      polling.value = false
-      return
-    }
-  }
-  // 轮询后台状态直到本轮结束，展示最终报告（切页不会中断后台补拉）
-  const tick = async () => {
-    try {
-      const s = await pollPullStatus()
-      if (uid !== pollUid) return // 已被新的一轮/卸载取代
-      if (!s.running) {
-        if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
-        polling.value = false
-        if (s.error) {
-          ElMessage.error(`补拉失败：${s.error}`)
-        } else if (s.report) {
-          const parts = [`扫描 ${s.report.prs} 个打开 PR/MR`, `新审 ${s.report.new}`, `已审过跳过 ${s.report.skipped}`]
-          if (s.report.errors.length) parts.push(`失败 ${s.report.errors.length}`)
-          ElMessage.success(`补拉完成：${parts.join('，')}`)
-          if (s.report.errors.length) console.warn('补拉失败明细', s.report.errors)
-        }
-      }
-    } catch {
-      /* 轮询期间瞬时错误：下一拍再试 */
-    }
-  }
-  await tick()
-  if (polling.value) pollTimer = setInterval(tick, 2000)
+  await triggerPoll()
 }
-
-onUnmounted(() => {
-  pollUid++ // 丢弃过期回调
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
-})
 
 async function onDelete(row: Project) {
   await ElMessageBox.confirm(`确认删除项目「${row.repo_full_name}」？`, '提示', { type: 'warning' })
@@ -248,7 +210,10 @@ async function onDelete(row: Project) {
   load()
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  resumePollWatchIfBusy() // 若补拉仍在后台跑（切页回来）→ 恢复在途显示
+})
 </script>
 
 <style scoped>
@@ -260,6 +225,31 @@ onMounted(load)
   margin-left: 12px;
   font-size: 12px;
   color: #909399;
+}
+.poll-progress {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid #e1e8f0;
+  border-radius: 6px;
+  background: #f5f8fc;
+  font-size: 13px;
+  color: #4a5b6d;
+}
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  border: 2px solid #409eff;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: poll-spin 0.8s linear infinite;
+}
+@keyframes poll-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .field-hint {
   margin-left: 8px;
