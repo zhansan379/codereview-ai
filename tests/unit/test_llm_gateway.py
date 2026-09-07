@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from codereview_ai.domain.models import Category, Severity
+from codereview_ai.review.fallback import FallbackLLMGateway, wrap_fallback
 from codereview_ai.review.llm_gateway import (
     LLMError,
     LLMGateway,
@@ -183,3 +184,66 @@ def test_parse_review_json_accepts_fenced_text():
     raw = '```json\n' + json.dumps(CLEAN, ensure_ascii=False) + '\n```'
     r = parse_review_json(raw)
     assert r.findings[0].category == Category.BUG
+
+
+# ---------- FallbackLLMGateway（自定义回退链） ----------
+
+
+def _gw(model: str):
+    return LLMGateway(model=model, backend=lambda msgs: model)
+
+
+def test_fallback_switches_to_next_on_failure():
+    async def boom(messages):
+        raise LLMError("bad model")
+
+    async def ok_from_b(messages):
+        return "ok-from-b"
+
+    gw1 = LLMGateway(model="openai/a", backend=boom)
+    gw2 = LLMGateway(model="openai/b", backend=ok_from_b)
+
+    fb = FallbackLLMGateway([gw1, gw2])
+    import asyncio
+
+    assert asyncio.run(fb.complete([{"role": "user", "content": "x"}])) == "ok-from-b"
+
+
+def test_fallback_all_fail_raises():
+    import asyncio
+
+    async def boom(messages):
+        raise LLMError("nope")
+
+    fb = FallbackLLMGateway([
+        LLMGateway(model="openai/a", backend=boom),
+        LLMGateway(model="openai/b", backend=boom),
+    ])
+    with pytest.raises(LLMError) as ei:
+        asyncio.run(fb.complete([{"role": "user", "content": "x"}]))
+    assert "全部" in str(ei.value) or "均失败" in str(ei.value)
+
+
+def test_fallback_model_property_returns_first():
+    fb = FallbackLLMGateway([_gw("openai/a"), _gw("openai/b")])
+    assert fb.model == "openai/a"
+
+
+def test_wrap_fallback_single_returns_plain_gateway():
+    gw = wrap_fallback([type("LLM", (), {"model": "m", "name": "m", "api_key": "", "base_url": "", "provider": "", "max_tokens": None, "temperature": None})()])
+    assert isinstance(gw, LLMGateway)
+    assert not isinstance(gw, FallbackLLMGateway)
+
+
+def test_wrap_fallback_multiple_wraps_in_fallback():
+    import asyncio
+
+    def make(model: str):
+        return type("LLM", (), {
+            "model": model, "name": model, "api_key": "", "base_url": "",
+            "provider": "", "max_tokens": None, "temperature": None,
+        })()
+
+    fb = wrap_fallback([make("openai/a"), make("openai/b")])
+    assert isinstance(fb, FallbackLLMGateway)
+    assert fb.model == "openai/a"

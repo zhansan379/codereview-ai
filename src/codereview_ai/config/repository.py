@@ -25,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from codereview_ai.crypto import decrypt
-from codereview_ai.review.llm_gateway import LLMGateway
+from codereview_ai.review.fallback import wrap_fallback
 from codereview_ai.review.reviewer import Reviewer
 from codereview_ai.storage.db import session_factory
 from codereview_ai.storage.models import ForgeConfig, ModelConfig, NotifierConfig
@@ -216,6 +216,32 @@ class ConfigRepository:
             max_tokens=top.max_tokens,
         )
 
+    async def resolve_llm_chain(self) -> list[ResolvedLLM]:
+        """返回全部启用模型组成的审查回退链（priority 降序，`_fetch` 已排）。
+
+        env 已显式配 `CR_LLM_MODEL` 时固定返回该模型（DB 让位）。链上每台模型解密
+        key 供 `wrap_fallback` 构造独立 `LLMGateway`——主模型失败自动切下一台。
+        """
+        env_model = (os.environ.get("CR_LLM_MODEL") or "").strip()
+        if env_model:
+            return [ResolvedLLM(name=env_model, provider="", model=env_model)]
+        await self._ensure_loaded()
+        if not self._models:
+            return []
+        chain: list[ResolvedLLM] = []
+        for m in self._models:  # _fetch 已按 priority desc, id 排序
+            api_key = decrypt(m.api_key_encrypted, self._enc) if m.api_key_encrypted else ""
+            chain.append(ResolvedLLM(
+                name=m.name,
+                provider=m.provider,
+                model=m.model or m.name,
+                api_key=api_key,
+                base_url=m.base_url,
+                temperature=m.temperature,
+                max_tokens=m.max_tokens,
+            ))
+        return chain
+
     async def notifier_routes(self, project_id: int | None = None) -> list[NotifierRoute]:
         """给出项目的通知路由（无项目号时含全局默认）；隐式密钥解密，日志只记 channel。"""
         await self._ensure_loaded()
@@ -279,19 +305,14 @@ class ConfigRepository:
     # —— worker 装配 ——
 
     async def build_reviewer(self, backend: Any = None) -> Reviewer | None:
-        """用解析出的 LLM 构造一个 Reviewer；无可用模型返回 None（worker 跳过 LLM 审查）。
+        """用解析出的 LLM 回退链构造一个 Reviewer；无可用模型返回 None（worker 跳过 LLM 审查）。
 
-        env 已显式配置 `CR_LLM_MODEL` 时按其模型名构造（DB 模型让位）。api_key/api_base
-        通过 env 重放补进进程环境，litellm 在调用期读取。`backend` 可注入 fake 便于离线测试。
+        单模型直接返回其网关，多模型包一层 `FallbackLLMGateway`——主模型失败自动切下一台
+        （`resolve_llm_chain` 已按 priority 降序）。`backend` 可注入 fake 便于离线测试。
         """
-        llm = await self.resolve_llm()
-        if llm is None:
+        chain = await self.resolve_llm_chain()
+        if not chain:
             return None
-        self.apply_env_replay(llm)
-        gateway = LLMGateway(
-            model=llm.model or llm.name,
-            backend=backend,
-            max_tokens=llm.max_tokens,
-            temperature=llm.temperature,
-        )
+        self.apply_env_replay(chain[0])  # 保留 host-env 优先（back-compat，其余链节点显式传 key/url）
+        gateway = wrap_fallback(chain, backend=backend)
         return Reviewer(gateway)

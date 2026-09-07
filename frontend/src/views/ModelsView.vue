@@ -33,13 +33,12 @@
         <el-form-item label="名称" required>
           <el-input v-model="form.name" />
         </el-form-item>
-        <el-form-item label="预设提供商">
+        <el-form-item label="平台" required>
           <el-select
-            v-model="presetKey"
-            placeholder="选择常见提供商自动填充，或用「自定义」手动填写"
+            v-model="platformKey"
+            placeholder="选择平台，自动填路由前缀 / Base URL"
             style="width: 100%"
-            clearable
-            @change="applyPreset"
+            @change="applyPlatform"
           >
             <el-option-group label="主流云厂商">
               <el-option v-for="p in cloudPresets" :key="p.key" :label="p.label" :value="p.key" />
@@ -47,15 +46,32 @@
             <el-option-group label="自托管 / 本地">
               <el-option v-for="p in localPresets" :key="p.key" :label="p.label" :value="p.key" />
             </el-option-group>
-            <el-option label="自定义（手动填写）" value="custom" />
+            <el-option label="自定义（手动填写）" value="__custom__" />
           </el-select>
-          <div class="form-tip">选中预设会填入平台 / 模型 / Base URL，可再手动微调；API Key 仍需自行填写。</div>
-        </el-form-item>
-        <el-form-item label="平台" required>
-          <el-input v-model="form.provider" placeholder="如 openai / deepseek" />
+          <template v-if="platformKey === '__custom__'">
+            <el-select
+              v-model="form.provider"
+              placeholder="选择消息协议格式"
+              style="width: 100%; margin-top: 8px"
+            >
+              <el-option v-for="o in customProviderOptions" :key="o.value" :label="o.label" :value="o.value" />
+            </el-select>
+          </template>
+          <div class="form-tip">
+            平台决定接口格式与密钥路由前缀，选择厂商会自动填 Base URL。
+            <template v-if="presetFormat">
+              <el-tag size="small" :type="presetFormat === 'anthropic' ? 'warning' : 'success'" style="margin-left: 8px">
+                {{ formatLabel[presetFormat] }}
+              </el-tag>
+            </template>
+          </div>
         </el-form-item>
         <el-form-item label="模型" required>
-          <el-input v-model="form.model" placeholder="如 gpt-4o" />
+          <el-input v-model="modelBare" placeholder="如 gpt-4o / deepseek-chat（无需带协议前缀）" />
+          <div class="form-tip">
+            保存为复合名 <code>{{ resolvedComposite || '（等待输入模型名）' }}</code>
+            <template v-if="form.provider">，前缀「{{ form.provider }}」由平台自动拼接</template>
+          </div>
         </el-form-item>
         <el-form-item label="API Key" required>
           <el-input
@@ -72,15 +88,36 @@
         <el-form-item label="温度">
           <el-input-number v-model="form.temperature" :min="0" :max="2" :step="0.1" />
         </el-form-item>
-        <el-form-item label="最大 Token">
-          <el-input-number v-model="form.max_tokens" :min="1" />
-        </el-form-item>
-        <el-form-item label="能力">
-          <el-select v-model="form.capabilities" multiple placeholder="选择能力" style="width: 100%">
-            <el-option label="审查" value="review" />
-            <el-option label="总结" value="summary" />
-            <el-option label="测试" value="test" />
-          </el-select>
+        <el-form-item>
+          <template #label>
+            <el-tooltip effect="dark" placement="top">
+              <template #content>
+                <div style="line-height: 1.6">单次回复的输出预算（max_tokens），<b>不是</b>上下文窗口长度。<br />DeepSeek V4 系上限 393216，其他模型各有不同，过高会被 API 拒绝。</div>
+              </template>
+              <span>最大输出 Token <el-icon style="vertical-align: -2px"><QuestionFilled /></el-icon></span>
+            </el-tooltip>
+          </template>
+          <div class="token-editor">
+            <el-input-number v-model="tokenValue" :min="1" :controls="false" style="width: 140px" />
+            <el-select v-model="tokenUnit" style="width: 150px">
+              <el-option label="Tokens" value="" />
+              <el-option label="K (1024)" value="K" />
+              <el-option label="M (1024²)" value="M" />
+            </el-select>
+            <span class="form-tip token-eq">≈ {{ tokenTotalText }} tokens</span>
+          </div>
+          <div class="token-presets">
+            <el-tag
+              v-for="c in COMMON_TOKENS"
+              :key="c.label"
+              class="token-chip"
+              :effect="tokenUnit === c.unit && tokenValue === c.value ? 'dark' : 'plain'"
+              clickable
+              @click="pickToken(c)"
+            >
+              {{ c.label }}
+            </el-tag>
+          </div>
         </el-form-item>
         <el-form-item label="优先级">
           <el-input-number v-model="form.priority" :min="0" />
@@ -94,12 +131,38 @@
         <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-card class="cap-card">
+      <template #header>模型回退链</template>
+      <div class="chain-row">
+        <span class="chain-label">当前使用</span>
+        <el-tag v-if="reviewChain.length" type="primary">{{ reviewChain[0].name }}（主）</el-tag>
+        <span v-else class="muted">无启用模型</span>
+      </div>
+      <div v-if="reviewChain.length > 1" class="chain-row">
+        <span class="chain-label">回退链</span>
+        <el-tag
+          v-for="(m, i) in reviewChain.slice(1)"
+          :key="m.id"
+          type="info"
+          class="fallback-tag"
+        >
+          {{ i + 1 }}. {{ m.name }}
+        </el-tag>
+      </div>
+      <p class="muted rule-note">
+        审查启用全部模型，按 priority 高→低排成回退链：单台瞬时错误（超时/限流/5xx）在模型内部
+        自动重试 2 次，业务错误（如 4xx）直接失败并切下一台；整条链全败则该次审查失败。若已设
+        环境变量 CR_LLM_MODEL，则固定用该模型，忽略上述规则。
+      </p>
+    </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { QuestionFilled } from '@element-plus/icons-vue'
 import { listModels, createModel, updateModel, deleteModel, testModel, type ModelItem } from '../api'
 
 const items = ref<ModelItem[]>([])
@@ -113,48 +176,95 @@ const REDACTED = '******'
 
 // 常见模型提供商预设：选中后自动填 provider / model / base_url。
 // model 用 LiteLLM 的「provider/model」复合名（DESIGN §2）；本地/自托管带默认 Base URL。
+// format：预设走的线格式——openai=OpenAI 兼容、anthropic=Anthropic 格式、other=本地/自托管协议。
+// 它是前端写死的预设元数据，映射到 model 的前缀（provider 驱动 litellm 路由与接口鉴权）。
 interface ProviderPreset {
   key: string
   label: string
   provider: string
   model: string
   baseUrl: string
+  format: 'openai' | 'anthropic' | 'other'
 }
 
 const cloudPresets: ProviderPreset[] = [
-  { key: 'openai', label: 'OpenAI', provider: 'openai', model: 'openai/gpt-4o-mini', baseUrl: '' },
-  { key: 'anthropic', label: 'Anthropic Claude', provider: 'anthropic', model: 'anthropic/claude-sonnet-4-5', baseUrl: '' },  // prettier-ignore
-  { key: 'deepseek', label: 'DeepSeek', provider: 'deepseek', model: 'deepseek/deepseek-chat', baseUrl: '' },
-  { key: 'qwen', label: '阿里云百炼 Qwen', provider: 'openai', model: 'openai/qwen-plus', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-  { key: 'zhipu', label: '智谱 GLM', provider: 'openai', model: 'openai/glm-4-plus', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
-  { key: 'moonshot', label: 'Moonshot（Kimi）', provider: 'openai', model: 'openai/moonshot-v1-8k', baseUrl: 'https://api.moonshot.cn/v1' },
+  { key: 'openai', label: 'OpenAI', provider: 'openai', model: 'openai/gpt-4o-mini', baseUrl: '', format: 'openai' },
+  { key: 'anthropic', label: 'Anthropic Claude', provider: 'anthropic', model: 'anthropic/claude-sonnet-4-5', baseUrl: '', format: 'anthropic' },  // prettier-ignore
+  // DeepSeek：走 OpenAI 兼容格式 + 官方稳定端点（/chat/completions），不落到 deepseek provider 的 /beta。
+  { key: 'deepseek', label: 'DeepSeek', provider: 'openai', model: 'openai/deepseek-chat', baseUrl: 'https://api.deepseek.com', format: 'openai' },
+  { key: 'qwen', label: '阿里云百炼 Qwen', provider: 'openai', model: 'openai/qwen-plus', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', format: 'openai' },
+  { key: 'zhipu', label: '智谱 GLM', provider: 'openai', model: 'openai/glm-4-plus', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', format: 'openai' },
+  { key: 'moonshot', label: 'Moonshot（Kimi）', provider: 'openai', model: 'openai/moonshot-v1-8k', baseUrl: 'https://api.moonshot.cn/v1', format: 'openai' },
 ]
 
 const localPresets: ProviderPreset[] = [
-  { key: 'ollama', label: 'Ollama', provider: 'ollama', model: 'ollama/llama3', baseUrl: 'http://localhost:11434' },
-  { key: 'vllm', label: 'vLLM', provider: 'openai', model: 'openai/<模型ID>', baseUrl: 'http://localhost:8000/v1' },
-  { key: 'lmstudio', label: 'LM Studio', provider: 'openai', model: 'openai/<模型名>', baseUrl: 'http://localhost:1234/v1' },
+  { key: 'ollama', label: 'Ollama', provider: 'ollama', model: 'ollama/llama3', baseUrl: 'http://localhost:11434', format: 'other' },
+  { key: 'vllm', label: 'vLLM', provider: 'openai', model: 'openai/<模型ID>', baseUrl: 'http://localhost:8000/v1', format: 'openai' },
+  { key: 'lmstudio', label: 'LM Studio', provider: 'openai', model: 'openai/<模型名>', baseUrl: 'http://localhost:1234/v1', format: 'openai' },
 ]
 
 const allPresets = [...cloudPresets, ...localPresets]
 
-// 表单里选中的预设 key；自定义则置空，不改动表单
-const presetKey = ref<string>('')
+// 自定义平台时可选的路由前缀——只有两种消息协议格式：OpenAI 兼容 / Anthropic。
+// 其余厂商一律用「openai + 各自的 Base URL」或「anthropic」表达。
+const customProviderOptions: { value: string; label: string }[] = [
+  { value: 'openai', label: 'OpenAI 兼容格式' },
+  { value: 'anthropic', label: 'Anthropic（Claude）' },
+]
 
-function applyPreset() {
-  const key = presetKey.value
-  if (!key || key === 'custom') {
-    if (key === 'custom') {
-      presetKey.value = ''
-      ElMessage.info('请手动填写平台 / 模型 / Base URL')
+// 「平台」下拉：值=厂商 key（或 __custom__），选中自动填路由前缀 / Base URL / 格式。
+const platformKey = ref<string>('')
+
+// 当前选中平台的线格式（openai / anthropic / other），用于表单内显式标注
+const presetFormat = ref<ProviderPreset['format'] | ''>('')
+
+// 格式的中文标签
+const formatLabel: Record<Exclude<ProviderPreset['format'], ''>, string> = {
+  openai: 'OpenAI 兼容格式',
+  anthropic: 'Anthropic 格式',
+  other: '本地 / 自托管协议',
+}
+
+// 模型输入框展示「裸模型名」（不带协议前缀）；form.model 保存为带前缀的复合名。
+const modelBare = ref<string>('')
+
+// 去掉复合名里的前缀段：openai/gpt-4o-mini → gpt-4o-mini
+function bareOf(model: string): string {
+  return model.includes('/') ? model.slice(model.indexOf('/') + 1) : model
+}
+
+// 保存时要写入 form.model 的复合名（前缀自动拼接）
+const resolvedComposite = computed(() => {
+  const m = modelBare.value.trim()
+  if (!m) return form.model
+  if (m.includes('/')) return m // 用户已显式留了斜杠，不重复加前缀
+  return form.provider ? `${form.provider}/${m}` : m
+})
+
+function applyPlatform() {
+  const key = platformKey.value
+  if (!key || key === '__custom__') {
+    if (key === '__custom__') {
+      presetFormat.value = '' // 手动填路由前缀
+      // 不覆盖 form.provider / base_url，交用户自定义；已有 model 时仅去掉旧前缀便于重填
+      modelBare.value = modelBare.value || bareOf(form.model)
     }
     return
   }
   const p = allPresets.find((x) => x.key === key)
   if (!p) return
   form.provider = p.provider
-  form.model = p.model
   form.base_url = p.baseUrl
+  presetFormat.value = p.format
+  modelBare.value = bareOf(p.model)
+}
+
+// 编辑回显：按 provider+baseUrl 尽量反向匹配到某个厂商预设，否则退回自定义
+function matchPlatformKey(): string {
+  const cand = allPresets.find(
+    (p) => p.provider === form.provider && (p.baseUrl || '') === (form.base_url || ''),
+  )
+  return cand ? cand.key : '__custom__'
 }
 
 const emptyForm = () => ({
@@ -165,11 +275,59 @@ const emptyForm = () => ({
   base_url: '',
   temperature: 0.7,
   max_tokens: 4096,
-  capabilities: [] as string[],
   priority: 0,
   enabled: true,
 })
 const form = reactive(emptyForm())
+
+// ── 最大 Token 单位输入（原始 tokens / K / M）──────────────────────────
+// 换算用 1024 基数：128K=131072，与常见模型上下文（DeepSeek/Ollama/Qwen 等）口径一致。
+type TokenUnit = '' | 'K' | 'M'
+const TOKEN_MULT: Record<TokenUnit, number> = { '': 1, K: 1024, M: 1024 * 1024 }
+const tokenValue = ref(4)
+const tokenUnit = ref<TokenUnit>('K')
+
+const COMMON_TOKENS: { label: string; unit: TokenUnit; value: number }[] = [
+  { label: '4K', unit: 'K', value: 4 },
+  { label: '8K', unit: 'K', value: 8 },
+  { label: '16K', unit: 'K', value: 16 },
+  { label: '32K', unit: 'K', value: 32 },
+  { label: '64K', unit: 'K', value: 64 },
+  { label: '128K', unit: 'K', value: 128 },
+  { label: '256K', unit: 'K', value: 256 },
+  { label: '1M', unit: 'M', value: 1 },
+]
+
+const tokenTotal = computed(() => Math.round((tokenValue.value || 0) * TOKEN_MULT[tokenUnit.value]))
+const tokenTotalText = computed(() => tokenTotal.value.toLocaleString('en-US'))
+
+function pickToken(c: (typeof COMMON_TOKENS)[number]) {
+  tokenValue.value = c.value
+  tokenUnit.value = c.unit
+}
+
+// 把后端已存的原生 token 数反推成「数值 + 单位」的显示形式
+function fitTokenUnit(raw: number) {
+  if (raw >= TOKEN_MULT.M && raw % TOKEN_MULT.M === 0) {
+    tokenUnit.value = 'M'
+    tokenValue.value = raw / TOKEN_MULT.M
+  } else if (raw >= TOKEN_MULT.K && raw % TOKEN_MULT.K === 0) {
+    tokenUnit.value = 'K'
+    tokenValue.value = raw / TOKEN_MULT.K
+  } else {
+    tokenUnit.value = ''
+    tokenValue.value = raw
+  }
+}
+
+// ── 审查回退链（按 priority 降序，与后端 resolve_llm_chain 一致）────
+// 审查取所有启用的模型，排序后第 1 个为主、其余为回退。保存后 load() 重拉自动刷新。
+const reviewChain = computed(() =>
+  items.value
+    .filter((m) => m.enabled)
+    .slice()
+    .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.id - b.id),
+)
 
 async function load() {
   loading.value = true
@@ -183,14 +341,17 @@ async function load() {
 function openCreate() {
   isEdit.value = false
   editingId.value = null
-  presetKey.value = ''
+  platformKey.value = ''
+  presetFormat.value = ''
+  modelBare.value = ''
   Object.assign(form, emptyForm())
+  tokenValue.value = 4
+  tokenUnit.value = emptyForm().max_tokens >= TOKEN_MULT.M ? 'M' : 'K'
   dialogVisible.value = true
 }
 function openEdit(row: ModelItem) {
   isEdit.value = true
   editingId.value = row.id
-  presetKey.value = ''
   Object.assign(form, {
     name: row.name,
     provider: row.provider,
@@ -200,10 +361,12 @@ function openEdit(row: ModelItem) {
     base_url: row.base_url || '',
     temperature: row.temperature ?? 0.7,
     max_tokens: row.max_tokens ?? 4096,
-    capabilities: row.capabilities || [],
     priority: row.priority ?? 0,
     enabled: row.enabled,
   })
+  modelBare.value = bareOf(row.model ?? '')
+  platformKey.value = matchPlatformKey()
+  fitTokenUnit(row.max_tokens ?? 4096)
   dialogVisible.value = true
 }
 
@@ -213,6 +376,9 @@ async function onSave() {
     ElMessage.warning('请输入 API Key')
     return
   }
+  // 用「数值 + 单位」换算成原生 token 数；模型名拼上前缀成复合名，一并落库
+  form.max_tokens = tokenTotal.value
+  form.model = resolvedComposite.value
   saving.value = true
   try {
     if (isEdit.value && editingId.value != null) {
@@ -263,5 +429,51 @@ onMounted(load)
   font-size: 12px;
   color: #909399;
   margin-top: 2px;
+}
+.token-editor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.token-eq {
+  margin: 0;
+  white-space: nowrap;
+}
+.token-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.token-chip {
+  cursor: pointer;
+}
+.cap-card {
+  margin-top: 16px;
+}
+.chain-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.chain-label {
+  color: #909399;
+  font-size: 13px;
+  white-space: nowrap;
+  width: 64px;
+}
+.fallback-tag {
+  margin-left: 0;
+}
+.rule-note {
+  font-size: 12px;
+  margin-top: 10px;
+}
+.muted {
+  color: #909399;
+  font-size: 12px;
+  margin-left: 6px;
 }
 </style>
