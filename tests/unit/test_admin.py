@@ -12,8 +12,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from codereview_ai.api.admin import forges, models as admin_models
-from codereview_ai.api.admin import notifiers, projects, reviews, tasks
+from codereview_ai.api.admin import forges, notifiers, projects, reviews, tasks
+from codereview_ai.api.admin import models as admin_models
 from codereview_ai.api.auth import issue_token
 from codereview_ai.api.auth import router as auth_router
 from codereview_ai.config.repository import ConfigRepository
@@ -63,10 +63,12 @@ def test_projects_crud_roundtrip(app):
         r = c.post("/api/projects", json={
             "provider": "gitlab", "repo_id": "123", "repo_full_name": "a/b",
             "branch_rule": "main", "review_strategy": "diff", "score_threshold": 90,
+            "enforce_score_threshold": True,
         })
         assert r.status_code == 201
         pid = r.json()["id"]
         assert r.json()["score_threshold"] == 90
+        assert r.json()["enforce_score_threshold"] is True  # 新建透传
 
         # 无 token → 401
         assert TestClient(fast).get("/api/projects").status_code == 401
@@ -76,10 +78,11 @@ def test_projects_crud_roundtrip(app):
 
         upd = c.put(f"/api/projects/{pid}", json={
             "provider": "gitlab", "repo_id": "123", "branch_rule": "dev",
-            "score_threshold": 60,
+            "score_threshold": 60, "enforce_score_threshold": True,
             "push_enabled": True, "push_branch_globs": "main,release/*",
         }).json()
         assert upd["branch_rule"] == "dev" and upd["score_threshold"] == 60
+        assert upd["enforce_score_threshold"] is True
         assert upd["push_enabled"] is True and upd["push_branch_globs"] == "main,release/*"
 
         # push_enabled 可回写为 null → 继承全局默认

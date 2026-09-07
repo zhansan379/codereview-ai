@@ -58,3 +58,22 @@ async def test_config_for_default_empty_returns_empty(engine):
     repo = ProjectRepository(engine)
     cfg = await repo.config_for("github", "42")
     assert cfg is not None and cfg.file_extensions == ""
+
+
+async def test_config_for_carries_score_threshold(engine):
+    await _seed(engine, provider="gitlab", repo_id="9", score_threshold=95,
+                enforce_score_threshold=True)
+    repo = ProjectRepository(engine)
+    cfg = await repo.config_for("gitlab", "9")
+    assert cfg is not None
+    assert cfg.score_threshold == 95
+    assert cfg.enforce_score_threshold is True
+
+
+async def test_config_for_score_threshold_defaults(engine):
+    await _seed(engine, provider="gitlab", repo_id="10")  # 缺省关
+    repo = ProjectRepository(engine)
+    cfg = await repo.config_for("gitlab", "10")
+    assert cfg is not None
+    assert cfg.score_threshold == 80
+    assert cfg.enforce_score_threshold is False

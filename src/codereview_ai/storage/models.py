@@ -52,6 +52,8 @@ class Project(Base):
     review_strategy: Mapped[str] = mapped_column(String(32), default="diff")
     prompt_suffix: Mapped[str] = mapped_column(Text, default="")
     score_threshold: Mapped[int] = mapped_column(Integer, default=80)
+    # F3.7：低于阈值发 failed（阻塞合并）的每项目开关；默认关，避免已有默认 80 让所有项目意外阻塞
+    enforce_score_threshold: Mapped[bool] = mapped_column(Boolean, default=False)
     notifier_routing: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

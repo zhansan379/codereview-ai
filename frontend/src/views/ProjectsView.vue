@@ -84,6 +84,10 @@
         <el-form-item label="得分阈值">
           <el-input-number v-model="form.score_threshold" :min="0" :max="100" />
         </el-form-item>
+        <el-form-item label="低于阈值阻塞合并">
+          <el-switch v-model="form.enforce_score_threshold" />
+          <span class="field-hint">开：总分低于阈值时对该 MR 发 failed 状态，阻塞合并</span>
+        </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
         </el-form-item>
@@ -118,6 +122,7 @@ const emptyForm = () => ({
   review_strategy: 'diff',
   prompt_suffix: '',
   score_threshold: 80,
+  enforce_score_threshold: false,
   enabled: true,
   // push 审查（三态）：on=开启 / off=关闭 / inherit=跟随全局 env 默认
   push_mode: 'inherit' as 'on' | 'off' | 'inherit',
@@ -153,6 +158,7 @@ function openEdit(row: Project) {
     review_strategy: row.review_strategy || '',
     prompt_suffix: row.prompt_suffix || '',
     score_threshold: row.score_threshold ?? 80,
+    enforce_score_threshold: row.enforce_score_threshold ?? false,
     enabled: row.enabled,
     push_mode: row.push_enabled === true ? 'on' : row.push_enabled === false ? 'off' : 'inherit',
     push_branch_globs: row.push_branch_globs || '',
@@ -198,5 +204,10 @@ onMounted(load)
 <style scoped>
 .toolbar {
   margin-bottom: 12px;
+}
+.field-hint {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #909399;
 }
 </style>

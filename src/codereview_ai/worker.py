@@ -16,8 +16,8 @@ import json
 import logging
 import os
 from collections.abc import Awaitable, Callable
-from fnmatch import fnmatch
 from dataclasses import dataclass
+from fnmatch import fnmatch
 from typing import Any
 
 from codereview_ai.domain.models import FileDiff, Finding, PullRequest, PushEvent, ReviewResult
@@ -450,6 +450,21 @@ async def process_raw_event(
                 await review_repo.mark_state(
                     task_id, state="completed", summary_md=result.summary,
                     score_total=result.scores.total,
+                )
+
+        if cfg and cfg.enforce_score_threshold and refreshed.head_sha:
+            # F3.7：评分卡 CI status——低于阈值发 failed（阻塞合并），达标发 success。
+            # 与 notifier 同哲学：网络失败仅告警、不标 failed、不影响审查本身。
+            passed = result.scores.total >= cfg.score_threshold
+            try:
+                await forge.post_commit_status(
+                    refreshed, passed=passed,
+                    description=f"AI 审查 {result.scores.total}/100",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "写 commit status 失败（%s pr#%s）：%s",
+                    pr.repo_full_name, pr.pr_number, exc,
                 )
 
         if notifier is not None:

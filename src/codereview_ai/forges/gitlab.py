@@ -268,5 +268,22 @@ class GitLabForge(ForgeAdapter):
         )
         resp.raise_for_status()
 
+    async def post_commit_status(
+        self, pr: PullRequest, *, passed: bool, description: str = ""
+    ) -> None:
+        """F3.7：set head commit 的 CI status（POST statuses/{sha}）。"""
+        if not pr.head_sha:
+            return
+        resp = await self._http.post(
+            f"{self._base}/api/v4/projects/{pr.repo_id}/statuses/{pr.head_sha}",
+            headers=self._auth_headers(),
+            json={
+                "state": "success" if passed else "failed",
+                "name": "codereview-ai",
+                "description": description,
+            },
+        )
+        resp.raise_for_status()
+
     def _auth_headers(self) -> dict[str, str]:
         return {"Private-Token": self._token}

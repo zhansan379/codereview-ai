@@ -253,3 +253,37 @@ def test_post_summary_uses_notes_endpoint():
     asyncio.run(f.post_summary(_pr(), "总体还行"))
     assert len(urls) == 1
     assert "/notes" in urls[0]
+
+
+# ── F3.7：commit status ─────────────────────────────────────────────────
+
+
+def test_post_commit_status_success():
+    url = ""
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        nonlocal url
+        url = str(r.url)
+        assert r.method == "POST"
+        assert r.read()  # 有 body
+        import json as _json
+        body = _json.loads(r.read())
+        assert body == {"state": "success", "name": "codereview-ai", "description": ""}
+        return httpx.Response(200, json={})
+
+    f = _forge(handler)
+    asyncio.run(f.post_commit_status(_pr(), passed=True))
+    assert "/api/v4/projects/7/statuses/abc123" in url
+
+
+def test_post_commit_status_failed():
+    states: list[str] = []
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        import json as _json
+        states.append(_json.loads(r.read())["state"])
+        return httpx.Response(200, json={})
+
+    f = _forge(handler)
+    asyncio.run(f.post_commit_status(_pr(), passed=False, description="AI 审查 60/100"))
+    assert states == ["failed"]

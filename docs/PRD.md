@@ -108,6 +108,8 @@ IM 群收到通知 → 开发按建议修改并追加 commit → bot 只审查�
 | F3.5 | 重复审查时，**按内容指纹**跳过已发过的评论/更新已有总结评论，而非不断新增 | P0 |
 | F3.6 | `suggestion` 渲染为平台原生的建议块（GitHub `suggestion` code fence / 多行 `start_line`） | P1 |
 | F3.7 | 评分低于阈值时把 MR 标记为需修改 / 阻塞合并（CI status check） | P2 |
+
+> **F3.7 落地差异（GitLab vs GitHub）**：bot 只负责在 head commit 上打状态——GitLab 发 `failed`、GitHub 发 `failure`。是否**真正挡住合并**由仓库的合并保护规则决定：GitLab 侧，protected branch 开了"合并前需流水线通过"，`failed` 状态出现即自动禁掉合并按钮（红叉即阻断）；GitHub 侧，`failure` 只是显示红叉、**不影响 Merge 按钮**，必须去 branches 的 protected branch 规则里把 `codereview-ai` 勾进 **required status checks** 才能真正拦截（这一步只能在 GitHub 后台配，代码无法完成）。参见 `forges/base.py` 的 `post_commit_status`。
 | F3.8 | 开发者在评论中 `@bot` 追问，bot 带上下文回复 | P2 |
 
 ### F4 通知推送

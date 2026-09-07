@@ -282,5 +282,26 @@ class GitHubForge(ForgeAdapter):
         )
         resp.raise_for_status()
 
+    async def post_commit_status(
+        self, pr: PullRequest, *, passed: bool, description: str = ""
+    ) -> None:
+        """F3.7：set head commit 的 CI status（POST statuses/{sha}）。
+
+        GitHub 用 `failure` 而非 `failed` 表失败态（state 合法值 success/failure）。
+        """
+        owner, repo = _owner_repo(pr.repo_id)
+        if not pr.head_sha:
+            return
+        resp = await self._http.post(
+            f"{self._base}/repos/{owner}/{repo}/statuses/{pr.head_sha}",
+            headers=self._auth_headers(),
+            json={
+                "state": "success" if passed else "failure",
+                "context": "codereview-ai",
+                "description": description,
+            },
+        )
+        resp.raise_for_status()
+
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token}", "Accept": "application/vnd.github.v3+json"}  # noqa: E501

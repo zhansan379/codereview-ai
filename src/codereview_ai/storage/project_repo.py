@@ -26,6 +26,9 @@ class ProjectConfig:
     file_extensions: str = ""
     push_enabled: bool | None = None
     push_branch_globs: str = ""
+    # F3.7 评分阈值：enforce 开通时，总分低于 score_threshold 发 failed 阻塞合并
+    score_threshold: int = 80
+    enforce_score_threshold: bool = False
 
 
 class ProjectRepository:
@@ -50,4 +53,6 @@ class ProjectRepository:
             file_extensions=row.file_extensions or "",
             push_enabled=row.push_enabled,
             push_branch_globs=row.push_branch_globs or "",
+            score_threshold=row.score_threshold,
+            enforce_score_threshold=row.enforce_score_threshold,
         )
