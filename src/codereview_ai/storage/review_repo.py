@@ -66,6 +66,28 @@ class ReviewRepository:
             )).scalars().all()
         return IncrementReference(row.head_sha, frozenset(fingerprint_rows))
 
+    async def pending_for_replay(self) -> list[tuple[int, str, str]]:
+        """启动回放候选：遗留 `state IN ('queued','running')` 且带 payload 的任务。
+
+        返回 `[(task_id, provider, payload)]`。`running` 行（上次崩溃残留）先复位回
+        `queued`，避免悬死。重启后据此把卡死的任务重新入队续跑——幂等安全：同 head
+        已 completed 的重放会被增量决策/`ensure_task` 短路，不重复审查也不重复写 finding。
+        """
+        session = session_factory(self._engine)
+        async with session() as s:
+            rows = (await s.execute(
+                select(ReviewTask)
+                .where(ReviewTask.state.in_(("queued", "running")), ReviewTask.payload != "")
+                .order_by(ReviewTask.id)
+            )).scalars().all()
+            out: list[tuple[int, str, str]] = []
+            for r in rows:
+                if r.state == "running":
+                    r.state = "queued"  # 崩溃残留复位，避免重启后仍悬死
+                out.append((int(r.id), r.provider, r.payload))
+            await s.commit()
+        return out
+
     async def push_existing_audit(
         self, *, provider: str, repo_id: str, branch: str, head_sha: str
     ) -> ReviewTask | None:

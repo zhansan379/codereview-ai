@@ -37,7 +37,13 @@ from codereview_ai.review.static_analysis import StaticAnalyzer
 from codereview_ai.storage.db import create_engine, init_db
 from codereview_ai.storage.project_repo import ProjectRepository
 from codereview_ai.storage.review_repo import ReviewRepository
-from codereview_ai.worker import EventStore, PushGate, QueueEnqueuer, make_processor
+from codereview_ai.worker import (
+    EventStore,
+    PushGate,
+    QueueEnqueuer,
+    make_processor,
+    replay_pending_tasks,
+)
 
 logger = logging.getLogger("codereview_ai.main")
 
@@ -86,6 +92,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.forge_registry = forge_registry
         if reviewer is not None and forge_registry.available():
             review_repo = ReviewRepository(engine)
+            # —— 启动回放（DESIGN §9.2 / 崩溃恢复）：重启后把遗留卡死的 queued/running
+            #    且带 payload 的任务重新投回内存队列自动续跑（幂等：已审过的同 head 会被
+            #    增量决策短路，不重复审查）。否则数据库里的 queued 行将永远孤死无失败原因。
+            n_replay = await replay_pending_tasks(review_repo, app.state.enqueuer)
+            if n_replay:
+                logger.info("启动回放：重新入队 %s 条遗留任务续跑", n_replay)
             # F4/M4.7：路由从 DB notifier_config 拉取（project_id=None→仅全局默认）
             notifier = NotifierDispatcher(provider_repo.notifier_routes, http=http)
             # §7.7：push 轨默认关；由 env 开关 + 分支 glob 构造 PushGate
