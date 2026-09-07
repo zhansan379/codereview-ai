@@ -108,6 +108,25 @@ async def test_analyze_normalizes_ruff_and_semgrep(tmp_path):
     assert "eval" in sg[0].content
 
 
+async def test_analyze_relativizes_absolute_tool_paths(tmp_path):
+    """工具扫目录给绝对路径（生产真实行为）→ 归一化为仓库相对路径。"""
+    class _AbsRunner:
+        async def run(self, tool: str, args: list[str], cwd):
+            if tool == "ruff":
+                return RunResult(json.dumps([
+                    {"code": "F401", "message": "unused",
+                     "filename": str((tmp_path / "tests" / "unit" / "a.py").resolve()),
+                     "location": {"row": 3, "end_location": {"row": 3}}},
+                ]), 1)
+            # 无 py 时不跑 ruff 之外；这里也走 semgrep 返回空
+            return RunResult(json.dumps({"results": [], "errors": []}), 0)
+
+    analyzer = StaticAnalyzer(runner=_AbsRunner(), workspace=tmp_path)
+    findings = await analyzer.analyze([_py_diff("import os\n", path="tests/unit/a.py")])
+    assert findings and findings[0].source == "static:ruff"
+    assert findings[0].file == "tests/unit/a.py"  # 相对路径，非绝对临时路径
+
+
 #: 无 new_file_content 的 diff（删除文件）不应物化、不应触发工具
 async def test_analyze_skips_files_without_content(tmp_path):
     runner = _FakeRunner()
