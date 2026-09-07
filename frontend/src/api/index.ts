@@ -73,6 +73,7 @@ export interface ReviewFinding {
   new_line: number | null
   title: string
   detail: string | null
+  existing_code: string | null
   suggestion: string | null
   source: string | null
   status: string | null
@@ -86,6 +87,7 @@ export interface ReviewItem {
   event_type: string | null
   branch: string | null
   head_sha: string | null
+  base_sha: string | null
   state: string
   attempt: number
   error: string | null

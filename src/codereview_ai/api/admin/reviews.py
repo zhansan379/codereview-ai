@@ -29,6 +29,7 @@ class ReviewListItem(BaseModel):
     event_type: str
     branch: str
     head_sha: str
+    base_sha: str
     state: str
     attempt: int
     error: str
@@ -55,6 +56,7 @@ class ReviewFindingOut(BaseModel):
     new_line: int | None
     title: str
     detail: str
+    existing_code: str
     suggestion: str
     source: str
     status: str
