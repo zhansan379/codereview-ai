@@ -52,22 +52,6 @@
           <template #default="{ row }">
             <div class="finding-detail">
               <div class="finding-actions">
-                <el-button
-                  v-if="row.status === 'active'"
-                  type="warning"
-                  size="small"
-                  plain
-                  :disabled="busy"
-                  @click="onFindingStatus(row, 'waived')"
-                >搁置</el-button>
-                <el-button
-                  v-if="row.status === 'waived'"
-                  type="primary"
-                  size="small"
-                  plain
-                  :disabled="busy"
-                  @click="onFindingStatus(row, 'active')"
-                >恢复</el-button>
                 <span v-if="row.first_seen" class="finding-meta">首次 {{ formatTime(row.first_seen) }}</span>
                 <span v-if="row.status === 'resolved' && row.last_seen" class="finding-meta">解决 {{ formatTime(row.last_seen) }}</span>
               </div>
@@ -79,8 +63,8 @@
                 <div class="code-label code-fix">建议修复</div>
                 <pre class="code-text">{{ row.suggestion }}</pre>
               </div>
-              <div v-if="row.detail && row.detail !== row.title" class="code-block">
-                <div class="code-label">补充说明</div>
+              <div v-if="row.detail" class="code-block">
+                <div class="code-label">详细分析</div>
                 <pre class="code-text">{{ row.detail }}</pre>
               </div>
               <el-empty v-if="!row.existing_code && !row.suggestion" description="无代码片段" :image-size="40" />
@@ -95,7 +79,7 @@
         <el-table-column prop="category" label="类别" width="110" />
         <el-table-column prop="file" label="文件" min-width="150" />
         <el-table-column prop="new_line" label="行号" width="70" />
-        <el-table-column prop="title" label="分析" min-width="220" />
+        <el-table-column prop="title" label="分析" min-width="220" show-overflow-tooltip />
         <el-table-column prop="source" label="来源" width="90">
           <template #default="{ row }">
             <el-tag :type="sourceTagType(row.source)" size="small">{{ sourceLabel(row.source) }}</el-tag>
@@ -107,6 +91,28 @@
               {{ statusLabel(row.status) }}
               <span v-if="row.status === 'active' && row.reopened_count > 0"> 重开×{{ row.reopened_count }}</span>
             </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="90" align="center">
+          <template #default="{ row }">
+            <el-button
+              v-if="row.status === 'active'"
+              type="warning"
+              size="small"
+              plain
+              link
+              :disabled="busy"
+              @click="onFindingStatus(row, 'waived')"
+            >搁置</el-button>
+            <el-button
+              v-if="row.status === 'waived'"
+              type="primary"
+              size="small"
+              plain
+              link
+              :disabled="busy"
+              @click="onFindingStatus(row, 'active')"
+            >恢复</el-button>
           </template>
         </el-table-column>
       </el-table>

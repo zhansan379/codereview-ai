@@ -96,6 +96,7 @@ class Finding:
     severity: Severity
     existing_code: str  # 定位锚点，替代行号
     file: str  # 相对仓库根
+    title: str = ""  # 简短标题（LLM 给，缺省时落库兜底）；表格列展示用，详情放 content
     suggestion_code: str | None = None
     thinking: str | None = None  # 仅审计用，不回写
     # ── 由工程锚定/校验填充，LLM 不产出 ──
