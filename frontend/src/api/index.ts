@@ -193,7 +193,18 @@ export function deleteNotifier(id: number): Promise<any> {
 }
 
 // ===== 审查记录 =====
-export function listReviews(params: { state?: string; limit?: number; offset?: number }): Promise<ReviewList> {
+export interface ReviewFilter {
+  state?: string
+  event_type?: string
+  provider?: string
+  score_min?: number
+  score_max?: number
+  finished_from?: string
+  finished_to?: string
+  limit?: number
+  offset?: number
+}
+export function listReviews(params: ReviewFilter): Promise<ReviewList> {
   return client.get('/reviews', { params }).then((r) => r.data)
 }
 export function getReview(id: number): Promise<ReviewDetail> {
@@ -202,12 +213,10 @@ export function getReview(id: number): Promise<ReviewDetail> {
 export function setFindingStatus(id: number, status: 'waived' | 'active'): Promise<ReviewFinding> {
   return client.post(`/reviews/findings/${id}/status`, { status }).then((r) => r.data)
 }
-// Excel 导出：以 blob 请求，返回下载文件原始字节。
-export function exportReviews(params: {
-  state?: string
-  severities?: string[]
-  statuses?: string[]
-}): Promise<Blob> {
+// Excel 导出：以 blob 请求，返回下载文件原始字节。顶层筛选与列表一致（所见即所导）。
+export function exportReviews(
+  params: ReviewFilter & { severities?: string[]; statuses?: string[] },
+): Promise<Blob> {
   return client
     .get('/reviews/export', { params, responseType: 'blob' })
     .then((r) => r.data as Blob)
