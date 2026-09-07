@@ -369,7 +369,7 @@ async def review_pull_request(
         return "already"  # 同一 commit 重放：已审过，跳过
     incremental = decision.is_incremental
 
-    # 先落任务行（幂等，key 同 head）：fetch / LLM 失败也落 failed 可见、可重试，
+    # 先落任务行（幂等，key 同 head）作为**认领**：fetch / LLM 失败也落 failed 可见、可重试，
     # 避免坏 LLM 输出偶发时任务静默消失（与 push 轨 ensure_task-前置 一致）。
     task_id: int | None = None
     if review_repo is not None:
@@ -378,10 +378,13 @@ async def review_pull_request(
             event_type="mr", branch=pr.source_branch, head_sha=pr.head_sha,
             base_sha=pr.base_sha, pr_title=pr.title, payload=raw_payload,
         )
+        if task_id is None:
+            # 同 head 已被另一生产者认领（排队/在审）→ 幂等跳过，防止并发重复审查、重复
+            # 刷评论；终态（failed）不在此列，会拿到 id 重试。与 push 轨同语。
+            return "already"
         # 开审即标 running（DESIGN §9.2）：让「正在跑」与「排队/孤儿」在管理页可区分；
         # 后续 failed/completed 的 mark_state 会覆盖。
-        if task_id is not None:
-            await review_repo.mark_state(task_id, state="running")
+        await review_repo.mark_state(task_id, state="running")
 
     try:
         refreshed = await forge.fetch_pull_request(pr)  # 补 diff_refs（行级评论 position 必填）
