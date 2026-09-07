@@ -230,6 +230,56 @@ async def test_build_reviewer_uses_db_model(engine, monkeypatch):
     assert calls == []  # follower：评审时才发请求
 
 
+async def test_resolve_llm_chain_priority_desc_with_decrypt(engine):
+    key = _fernet_key()
+    await _seed_model(engine, name="low", model="m-low", priority=1,
+                      api_key_encrypted=encrypt("k-low", key))
+    await _seed_model(engine, name="high", model="m-high", priority=9,
+                      api_key_encrypted=encrypt("k-high", key))
+
+    repo = ConfigRepository(engine, encryption_key=key)
+    chain = await repo.resolve_llm_chain()
+    assert [m.model for m in chain] == ["m-high", "m-low"]  # priority 降序
+    assert [m.api_key for m in chain] == ["k-high", "k-low"]
+
+
+async def test_resolve_llm_chain_excludes_disabled(engine):
+    key = _fernet_key()
+    await _seed_model(engine, name="enabled", model="m-on", priority=5,
+                      api_key_encrypted=encrypt("k", key))
+    await _seed_model(engine, name="disabled", model="m-off", priority=99, enabled=False)
+    repo = ConfigRepository(engine, encryption_key=key)
+    assert [m.model for m in await repo.resolve_llm_chain()] == ["m-on"]
+
+
+async def test_resolve_llm_chain_env_model_overrides(engine, monkeypatch):
+    await _seed_model(engine, name="db", model="m-db", priority=5)
+    monkeypatch.setenv("CR_LLM_MODEL", "m-env")
+    repo = ConfigRepository(engine, encryption_key=_fernet_key())
+    chain = await repo.resolve_llm_chain()
+    assert [m.model for m in chain] == ["m-env"]
+
+
+async def test_build_reviewer_wraps_multiple_models_in_fallback(engine):
+    from codereview_ai.review.fallback import FallbackLLMGateway
+
+    key = _fernet_key()
+    await _seed_model(engine, name="low", model="m-low", priority=1,
+                      api_key_encrypted=encrypt("k-low", key))
+    await _seed_model(engine, name="high", model="m-high", priority=9,
+                      api_key_encrypted=encrypt("k-high", key))
+
+    async def fake_backend(messages):
+        return "ok"
+
+    repo = ConfigRepository(engine, encryption_key=key)
+    reviewer = await repo.build_reviewer(backend=fake_backend)
+    assert reviewer is not None
+    fb = reviewer.gateway
+    assert isinstance(fb, FallbackLLMGateway)
+    assert fb.model == "m-high"  # 链首=主模型（高 priority）
+
+
 async def test_build_reviewer_threads_max_tokens_and_temperature(engine):
     key = _fernet_key()
     await _seed_model(engine, name="db-model", model="m-db", priority=5,
