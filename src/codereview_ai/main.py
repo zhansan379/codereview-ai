@@ -19,7 +19,7 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI
 
-from codereview_ai.api.admin import forges, models, notifiers, projects, reviews, stats, tasks
+from codereview_ai.api.admin import forges, models, notifiers, projects, pull, reviews, stats, tasks
 from codereview_ai.api.admin_ui import mount_admin
 from codereview_ai.api.auth import router as auth_router
 from codereview_ai.api.webhook import router as webhook_router
@@ -30,6 +30,7 @@ from codereview_ai.logging import setup_logging
 from codereview_ai.notifiers.dispatch import NotifierDispatcher
 from codereview_ai.ops.health import router as health_router
 from codereview_ai.ops.periodic import DailyReporter
+from codereview_ai.ops.poller import PRPoller
 from codereview_ai.ops.tracing import TraceMiddleware
 from codereview_ai.queue.asyncio import AsyncioTaskQueue
 from codereview_ai.queue.worker import run_worker
@@ -80,6 +81,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         worker_task: asyncio.Task[None] | None = None
         daily_task: asyncio.Task[None] | None = None
         stop_daily = asyncio.Event()
+        poll: PRPoller | None = None
+        poll_task: asyncio.Task[None] | None = None
+        stop_poll = asyncio.Event()
         http: httpx.AsyncClient | None = None
 
         # —— DB 驱动配置（DESIGN §16）：LLM 模型/api_key 从 DB 解析，env 重放压 DB
@@ -130,6 +134,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 enabled=settings.daily_report_enabled,
             )
             daily_task = asyncio.create_task(reporter.run_forever(stop_daily))
+            # §9 补拉通道：手动按钮与定时共用 run_once；定时轮询默认关（CR_POLL_ENABLED）
+            poll = PRPoller(
+                engine, forge_registry, reviewer, notifier=notifier,
+                static_analyzer=static_analyzer,
+                project_config_factory=project_repo.config_for,
+                grouper=None, chain_valid=None,  # 补拉走全量/增量决策，平台 compare 留给平台侧
+            )
+            app.state.poller = poll
+            if settings.poll_enabled:
+                poll_task = asyncio.create_task(
+                    poll.run_forever(stop_poll, float(settings.poll_interval_seconds))
+                )
+                logger.info("主动补拉定时开启：间隔 %ss", settings.poll_interval_seconds)
             logger.info(
                 "内置 worker 已启动：%s（model %s）",
                 ",".join(forge_registry.providers()),
@@ -145,7 +162,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             yield
         finally:
             stop_daily.set()  # 先唤醒日报循环退出，再取消任务
-            for t in (daily_task, worker_task):
+            stop_poll.set()  # §9：唤醒补拉循环退出（手动补拉即时执行，不受此影响）
+            for t in (daily_task, poll_task, worker_task):
                 if t is not None:
                     t.cancel()
                     try:
@@ -174,6 +192,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(notifiers.router, prefix="/api")
     app.include_router(forges.router, prefix="/api")
     app.include_router(reviews.router, prefix="/api")
+    app.include_router(pull.router, prefix="/api")
     app.include_router(tasks.router, prefix="/api")
     app.include_router(stats.router, prefix="/api")
     app.include_router(webhook_router)

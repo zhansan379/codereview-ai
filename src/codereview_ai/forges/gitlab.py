@@ -154,6 +154,52 @@ class GitLabForge(ForgeAdapter):
             )
         return pr
 
+    async def list_open_pulls(self, repo_id: str) -> list[PullRequest]:
+        """主动补拉：GET /projects/{id}/merge_requests?state=opened 列出打开 MR（DESIGN §9）。
+
+        逐项归一成中立 PullRequest；`diff_refs` 一并填入（GitLab 行级评论 position 必填，
+        见 `post_inline`）。`sha` 即 head_sha（gitlab 列表项无独立 base_sha，由补拉后的
+        `fetch_pull_request` 补齐 diff_refs 即可）。仅返回 opened 态（补拉目标）。
+        """
+        if not repo_id:
+            return []
+        resp = await self._http.get(
+            f"{self._base}/api/v4/projects/{repo_id}/merge_requests"
+            "?state=opened&scope=all&per_page=100",
+            headers=self._auth_headers(),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        if not isinstance(body, list):
+            return []
+        out: list[PullRequest] = []
+        for item in body:
+            if not isinstance(item, dict) or not item.get("iid"):
+                continue
+            refs = item.get("diff_refs")
+            out.append(PullRequest(
+                provider=GITLAB,
+                repo_id=repo_id,
+                repo_full_name="",  # 列表项无项目路径；由上层按 Project.repo_full_name 补齐
+                web_url=str(item.get("web_url") or ""),
+                pr_number=int(item.get("iid") or 0),
+                title=str(item.get("title") or ""),
+                source_branch=str(item.get("source_branch") or ""),
+                target_branch=str(item.get("target_branch") or ""),
+                head_sha=str(item.get("sha") or ""),
+                base_sha="",  # 列表项无 base.sha，fetch_pull_request 补齐 diff_refs
+                diff_refs=(
+                    {
+                        "base_sha": refs.get("base_sha") or "",
+                        "head_sha": refs.get("head_sha") or "",
+                        "start_sha": refs.get("start_sha") or "",
+                    }
+                    if isinstance(refs, dict) else None
+                ),
+                author=str(((item.get("author") or {}) or {}).get("username") or ""),
+            ))
+        return out
+
     async def fetch_files(self, pr: PullRequest) -> list[FileDiff]:
         """GET /merge_requests/{iid}/changes；空 changes 时指数退避重试。"""
         path = (

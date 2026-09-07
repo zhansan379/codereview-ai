@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     daily_report_enabled: bool = True
     daily_report_hour: int = 9  # 每日推送时刻（本地时区，0-23）
 
+    # —— 主动补拉 PR/MR（DESIGN §9 补拉通道）：默认关；开启后按间隔后台轮询启用项目——
+    poll_enabled: bool = False
+    poll_interval_seconds: int = 3600  # 轮询间隔秒；手动「补拉」按钮不受此开关限制
+
     # —— 平台 / LLM（可选；未配齐则 worker 不启动，仅 webhook 可入队）——
     gitlab_url: str = ""
     gitlab_token: str = ""
