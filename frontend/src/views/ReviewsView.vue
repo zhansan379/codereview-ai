@@ -128,14 +128,12 @@ const exportForm = reactive<{ severities: string[]; statuses: string[] }>({
   severities: [],
   statuses: [],
 })
+// 与后端 Severity 枚举一致：仅 critical/high/medium/low 四档（error/warning/info 从不入库）。
 const severityOptions = [
   { value: 'critical', label: '严重' },
   { value: 'high', label: '高' },
-  { value: 'error', label: '错误' },
   { value: 'medium', label: '中' },
-  { value: 'warning', label: '警告' },
   { value: 'low', label: '低' },
-  { value: 'info', label: '提示' },
 ]
 const statusOptions = [
   { value: 'active', label: '待处理' },
