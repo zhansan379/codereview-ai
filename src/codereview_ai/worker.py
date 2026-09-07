@@ -242,15 +242,31 @@ class EventStore:
 
 
 class QueueEnqueuer:
-    """webhook 契约 `async enqueue(provider, raw)` → 入队 + 暂存 payload。"""
+    """webhook 契约 `async enqueue(provider, raw)` → 入队 + 暂存 payload。
 
-    def __init__(self, queue: TaskQueue, store: EventStore) -> None:
+    `on_enqueue`（可空）：入队时异步执行的回调，用于「入队即建 mr 审计行」，让队列里
+    等待的 PR 从入队起就在管理页可见为『排队中』；回调失败不阻断入队（审计由 process 兜底）。
+    """
+
+    def __init__(
+        self,
+        queue: TaskQueue,
+        store: EventStore,
+        *,
+        on_enqueue: Callable[[str, bytes], Awaitable[None]] | None = None,
+    ) -> None:
         self._queue = queue
         self._store = store
+        self.on_enqueue = on_enqueue
 
     async def enqueue(self, provider: str, raw: bytes) -> str:
         meta = await self._queue.enqueue(provider)
         self._store.put(meta.task_id, provider, raw)
+        if self.on_enqueue is not None:
+            try:
+                await self.on_enqueue(provider, raw)
+            except Exception as exc:  # noqa: BLE001 建行失败不阻断入队：审计/重试仍由 process 兜底
+                logger.warning("入队建行失败（%s）：%s", provider, exc)
         return meta.task_id
 
 
@@ -269,6 +285,38 @@ async def replay_pending_tasks(
     for _task_id, provider, payload in rows:
         await enqueuer.enqueue(provider, payload.encode())
     return len(rows)
+
+
+async def scribble_queued_task(
+    review_repo: ReviewRepository, forge: ForgeAdapter | None, raw: bytes
+) -> None:
+    """入队即建 mr 审计行：让队列里等待的 PR 从入队起可见为『排队中』。
+
+    单 worker 串行下，排在后头的任务原本只在开审时才由 `process_raw_event` 建行，排在
+    长任务后面的会完全不可见。此函数在入队时用同一套 parse 幂等建行（state=queued）；
+    worker 开审后同一个 `ensure_task` 命中该行 → 标 running（DESIGN §9.2）。
+
+    安全：已审过的同 head 重放会被增量决策短路（REASON_ALREADY），重复 webhook 不建
+    重复行也不重复审查。**只对 mr 轨建行**——push 轨靠 `push_existing_audit`「存在=已
+    处理」做幂等预检，预建行会被误判成已处理而跳过；且 push 审计行本就是开审即建，
+    排队不可见的窗口极小。
+    """
+    if forge is None:
+        return
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return
+    if not isinstance(data, dict):
+        return
+    pr = forge.parse_merge_request(data)
+    if pr is None or not forge.should_review(_event_action(data)):
+        return  # 非 mr 或 close/merge 等不审动作：process 同样不建行，保持一致
+    await review_repo.ensure_task(
+        provider=pr.provider, repo_id=pr.repo_id, pr_number=pr.pr_number,
+        event_type="mr", branch=pr.source_branch, head_sha=pr.head_sha,
+        base_sha=pr.base_sha, pr_title=pr.title, payload=raw.decode("utf-8", "replace"),
+    )
 
 
 def _event_action(data: dict[str, Any]) -> str:

@@ -43,6 +43,7 @@ from codereview_ai.worker import (
     QueueEnqueuer,
     make_processor,
     replay_pending_tasks,
+    scribble_queued_task,
 )
 
 logger = logging.getLogger("codereview_ai.main")
@@ -92,6 +93,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.forge_registry = forge_registry
         if reviewer is not None and forge_registry.available():
             review_repo = ReviewRepository(engine)
+            # —— 入队即建 mr 审计行（DESIGN §9.2）：让队列里等待的 PR 从入队起就可见为
+            #    『排队中』，而非开审才建行（长任务排队时不可见）。幂等，已审同 head 短路。
+            async def _on_enqueue(provider: str, raw: bytes) -> None:
+                await scribble_queued_task(review_repo, forge_registry.get(provider), raw)
+
+            app.state.enqueuer.on_enqueue = _on_enqueue
             # —— 启动回放（DESIGN §9.2 / 崩溃恢复）：重启后把遗留卡死的 queued/running
             #    且带 payload 的任务重新投回内存队列自动续跑（幂等：已审过的同 head 会被
             #    增量决策短路，不重复审查）。否则数据库里的 queued 行将永远孤死无失败原因。

@@ -9,9 +9,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from sqlalchemy import select
+
 from codereview_ai.forges.base import ForgeAdapter
 from codereview_ai.queue.asyncio import AsyncioTaskQueue
 from codereview_ai.queue.worker import run_worker
+from codereview_ai.storage.db import create_engine, init_db, session_factory
+from codereview_ai.storage.models import ReviewTask
+from codereview_ai.storage.review_repo import ReviewRepository
 from codereview_ai.worker import (
     EventStore,
     QueueEnqueuer,
@@ -19,6 +24,7 @@ from codereview_ai.worker import (
     make_processor,
     parse_file_extensions,
     process_raw_event,
+    scribble_queued_task,
 )
 
 
@@ -351,3 +357,55 @@ async def test_enqueue_worker_review_succeeds():
 
     import codereview_ai.queue.base as base
     assert queue.task(task_id).state is base.TaskState.SUCCEEDED
+
+
+# ── 入队即建行（scribble，DESIGN §9.2）：等待的 PR 从入队起可见 ──────────────
+
+
+async def test_enqueue_scribbles_mr_row_visible_before_process(tmp_path):
+    """入队即建 mr 审计行（state=queued），审完后翻 completed——「排队中」不再是隐形态。"""
+    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'q.db'}")
+    await init_db(engine)
+    repo = ReviewRepository(engine)
+    forge = _FakeForge()
+    store = EventStore()
+    queue = AsyncioTaskQueue()
+    enqueuer = QueueEnqueuer(
+        queue, store, on_enqueue=lambda p, r: scribble_queued_task(repo, forge, r)
+    )
+
+    await enqueuer.enqueue("gitlab", _mr_payload())
+
+    async with session_factory(engine)() as s:
+        row = (await s.execute(select(ReviewTask))).scalar_one()
+    assert row.state == "queued"  # 入队即可见，无需等 worker 开审
+    assert row.pr_number == 7 and row.payload  # 身份 + 原始 body 已落，供回放/重试
+
+    processor = make_processor(lambda p: forge, lambda p: _FakeReviewer(forge), store,
+                               review_repo=repo)
+    await run_worker(queue, processor, max_iterations=1)
+
+    async with session_factory(engine)() as s:
+        row = (await s.execute(select(ReviewTask))).scalar_one()
+    assert row.state == "completed"  # 审完翻终态，未残留多余排队行
+
+
+async def test_scribble_skips_non_review_action_and_non_json(tmp_path):
+    """close/merge 等不审动作不入队列也不建行；非 mr payload 不建行。"""
+    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'q.db'}")
+    await init_db(engine)
+    repo = ReviewRepository(engine)
+    forge = _FakeForge()
+    enqueuer = QueueEnqueuer(
+        AsyncioTaskQueue(), EventStore(),
+        on_enqueue=lambda p, r: scribble_queued_task(repo, forge, r),
+    )
+
+    close = json.dumps({"object_kind": "merge_request",
+                        "object_attributes": {"action": "close", "iid": 7}}).encode()
+    await enqueuer.enqueue("gitlab", close)
+    await enqueuer.enqueue("gitlab", b'{"object_kind": "push"}')
+
+    async with session_factory(engine)() as s:
+        rows = (await s.execute(select(ReviewTask))).scalars().all()
+    assert rows == []  # 都不建行（process 同样跳过）
