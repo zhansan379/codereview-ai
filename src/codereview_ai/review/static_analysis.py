@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -218,6 +219,25 @@ def materialize_workspace(diffs: list[FileDiff], root: Path) -> list[str]:
     return written
 
 
+def _relativize(finding: Finding, root: Path) -> None:
+    """把 ruff/semgrep 输出的 `file` 归一化为仓库相对路径。
+
+    工具以 `cwd=root` + 参数 `"."` 扫目录时，输出的 `filename`/`path` 是**绝对路径**
+    （如 `$TMP/cr-static-xxx/src/a.py`），与 MR diff 的相对 `new_path` 对不上：详情页
+    文件列显示一次性临时路径，且 `render_static_findings` 的注入过滤会失配。仅当路径为
+    绝对且位于 `root` 内时转相对，其余（已是相对或跨盘符不可相对化）保持原样。
+    """
+    p = (finding.file or "").replace("\\", "/")
+    if not os.path.isabs(p):
+        return
+    try:
+        rel = os.path.relpath(p, root.resolve())
+    except ValueError:  # 跨盘符无法计算相对路径（Windows）
+        return
+    if not rel.startswith(".."):  # 不相对化到 root 之外
+        finding.file = rel.replace("\\", "/")
+
+
 def render_static_findings(findings: list[Finding], files: set[str] | None = None) -> str:
     """把静态 findings 渲染成注入 prompt 的提示文本；`files` 过滤到对应的文件组。
 
@@ -263,6 +283,8 @@ class StaticAnalyzer:
             if py_files:
                 result += await self._run_ruff(root)
             result += await self._run_semgrep(root)
+            for f in result:
+                _relativize(f, root)
             return result
         except Exception as exc:  # noqa: BLE001 —— 静态分析失败必须降级，绝不可阻断主链
             logger.warning("静态分析整体降级：%s", exc)
