@@ -13,13 +13,19 @@
 from __future__ import annotations
 
 import asyncio
+import urllib.parse
 from dataclasses import replace
 from typing import Any
 
 import httpx
 
 from codereview_ai.domain.models import CommitInfo, FileDiff, PullRequest, PushEvent
-from codereview_ai.forges.base import ForgeAdapter, change_type_from_flags, count_diff_stats
+from codereview_ai.forges.base import (
+    ForgeAdapter,
+    change_type_from_flags,
+    count_diff_stats,
+    repo_path_from_url,
+)
 from codereview_ai.forges.signatures import GITLAB
 
 #: 空 changes 数组时指数退避的初始/最大延时（秒）。
@@ -330,6 +336,39 @@ class GitLabForge(ForgeAdapter):
             },
         )
         resp.raise_for_status()
+
+    async def fetch_project(self, path: str) -> dict[str, Any] | None:
+        """按 ``namespace/path``（可嵌套）查项目元数据，返回 GitLab API 的项目对象。
+
+        GitLab 的 `:id` 接受 URL-encode 后的路径（``/``→``%2F``）；404 返回 None。
+        """
+        enc = urllib.parse.quote(path, safe="")
+        resp = await self._http.get(
+            f"{self._base}/api/v4/projects/{enc}",
+            headers=self._auth_headers(),
+        )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json()
+
+    async def resolve_repo_meta(self, url: str) -> dict[str, str] | None:
+        """GitLab 的 repo_id 是**数字项目 ID**（不是 URL 路径），须在线查 API 换回。
+
+        从 URL 解析出 namespace/path（可含子组），调 ``/projects/{path}`` 拿
+        `id` 与 `path_with_namespace`，作为项目自动补全的 repo_id / repo_full_name。
+        """
+        path = repo_path_from_url(url, GITLAB)
+        if not path:
+            return None
+        proj = await self.fetch_project(path)
+        if not proj:
+            return None
+        return {
+            "repo_id": str(proj.get("id") or "").strip(),
+            "repo_full_name": str(proj.get("path_with_namespace") or path),
+            "web_url": str(proj.get("web_url") or url.rstrip("/")),
+        }
 
     def _auth_headers(self) -> dict[str, str]:
         return {"Private-Token": self._token}

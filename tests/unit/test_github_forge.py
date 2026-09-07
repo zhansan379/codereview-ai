@@ -360,3 +360,22 @@ def test_github_uses_failure_state_on_failed():
     f = _forge(handler)
     asyncio.run(f.post_commit_status(_pr(), passed=False, description="AI 审查 60/100"))
     assert states == ["failure"]  # GitHub 用 failure 而非 failed
+
+
+# ── resolve_repo_meta（URL 解析，纯本地、不发网络请求） ─────────────────────────
+
+
+def test_resolve_repo_meta_github_parses_owner_repo():
+    # 不应发任何网络请求：handler 若被调用即让它 500
+    f = _forge(lambda req: httpx.Response(500))
+    meta = asyncio.run(f.resolve_repo_meta("https://github.com/acme/widgets/pull/99"))
+    assert meta == {
+        "repo_id": "acme/widgets",
+        "repo_full_name": "acme/widgets",
+        "web_url": "https://github.com/acme/widgets/pull/99",
+    }
+
+
+def test_resolve_repo_meta_github_invalid_returns_none():
+    f = _forge(lambda req: httpx.Response(500))
+    assert asyncio.run(f.resolve_repo_meta("not-a-url")) is None

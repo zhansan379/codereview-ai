@@ -329,3 +329,53 @@ def test_post_commit_status_failed():
     f = _forge(handler)
     asyncio.run(f.post_commit_status(_pr(), passed=False, description="AI 审查 60/100"))
     assert states == ["failed"]
+
+
+# ── fetch_project / resolve_repo_meta（URL -> 数字项目 ID） ────────────────────
+
+
+def test_fetch_project_by_namespace_path():
+    captured: dict[str, str] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        captured["url"] = str(req.url)
+        assert req.headers["Private-Token"] == TOKEN
+        return httpx.Response(200, json={
+            "id": 7,
+            "path_with_namespace": "acme/widgets",
+            "web_url": "https://gitlab.example.com/acme/widgets",
+        })
+
+    f = _forge(handler)
+    proj = asyncio.run(f.fetch_project("acme/widgets"))
+    assert proj["id"] == 7
+    assert "/api/v4/projects/acme%2Fwidgets" in captured["url"]  # 路径 URL-encode（/ → %2F）
+
+
+def test_fetch_project_404_returns_none():
+    f = _forge(lambda req: httpx.Response(404, json={}))
+    assert asyncio.run(f.fetch_project("missing/proj")) is None
+
+
+def test_resolve_repo_meta_gitlab_returns_numeric_id():
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "id": 7,
+            "path_with_namespace": "acme/widgets",
+            "web_url": "https://gitlab.example.com/acme/widgets",
+        })
+
+    f = _forge(handler)
+    meta = asyncio.run(f.resolve_repo_meta(
+        "https://gitlab.example.com/acme/widgets/-/merge_requests/42"
+    ))
+    assert meta == {
+        "repo_id": "7",  # GitLab repo_id 是数字项目 ID，非路径
+        "repo_full_name": "acme/widgets",
+        "web_url": "https://gitlab.example.com/acme/widgets",
+    }
+
+
+def test_resolve_repo_meta_gitlab_404_returns_none():
+    f = _forge(lambda req: httpx.Response(404, json={}))
+    assert asyncio.run(f.resolve_repo_meta("https://gitlab.example.com/missing/proj")) is None

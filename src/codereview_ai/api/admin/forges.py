@@ -20,11 +20,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
+import httpx
+
 from codereview_ai.api.deps import get_current_user, get_db
 from codereview_ai.config.repository import DEFAULT_FORGE_URLS
 from codereview_ai.crypto import MASK, encrypt, is_masked
+from codereview_ai.forges.base import repo_path_from_url
 from codereview_ai.forges.registry import SUPPORTED_PROVIDERS
 from codereview_ai.forges.scopes import Capability, probe_capabilities
+from codereview_ai.forges.signatures import GITHUB, GITLAB
 from codereview_ai.storage.models import ForgeConfig, _utcnow
 
 
@@ -64,6 +68,17 @@ async def _row_by_provider(session: AsyncSession, provider: str) -> ForgeConfig 
     return (await session.execute(
         select(ForgeConfig).where(ForgeConfig.provider == provider)
     )).scalar_one_or_none()
+
+
+class ResolveRepoBody(BaseModel):
+    provider: str = ""
+    url: str = ""
+
+
+class ResolveRepoOut(BaseModel):
+    repo_id: str = ""
+    repo_full_name: str = ""
+    web_url: str = ""
 
 
 router = APIRouter(prefix="/forges", dependencies=[Depends(get_current_user)])
@@ -169,3 +184,39 @@ async def test_forge(
     # 兼容旧前端：`ok` 语义 = 平台连通通过（不必全能力 ok，读/写缺权也先告诉「连上了」）。
     ok = any(c.name == "connect" and c.status == "ok" for c in caps)
     return {"ok": ok, "capabilities": [c.__dict__ for c in caps]}
+
+
+@router.post("/resolve-repo", response_model=ResolveRepoOut)
+async def resolve_repo(
+    body: ResolveRepoBody,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+) -> ResolveRepoOut:
+    """从仓库链接解析 {repo_id, repo_full_name, web_url}，供「新增项目」自动回填。
+
+    - GitHub：repo_id = repo_full_name = "owner/name"，纯解析 URL，无需平台凭据；
+    - GitLab：repo_id 是数字项目 ID，必须在线调 ``/projects/{path}`` 换回，故用当前已配置的适配器。
+    Gitea/Gitee 不在 SUPPORTED_PROVIDERS，前端走本地解析，不在此处理。
+    """
+    provider = _provider_or_404(body.provider)
+
+    if provider == GITHUB:
+        path = repo_path_from_url(body.url, GITHUB)
+        if "/" not in path:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "无法解析该项目 URL")
+        return ResolveRepoOut(
+            repo_id=path, repo_full_name=path, web_url=body.url.strip().rstrip("/")
+        )
+
+    # GITLAB：复用运行中适配器（携带已配置 url+token+http），避免在 api 层新建 client
+    registry = getattr(request.app.state, "forge_registry", None)
+    adapter = registry.get(GITLAB) if registry else None
+    if adapter is None:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "GitLab 未接入：请在平台配置填写 GitLab 仓库地址与 Token")
+    try:
+        meta = await adapter.resolve_repo_meta(body.url) or {}
+    except httpx.HTTPError as exc:  # noqa: BLE001
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"解析失败：{exc}") from exc
+    if not meta.get("repo_id"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "无法解析该 URL 对应的项目")
+    return ResolveRepoOut(**meta)
