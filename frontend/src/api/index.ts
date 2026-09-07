@@ -190,6 +190,34 @@ export function testForge(provider: string, data?: { url?: string; token?: strin
   return client.post(`/forges/${provider}/test`, data || {}).then((r) => r.data)
 }
 
+// ===== 定时任务（主动补拉轮询 / 日报）=====
+export interface ScheduleJob {
+  id: number
+  name: string
+  job_type: 'poll' | 'daily'
+  enabled: boolean
+  params: { interval_seconds?: number; hour?: number }
+}
+export interface ScheduleList {
+  items: ScheduleJob[]
+  worker_active: boolean
+}
+export function listSchedules(): Promise<ScheduleList> {
+  return client.get('/schedules').then((r) => r.data)
+}
+export function createSchedule(data: Partial<ScheduleJob>): Promise<ScheduleJob> {
+  return client.post('/schedules', data).then((r) => r.data)
+}
+export function updateSchedule(id: number, data: Partial<ScheduleJob>): Promise<ScheduleJob> {
+  return client.put(`/schedules/${id}`, data).then((r) => r.data)
+}
+export function deleteSchedule(id: number): Promise<any> {
+  return client.delete(`/schedules/${id}`).then((r) => r.data)
+}
+export function runSchedule(id: number): Promise<any> {
+  return client.post(`/schedules/${id}/run`).then((r) => r.data)
+}
+
 // ===== 主动补拉 PR/MR =====
 export interface PollReport {
   projects: number
