@@ -142,6 +142,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 grouper=None, chain_valid=None,  # 补拉走全量/增量决策，平台 compare 留给平台侧
             )
             app.state.poller = poll
+            # 手动补拉的后台任务状态（POST /pulls/poll → run_once 放入后台，/status 读取）
+            app.state.poll_running = False
+            app.state.poll_last = None
+            app.state.poll_error = None
+            app.state.poll_run_task = None
             if settings.poll_enabled:
                 poll_task = asyncio.create_task(
                     poll.run_forever(stop_poll, float(settings.poll_interval_seconds))
@@ -163,7 +168,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             stop_daily.set()  # 先唤醒日报循环退出，再取消任务
             stop_poll.set()  # §9：唤醒补拉循环退出（手动补拉即时执行，不受此影响）
-            for t in (daily_task, poll_task, worker_task):
+            tasks = [daily_task, poll_task, worker_task,
+                     getattr(app.state, "poll_run_task", None)]
+            for t in tasks:
                 if t is not None:
                     t.cancel()
                     try:

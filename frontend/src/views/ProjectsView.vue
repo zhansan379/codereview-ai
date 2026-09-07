@@ -103,9 +103,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listProjects, createProject, updateProject, deleteProject, pollPulls, type Project } from '../api'
+import { listProjects, createProject, updateProject, deleteProject, pollPulls, pollPullStatus, type Project } from '../api'
 
 const items = ref<Project[]>([])
 const loading = ref(false)
@@ -194,22 +194,52 @@ async function onSave() {
   }
 }
 
+let pollTimer: ReturnType<typeof setInterval> | null = null
+let pollUid = 0 // 组件卸载/重复触发时丢弃过期回调
+
 async function onPoll() {
   polling.value = true
+  const uid = ++pollUid
   try {
-    const r = await pollPulls()
-    const parts = [`扫描 ${r.prs} 个打开 PR/MR`, `新审 ${r.new}`, `已审过跳过 ${r.skipped}`]
-    if (r.errors.length) parts.push(`失败 ${r.errors.length}`)
-    ElMessage.success(`补拉完成：${parts.join('，')}`)
-    if (r.errors.length) {
-      console.warn('补拉失败明细', r.errors)
-    }
+    await pollPulls() // 后台触发；若已在跑会返回 409
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '补拉失败（worker 未启动？）')
-  } finally {
-    polling.value = false
+    if (e?.response?.status === 409) {
+      // 上一轮仍在后台进行 → 继续等它
+    } else {
+      ElMessage.error(e?.response?.data?.detail || '补拉触发失败')
+      polling.value = false
+      return
+    }
   }
+  // 轮询后台状态直到本轮结束，展示最终报告（切页不会中断后台补拉）
+  const tick = async () => {
+    try {
+      const s = await pollPullStatus()
+      if (uid !== pollUid) return // 已被新的一轮/卸载取代
+      if (!s.running) {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+        polling.value = false
+        if (s.error) {
+          ElMessage.error(`补拉失败：${s.error}`)
+        } else if (s.report) {
+          const parts = [`扫描 ${s.report.prs} 个打开 PR/MR`, `新审 ${s.report.new}`, `已审过跳过 ${s.report.skipped}`]
+          if (s.report.errors.length) parts.push(`失败 ${s.report.errors.length}`)
+          ElMessage.success(`补拉完成：${parts.join('，')}`)
+          if (s.report.errors.length) console.warn('补拉失败明细', s.report.errors)
+        }
+      }
+    } catch {
+      /* 轮询期间瞬时错误：下一拍再试 */
+    }
+  }
+  await tick()
+  if (polling.value) pollTimer = setInterval(tick, 2000)
 }
+
+onUnmounted(() => {
+  pollUid++ // 丢弃过期回调
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+})
 
 async function onDelete(row: Project) {
   await ElMessageBox.confirm(`确认删除项目「${row.repo_full_name}」？`, '提示', { type: 'warning' })
