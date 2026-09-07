@@ -136,15 +136,22 @@ class ReviewRepository:
         push_commits: str = "",
         payload: str = "",
     ) -> int | None:
-        """按幂等键幂等落一条 `queued` 审计行并返回 id；已存在/并发冲突返回 None。
+        """按幂等键幂等落一条 `queued` 审计行并返回 id；已被抢占/在审返回 None。
 
         幂等键（DESIGN §5）：mr 轨 `(provider, repo_id, pr_number, head_sha)`、
         push 轨 `(provider, repo_id, event_type, branch, head_sha)`——由对应部分唯一索引
         抢占，冲突即视为已处理（§7.7 幂等），调用方据此跳过。
+
+        同 head 已有任务行时：
+        - `running`（另一生产者**正在审**）→ 返回 None，调用方应幂等跳过，防止并发重复审查
+          重复刷评论；
+        - `queued`（等待 worker 消费/本生产者的入队行）→ 返回该 id，调用方照常处理并翻
+          running（队列消费者即该行的拥有者）；终态（`failed`/`completed`/`skipped`）→ 返回
+          该 id，供调用方重试/复用（已失败的 head 不应被永久跳过）。
         """
         session = session_factory(self._engine)
         async with session() as s:
-            stmt = select(ReviewTask.id).where(
+            stmt = select(ReviewTask).where(
                 ReviewTask.provider == provider,
                 ReviewTask.repo_id == repo_id,
                 ReviewTask.head_sha == head_sha,
@@ -154,9 +161,12 @@ class ReviewRepository:
                 stmt = stmt.where(ReviewTask.branch == branch)
             else:
                 stmt = stmt.where(ReviewTask.pr_number == pr_number)
-            existing = (await s.execute(stmt.limit(1))).scalar_one_or_none()
+            existing = (await s.execute(stmt.limit(1))).scalars().first()
             if existing is not None:
-                return int(existing)
+                # 正在被别的生产者审 → 跳过；排队中/终态 → 可处理（队列消费者即拥有者）
+                if existing.state == "running":
+                    return None
+                return int(existing.id)
             task = ReviewTask(
                 provider=provider, repo_id=repo_id, pr_number=pr_number,
                 event_type=event_type, branch=branch, head_sha=head_sha,

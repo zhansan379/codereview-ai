@@ -98,6 +98,39 @@ async def test_latest_completed_wins(engine):
     assert ref is not None and ref.head_sha == "newest"
 
 
+# ── ensure_task 单赢认领：并发重复生产者不重复审查 ──────────────────────
+
+
+async def test_ensure_task_in_flight_returns_none(engine):
+    """同 head 已存在 running 任务（另一生产者在审）→ 第二次 ensure_task 返回 None → 跳过。"""
+    repo = ReviewRepository(engine)
+    first = await repo.ensure_task(
+        provider="gitlab", repo_id="9", pr_number=42, event_type="mr",
+        branch="main", head_sha="h-inflight",
+    )
+    await repo.mark_state(first, state="running")
+    second = await repo.ensure_task(
+        provider="gitlab", repo_id="9", pr_number=42, event_type="mr",
+        branch="main", head_sha="h-inflight",
+    )
+    assert second is None  # 并发重复生产者被认领挡下，不重复审查
+
+
+async def test_ensure_task_terminal_returns_existing_id_for_retry(engine):
+    """同 head 已失败（终态）→ ensure_task 返回原 id，调用方可重试，不被永久跳过。"""
+    repo = ReviewRepository(engine)
+    tid = await repo.ensure_task(
+        provider="gitlab", repo_id="9", pr_number=42, event_type="mr",
+        branch="main", head_sha="h-failed",
+    )
+    await repo.mark_state(tid, state="failed")
+    again = await repo.ensure_task(
+        provider="gitlab", repo_id="9", pr_number=42, event_type="mr",
+        branch="main", head_sha="h-failed",
+    )
+    assert again == tid  # 终态返回原 id 供重试
+
+
 # ── 启动回放（崩溃恢复）──────────────────────────────────────────────────
 
 
