@@ -17,6 +17,68 @@
             <el-option label="失败" value="failed" />
           </el-select>
         </el-form-item>
+        <el-form-item label="平台">
+          <el-select
+            v-model="query.provider"
+            placeholder="全部平台"
+            clearable
+            filterable
+            allow-create
+            default-first-option
+            style="width: 130px"
+            @change="onFilterChange"
+          >
+            <el-option v-for="p in providerOptions" :key="p" :label="p" :value="p" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="事件类型">
+          <el-select
+            v-model="query.event_type"
+            placeholder="全部类型"
+            clearable
+            style="width: 130px"
+            @change="onFilterChange"
+          >
+            <el-option label="MR" value="mr" />
+            <el-option label="PR" value="pr" />
+            <el-option label="Push" value="push" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="评分">
+          <el-input-number
+            v-model="query.score_min"
+            :min="0"
+            :max="100"
+            :controls="false"
+            placeholder="最低分"
+            style="width: 90px"
+            @change="onFilterChange"
+          />
+          <span class="score-sep">~</span>
+          <el-input-number
+            v-model="query.score_max"
+            :min="0"
+            :max="100"
+            :controls="false"
+            placeholder="最高分"
+            style="width: 90px"
+            @change="onFilterChange"
+          />
+        </el-form-item>
+        <el-form-item label="完成时间">
+          <el-date-picker
+            v-model="query.dateRange"
+            type="daterange"
+            range-separator="~"
+            start-placeholder="开始"
+            end-placeholder="结束"
+            value-format="YYYY-MM-DD"
+            format="YYYY-MM-DD"
+            unlink-panels
+            style="width: 260px"
+            @change="onFilterChange"
+          />
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="onFilterChange">刷新</el-button>
         </el-form-item>
@@ -109,17 +171,44 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
-import { useRouter } from 'vue-router'
-import { listReviews, retryTask, exportReviews, type ReviewItem } from '../api'
+import { useRoute, useRouter } from 'vue-router'
+import {
+  listReviews,
+  retryTask,
+  exportReviews,
+  type ReviewFilter,
+  type ReviewItem,
+} from '../api'
 import ReviewsTable from '../components/ReviewsTable.vue'
 
 const router = useRouter()
+const route = useRoute()
 
 const items = ref<ReviewItem[]>([])
 const total = ref(0)
 const loading = ref(false)
 const retryingId = ref<number | null>(null)
-const query = reactive({ state: '', limit: 10, offset: 0 })
+// 筛选条件持久化到 URL query，避免进入详情返回后丢失（DESIGN 精神：URL 即状态）。
+const query = reactive<{
+  state: string
+  provider: string
+  event_type: string
+  score_min: number | null
+  score_max: number | null
+  dateRange: [string, string] | null
+  limit: number
+  offset: number
+}>({
+  state: '',
+  provider: '',
+  event_type: '',
+  score_min: null,
+  score_max: null,
+  dateRange: null,
+  limit: 10,
+  offset: 0,
+})
+const providerOptions = ['gitlab', 'github', 'gitee']
 
 // Excel 导出对话框状态
 const exportVisible = ref(false)
@@ -164,11 +253,55 @@ function ts() {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
 }
 
+// 顶层筛选字段（不含分页），列表与导出共用 → 所见即所导。
+function filterFields(): Omit<ReviewFilter, 'limit' | 'offset'> {
+  return {
+    state: query.state || undefined,
+    provider: query.provider || undefined,
+    event_type: query.event_type || undefined,
+    score_min: query.score_min ?? undefined,
+    score_max: query.score_max ?? undefined,
+    finished_from: query.dateRange ? `${query.dateRange[0]}T00:00:00` : undefined,
+    finished_to: query.dateRange ? `${query.dateRange[1]}T23:59:59` : undefined,
+  }
+}
+
+// 把当前筛选写入 URL query，供进入详情返回后恢复。
+function syncUrl() {
+  const q: Record<string, string | number> = {}
+  if (query.state) q.state = query.state
+  if (query.provider) q.provider = query.provider
+  if (query.event_type) q.event_type = query.event_type
+  if (query.score_min != null) q.score_min = query.score_min
+  if (query.score_max != null) q.score_max = query.score_max
+  if (query.dateRange) {
+    q.finished_from = query.dateRange[0]
+    q.finished_to = query.dateRange[1]
+  }
+  if (query.limit !== 10) q.limit = query.limit
+  if (query.offset > 0) q.offset = query.offset
+  router.replace({ query: q })
+}
+
+function initFromRoute() {
+  const r = route.query
+  query.state = (r.state as string) || ''
+  query.provider = (r.provider as string) || ''
+  query.event_type = (r.event_type as string) || ''
+  query.score_min = r.score_min != null ? Number(r.score_min) : null
+  query.score_max = r.score_max != null ? Number(r.score_max) : null
+  if (r.finished_from && r.finished_to) {
+    query.dateRange = [r.finished_from as string, r.finished_to as string]
+  }
+  query.limit = r.limit ? Number(r.limit) : 10
+  query.offset = r.offset ? Number(r.offset) : 0
+}
+
 async function doExport() {
   exporting.value = true
   try {
     const blob = await exportReviews({
-      state: query.state || undefined,
+      ...filterFields(),
       severities: exportForm.severities.length ? exportForm.severities : undefined,
       statuses: exportForm.statuses.length ? exportForm.statuses : undefined,
     })
@@ -194,7 +327,7 @@ async function load() {
   loading.value = true
   try {
     const res = await listReviews({
-      state: query.state || undefined,
+      ...filterFields(),
       limit: query.limit,
       offset: query.offset,
     })
@@ -207,15 +340,18 @@ async function load() {
 
 function onFilterChange() {
   query.offset = 0
+  syncUrl()
   load()
 }
 function onPageChange(p: number) {
   query.offset = (p - 1) * query.limit
+  syncUrl()
   load()
 }
 function onSizeChange(s: number) {
   query.limit = s
   query.offset = 0
+  syncUrl()
   load()
 }
 function goDetail(id: number) {
@@ -236,7 +372,10 @@ async function onRetry(row: ReviewItem) {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  initFromRoute()
+  load()
+})
 </script>
 
 <style scoped>
@@ -255,6 +394,10 @@ onMounted(load)
 }
 .filter-form .spacer {
   flex: 1;
+}
+.score-sep {
+  margin: 0 6px;
+  color: #909399;
 }
 .export-scope {
   font-size: 13px;

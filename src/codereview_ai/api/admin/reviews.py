@@ -7,13 +7,14 @@ from __future__ import annotations
 
 from datetime import datetime
 from io import BytesIO
+from typing import TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 from starlette.responses import StreamingResponse
@@ -22,6 +23,35 @@ from codereview_ai.api.deps import get_current_user, get_db
 from codereview_ai.storage.models import ReviewFinding, ReviewTask
 
 router = APIRouter(prefix="/reviews", dependencies=[Depends(get_current_user)])
+
+_StmtT = TypeVar("_StmtT", bound=tuple[object, ...])
+
+# 评审记录列表 / 导出具用的顶层筛选（DESIGN §14.1 服务端过滤）。返回过滤后的语句。
+def _apply_review_filters(
+    stmt: Select[_StmtT],
+    state: str | None = None,
+    event_type: str | None = None,
+    provider: str | None = None,
+    score_min: int | None = None,
+    score_max: int | None = None,
+    finished_from: datetime | None = None,
+    finished_to: datetime | None = None,
+) -> Select[_StmtT]:
+    if state:
+        stmt = stmt.where(ReviewTask.state == state)
+    if event_type:
+        stmt = stmt.where(ReviewTask.event_type == event_type)
+    if provider:
+        stmt = stmt.where(ReviewTask.provider == provider)
+    if score_min is not None:
+        stmt = stmt.where(ReviewTask.score_total >= score_min)
+    if score_max is not None:
+        stmt = stmt.where(ReviewTask.score_total <= score_max)
+    if finished_from is not None:
+        stmt = stmt.where(ReviewTask.finished_at >= finished_from)
+    if finished_to is not None:
+        stmt = stmt.where(ReviewTask.finished_at <= finished_to)
+    return stmt
 
 
 class ReviewListItem(BaseModel):
@@ -87,17 +117,30 @@ class ReviewPage(BaseModel):
 async def list_reviews(
     session: AsyncSession = Depends(get_db),
     state: str | None = None,
+    event_type: str | None = None,
+    provider: str | None = None,
+    score_min: int | None = None,
+    score_max: int | None = None,
+    finished_from: datetime | None = None,
+    finished_to: datetime | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> ReviewPage:
     limit = max(1, min(limit, 100))
     offset = max(0, offset)
-    stmt = select(ReviewTask)
-    count_stmt = select(func.count()).select_from(ReviewTask)
-    if state:
-        stmt = stmt.where(ReviewTask.state == state)
-        count_stmt = count_stmt.where(ReviewTask.state == state)
-    total = (await session.execute(count_stmt)).scalar_one()
+    stmt = _apply_review_filters(
+        select(ReviewTask),
+        state=state, event_type=event_type, provider=provider,
+        score_min=score_min, score_max=score_max,
+        finished_from=finished_from, finished_to=finished_to,
+    )
+    count_stmt = _apply_review_filters(select(ReviewTask.id), state=state,
+                                       event_type=event_type, provider=provider,
+                                       score_min=score_min, score_max=score_max,
+                                       finished_from=finished_from, finished_to=finished_to)
+    total = (await session.execute(
+        select(func.count()).select_from(count_stmt.subquery())
+    )).scalar_one()
     rows = (await session.execute(
         stmt.order_by(ReviewTask.id.desc()).limit(limit).offset(offset)
     )).scalars().all()
@@ -206,21 +249,28 @@ def _cell_value(key: str, review: ReviewTask, finding: ReviewFinding) -> object:
 async def export_reviews(
     session: AsyncSession = Depends(get_db),
     state: str | None = None,
+    event_type: str | None = None,
+    provider: str | None = None,
+    score_min: int | None = None,
+    score_max: int | None = None,
+    finished_from: datetime | None = None,
+    finished_to: datetime | None = None,
     severities: list[str] | None = Query(None),
     statuses: list[str] | None = Query(None),
 ) -> StreamingResponse:
     """导出筛选结果的全部评审问题明细为 .xlsx（不受分页限制）。
 
-    `severities` / `statuses` 用于过滤要导出的问题条目；缺省导出全部。沿用
-    get_current_user 鉴权（router 级依赖）。
+    `severities` / `statuses` 用于过滤要导出的问题条目；其余顶层筛选与列表一致，
+    保证「所见即所导」。沿用 get_current_user 鉴权（router 级依赖）。
     """
-    stmt = (
+    stmt = _apply_review_filters(
         select(ReviewTask, ReviewFinding)
         .join(ReviewFinding, ReviewFinding.task_id == ReviewTask.id)
-        .order_by(ReviewTask.id.desc(), ReviewFinding.id)
+        .order_by(ReviewTask.id.desc(), ReviewFinding.id),
+        state=state, event_type=event_type, provider=provider,
+        score_min=score_min, score_max=score_max,
+        finished_from=finished_from, finished_to=finished_to,
     )
-    if state:
-        stmt = stmt.where(ReviewTask.state == state)
     if severities:
         stmt = stmt.where(ReviewFinding.severity.in_(severities))
     if statuses:

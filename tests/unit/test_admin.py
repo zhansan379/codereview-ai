@@ -258,6 +258,7 @@ def test_reviews_export_xlsx_filters(app):
     asyncio.get_event_loop().run_until_complete(_seed())
 
     from io import BytesIO
+
     from openpyxl import load_workbook
 
     with _client(fast, token) as c:
@@ -283,6 +284,62 @@ def test_reviews_export_xlsx_filters(app):
             "/api/reviews/export", params={"state": "completed", "severities": "low"}
         ).content)).active
         assert ws3.max_row == 2 and ws3["D2"].value == 2
+
+
+def test_reviews_list_extended_filters(app):
+    """列表新增筛选：事件类型/平台/评分区间/完成时间范围，且导出沿用同一组顶层筛选。"""
+    from datetime import UTC, datetime
+    fast, token = app
+
+    def _utc(s: str) -> datetime:
+        return datetime.fromisoformat(s).replace(tzinfo=UTC)
+
+    async def _seed() -> None:
+        session = session_factory(fast.state.engine)
+        async with session() as s:
+            t1 = ReviewTask(provider="gitlab", repo_id="1", pr_number=1, event_type="mr",
+                            branch="main", head_sha="aaa", state="completed",
+                            score_total=90, finished_at=_utc("2026-09-01T10:00"))
+            t2 = ReviewTask(provider="github", repo_id="2", pr_number=None, event_type="push",
+                            branch="dev", head_sha="bbb", state="completed",
+                            score_total=60, finished_at=_utc("2026-09-05T10:00"))
+            t3 = ReviewTask(provider="gitlab", repo_id="1", pr_number=3, event_type="mr",
+                            branch="main", head_sha="ccc", state="completed",
+                            score_total=45, finished_at=_utc("2026-09-02T10:00"))
+            s.add_all([t1, t2, t3])
+            await s.flush()
+            s.add(ReviewFinding(task_id=t1.id, fingerprint="a", severity="high",
+                                category="bug", file="a.py", title="t", status="active"))
+            s.add(ReviewFinding(task_id=t2.id, fingerprint="b", severity="medium",
+                                category="perf", file="b.py", title="u", status="active"))
+            await s.commit()
+
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(_seed())
+
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    def _ids(resp_json) -> list[int]:
+        return [it["id"] for it in resp_json["items"]]
+
+    with _client(fast, token) as c:
+        # 事件类型+平台 → 命中两条 mr/gitlab（t1、t3）；评分下限过滤后仅剩 t1(90)。
+        page = c.get("/api/reviews", params={"event_type": "mr", "provider": "gitlab"}).json()
+        assert page["total"] == 2
+        page2 = c.get("/api/reviews", params={"event_type": "mr", "score_min": 50}).json()
+        assert page2["total"] == 1 and page2["items"][0]["score_total"] == 90
+        # 完成时间范围 → 仅 t2(09-05)。
+        page3 = c.get("/api/reviews", params={"finished_from": "2026-09-03"}).json()
+        assert page3["total"] == 1 and page3["items"][0]["score_total"] == 60
+        # 评分区间 40-65 → 仅 t1? 不：t2(60) 与 t3(45)。
+        page4 = c.get("/api/reviews", params={"score_min": 40, "score_max": 65}).json()
+        assert {it["score_total"] for it in page4["items"]} == {45, 60}
+        # 导出沿用顶层筛选：score>=50 → 2 行（t1/t2），非受分页限制。
+        resp = c.get("/api/reviews/export", params={"score_min": 50})
+        ws = load_workbook(BytesIO(resp.content)).active
+        assert ws.max_row == 3  # 表头 + 2
 
 
 def test_tasks_list_and_retry(app):
