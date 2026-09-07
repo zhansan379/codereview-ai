@@ -88,6 +88,8 @@ class ReviewTask(Base):
     head_sha: Mapped[str] = mapped_column(String(64))
     base_sha: Mapped[str] = mapped_column(String(64), default="")
     pr_title: Mapped[str] = mapped_column(String(255), default="")  # PR/MR 标题（展示用；push 轨留空）
+    # 直达原页 URL：mr 轨为 forge 给出的 MR/PR 页面；push 轨为「{项目 web_url}/commit/{head_sha}」
+    web_url: Mapped[str] = mapped_column(String(1024), default="")
     # push 轨提交消息（多行、太长不当标题）；详情页单独展示，不占 pr_title/表格列
     push_commits: Mapped[str] = mapped_column(Text, default="")
     state: Mapped[str] = mapped_column(String(16), default="queued")
@@ -239,3 +241,15 @@ class ModelUsage(Base):
     status: Mapped[str] = mapped_column(String(16), default="ok")
     cost: Mapped[float] = mapped_column(default=0.0)
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class AppSetting(Base):
+    """全局运行时设置（key-value）。每键一行，供阈值/开关/并发等可热更参数落库。
+
+    由 `init_db.create_all` 自动建表（现有库重启即补），无外键——只承载标量字符串值。
+    """
+
+    __tablename__ = "app_setting"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(255), default="")

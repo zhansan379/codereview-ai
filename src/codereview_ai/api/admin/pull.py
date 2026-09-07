@@ -31,10 +31,20 @@ class PollReport(BaseModel):
     errors: list[str] = []
 
 
+class PollProgress(BaseModel):
+    """补拉进行中的逐条进度（跑前 total 未知，随扫描增长）。"""
+    done: int = 0
+    total: int = 0
+    new: int = 0
+    skipped: int = 0
+
+
 class PollStatus(BaseModel):
     running: bool
     report: PollReport | None = None
     error: str | None = None
+    # 仅 running 时有意义：每审完一个 PR 累加，前端据此展示「已完成 X / 共 Y」。
+    progress: PollProgress | None = None
 
 
 def _poller_or_503(request: Request):
@@ -54,7 +64,11 @@ async def _background_poll(app: Any, poller: Any) -> None:
     app.state.poll_error = None
     try:
         report: dict[str, Any] = await poller.run_once()
-        app.state.poll_last = PollReport(**report)
+        if report.get("conflict"):
+            # 撞上另在跑的一轮（多为定时补拉）→ 提示已跳过，不覆盖已存在的 poll_last。
+            app.state.poll_error = "上一轮补拉（可能为定时任务）正在进行，本轮已跳过"
+        else:
+            app.state.poll_last = PollReport(**report)
     except Exception as exc:  # noqa: BLE001  后台任务异常只记状态，不炸请求/进程
         app.state.poll_error = f"{exc}"
         import logging
@@ -77,10 +91,17 @@ async def start_poll(request: Request) -> PollStatus:
 
 @router.get("/poll/status", response_model=PollStatus)
 async def poll_status(request: Request) -> PollStatus:
-    """读取当前补拉状态：running + 最近一轮 report / 错误。"""
-    _poller_or_503(request)
+    """读取当前补拉状态：running + 最近一轮 report / 错误 + 进行中逐条进度。"""
+    poller = _poller_or_503(request)
+    running = bool(getattr(request.app.state, "poll_running", False))
+    progress: PollProgress | None = None
+    if running:
+        prog = getattr(poller, "progress", None)
+        if prog:
+            progress = PollProgress(**prog)
     return PollStatus(
-        running=bool(getattr(request.app.state, "poll_running", False)),
+        running=running,
         report=getattr(request.app.state, "poll_last", None),
         error=getattr(request.app.state, "poll_error", None),
+        progress=progress,
     )

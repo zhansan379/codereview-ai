@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -170,6 +171,27 @@ async def test_process_marks_running_then_completed():
     )
     assert "running" in repo.states
     assert repo.states[-1] == "completed"
+
+
+async def test_concurrent_same_head_reviews_only_once(tmp_path):
+    """并发同 head 两拨审查 → per-head 锁串行：只有一次 reviewed，另一拨等锁后见
+    已完成锚点 → already；评论/总结只写一次（防删记录后重拉的重复审查/重复 IM）。"""
+    from codereview_ai.worker import review_pull_request
+
+    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'concurrent.db'}")
+    await init_db(engine)
+    repo = ReviewRepository(engine)
+    forge = _FakeForge()
+    reviewer = _FakeReviewer(forge)
+    pr = forge.parse_merge_request(json.loads(_mr_payload().decode()))  # head=hh
+
+    a, b = await asyncio.gather(
+        review_pull_request(forge, reviewer, pr, review_repo=repo),
+        review_pull_request(forge, reviewer, pr, review_repo=repo),
+    )
+    assert sorted([a, b]) == ["already", "reviewed"]
+    assert len(forge.posted_summary) == 1  # 评论只发一次
+    assert len(forge.posted_inline) == 1  # 行级评论只发一次
 
 
 async def test_process_same_head_skips_when_increments_enabled():
@@ -483,3 +505,39 @@ async def test_enforce_score_threshold_disabled_no_status():
     await process_raw_event(forge, reviewer, _mr_payload(),  # type: ignore[arg-type]
                             project_config_factory=factory)
     assert forge.statuses == []  # 开关关 → 不发状态（回归：默认行为不变）
+
+
+# ── 补拉入队（enqueue_pr 携带已解析 PullRequest）→ worker 消费 ────────────
+
+
+async def test_enqueue_pr_worker_consumes_and_reviews(tmp_path):
+    """补拉入队的已解析 PR 走 worker 异步审查：消费 → 审查执行一次 → 审计行翻 completed。"""
+    from codereview_ai.domain.models import PullRequest
+
+    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'poll.db'}")
+    await init_db(engine)
+    repo = ReviewRepository(engine)
+    forge = _FakeForge()
+    store = EventStore()
+    queue = AsyncioTaskQueue()
+    enqueuer = QueueEnqueuer(queue, store)
+
+    pr = PullRequest(
+        provider="gitlab", repo_id="7", repo_full_name="acme/widgets",
+        web_url="https://x/7", pr_number=999, title="poller enqueued",
+        source_branch="s", target_branch="t", head_sha="h-poll-999", base_sha="b",
+    )
+    # 补拉侧本就在入队前落了 queued 行——这里模拟该行已存在（ensure_task 幂等复用）。
+    await repo.ensure_task(provider="gitlab", repo_id="7", pr_number=999,
+                           event_type="mr", branch="s", head_sha="h-poll-999",
+                           base_sha="b", pr_title="poller enqueued", payload="")
+    await enqueuer.enqueue_pr("gitlab", pr)
+
+    processor = make_processor(lambda p: forge, lambda p: _FakeReviewer(forge), store,
+                               review_repo=repo)
+    await run_worker(queue, processor, max_iterations=1)
+
+    assert forge.posted_summary  # 审查执行并回写总结
+    async with session_factory(engine)() as s:
+        row = (await s.execute(select(ReviewTask))).scalar_one()
+    assert row.state == "completed" and row.pr_number == 999

@@ -151,9 +151,11 @@
         :loading="loading"
         show-process
         show-retry
+        show-delete
         :retrying-id="retryingId"
         @detail="goDetail"
         @retry="onRetry"
+        @delete="onDelete"
       />
 
       <!-- 服务端分页 -->
@@ -173,13 +175,14 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   listReviews,
   retryTask,
   exportReviews,
+  deleteReview,
   type ReviewFilter,
   type ReviewItem,
 } from '../api'
@@ -373,6 +376,28 @@ async function onRetry(row: ReviewItem) {
     ElMessage.error(e?.response?.data?.detail || '重试失败')
   } finally {
     retryingId.value = null
+  }
+}
+
+// 删除审查记录（含 findings 级联）：确认后删除并刷新；删空末页回退一页。
+async function onDelete(id: number) {
+  try {
+    await ElMessageBox.confirm(`确认删除审查记录 #${id}（其问题列表将一并删除）？`, '提示', {
+      type: 'warning',
+    })
+  } catch {
+    return // 用户取消
+  }
+  try {
+    await deleteReview(id)
+    ElMessage.success('已删除')
+    if (items.value.length === 1 && query.offset > 0) {
+      query.offset -= query.limit
+      syncUrl()
+    }
+    load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '删除失败')
   }
 }
 

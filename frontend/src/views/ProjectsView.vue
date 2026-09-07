@@ -8,7 +8,11 @@
         </el-button>
       </div>
       <div v-if="pollBusy" class="poll-progress">
-        <span class="spinner" /> 补拉进行中… 正在后台审查打开 PR/MR，可切换页面，完成后将弹出结果
+        <span class="spinner" /> <template v-if="pollProgress && pollProgress.total > 0">
+          补拉进行中 {{ pollProgress.done }}/{{ pollProgress.total }}（新 {{ pollProgress.new }}，跳过 {{ pollProgress.skipped }}）…
+        </template>
+        <template v-else>补拉进行中…</template>
+        正在入队打开 PR/MR 的审查，可切换页面，审查在后台进行
       </div>
       <el-table :data="items" v-loading="loading" stripe>
         <el-table-column prop="id" label="ID" width="70" />
@@ -110,7 +114,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listProjects, createProject, updateProject, deleteProject, type Project } from '../api'
-import { pollBusy, triggerPoll, resumePollWatchIfBusy } from './usePoll'
+import { pollBusy, pollProgress, triggerPoll, resumePollWatchIfBusy } from './usePoll'
 
 const items = ref<Project[]>([])
 const loading = ref(false)

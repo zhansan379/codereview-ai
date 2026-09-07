@@ -63,6 +63,24 @@
       </div>
     </el-card>
 
+    <el-card class="concurrency-card">
+      <template #header>审查并发</template>
+      <p class="intro">
+        同时进行的代码审查条数（1–32，默认 4）。保存后立即热更生效，无需重启后端。
+      </p>
+      <el-form label-width="110px">
+        <el-form-item label="并发上限">
+          <el-input-number v-model="concurrency" :min="1" :max="32" />
+          <span class="form-tip" style="margin-left: 8px">数值越大并行审查越多，占用 LLM 并发越高。</span>
+        </el-form-item>
+      </el-form>
+      <div class="save-bar">
+        <el-button type="primary" :loading="ccSaving" @click="onSaveConcurrency">保存并发</el-button>
+        <span v-if="ccActive" class="form-tip">已生效：当前并发 {{ concurrency }} 条在跑。</span>
+        <span v-else class="hint">运行器未启动，配置将落库，待运行器就绪后按此值生效。</span>
+      </div>
+    </el-card>
+
     <el-card class="note-card">
       <template #header>安全说明</template>
       <el-descriptions :column="1" border>
@@ -83,7 +101,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { listForges, updateForge, testForge } from '../api'
+import { listForges, updateForge, testForge, getConcurrency, setConcurrency } from '../api'
 import type { ForgeCapability } from '../api'
 
 const MASK = '******'
@@ -108,6 +126,35 @@ const envActive = reactive({ github: false, gitlab: false })
 const testing = reactive({ github: false, gitlab: false })
 const caps = reactive<Record<string, ForgeCapability[] | undefined>>({ github: undefined, gitlab: undefined })
 const saving = ref(false)
+
+// —— 审查并发 ——
+const concurrency = ref(4)
+const ccActive = ref(true)
+const ccSaving = ref(false)
+
+async function loadConcurrency() {
+  try {
+    const s = await getConcurrency()
+    concurrency.value = s.concurrency
+    ccActive.value = s.active
+  } catch {
+    /* 后端未暴露该接口时（旧版）静默跳过，不阻塞平台页加载 */
+  }
+}
+
+async function onSaveConcurrency() {
+  ccSaving.value = true
+  try {
+    const s = await setConcurrency({ concurrency: Math.max(1, Math.min(32, concurrency.value)) })
+    concurrency.value = s.concurrency
+    ccActive.value = s.active
+    ElMessage.success(s.applied ? `已热更生效：并发 ${s.concurrency}` : '已保存，运行器就绪后生效')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '保存失败')
+  } finally {
+    ccSaving.value = false
+  }
+}
 
 async function load() {
   const items = await listForges()
@@ -150,7 +197,10 @@ async function onSave() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadConcurrency()
+})
 </script>
 
 <style scoped>
@@ -199,7 +249,13 @@ onMounted(load)
   font-size: 12px;
   color: #606266;
 }
+.concurrency-card,
 .note-card {
   margin-top: 16px;
+}
+.hint {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #e6a23c;
 }
 </style>

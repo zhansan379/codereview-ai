@@ -89,6 +89,7 @@ _COLUMN_FALLBACKS: dict[str, list[tuple[str, str, str]]] = {
         ("force_rerun", "BOOLEAN", "DEFAULT 0"),
         ("pr_title", "VARCHAR(255)", "DEFAULT ''"),
         ("push_commits", "TEXT", "DEFAULT ''"),
+        ("web_url", "VARCHAR(1024)", "DEFAULT ''"),
     ],
 }
 
