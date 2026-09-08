@@ -100,6 +100,21 @@ def test_cloner_sync_to_missing_url_raises(tmp_path):
         cloner.sync_to(url="", key="k", ref="abc")
 
 
+@pytest.mark.skipif(not RepoCloner.available(), reason="本地无 git")
+def test_cloner_recovers_corrupt_repo(tmp_path):
+    """残缺 .git（被中断的 clone，只剩 hooks/info 模板）会被识别无效并重新 clone。"""
+    uri, head = _seed_remote(tmp_path)
+    cloner = RepoCloner(tmp_path / "cache")
+    cache_dir = tmp_path / "cache" / "owner_repo"  # slugify_key("owner/repo")=owner_repo
+    # 模拟半途被中断的 clone：.git 下仅有 git init 最早创建的 hooks/info
+    (cache_dir / ".git" / "hooks").mkdir(parents=True)
+    (cache_dir / ".git" / "info").mkdir(parents=True)
+    ws = cloner.sync_to(url=uri, key="owner/repo", ref=head, token="")
+    assert (ws / "a.txt").read_text("utf-8") == "hi\n"
+    # 残缺目录被清掉重 clone，得到完整 .git/HEAD
+    assert (cache_dir / ".git" / "HEAD").exists()
+
+
 # ── llm_adapter（fake backend）────────────────────────────────────────
 
 
