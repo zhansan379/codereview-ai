@@ -612,3 +612,66 @@ def test_summarize_uses_memory_compression_template():
     assert "把下面的对话压缩成一段简短中文摘要" not in msgs[1]["content"]
     # compress_messages 仍作为 {{context}} 原样追加在后
     assert msgs[-1] == {"role": "user", "content": "待压缩上下文"}
+
+def test_agent_loop_roundtrips_deepseek_reasoning_content(tmp_path):
+    # DeepSeek thinking 模式：assistant 回合必须把 reasoning_content **原样带回**重申，
+    # 否则循环重构 assistant 消息丢思考链 → 下一轮 chat 被 API 拒（BadRequestError）。
+    # 断言第 2 轮 chat 收到的历史里，第 1 轮 assistant 条目带 reasoning_content。
+    ctx = _new_ctx(tmp_path)
+
+    seen: list[list[dict]] = []
+
+    class _ThinkingLLM:
+        def __init__(self) -> None:
+            self._played = False
+
+        async def chat(self, messages, tools):
+            seen.append(list(messages))
+            if not self._played:
+                self._played = True
+                return AgentTurn(
+                    content="",
+                    tool_calls=[ToolCall(name="grep_repo", args={"search_text": "foo"})],
+                    reasoning_content="思考：先确认 foo 在哪",
+                )
+            return AgentTurn(
+                content="审毕",
+                tool_calls=[ToolCall(name="task_done", args={})],
+                reasoning_content="思考：确认无遗漏",
+            )
+
+        async def summarize(self, _f, _c) -> str:
+            return "sum"
+
+    result = asyncio.run(run_agent_session(
+        _ThinkingLLM(), ToolRunner(ctx, ToolState()), "审查 a.py",
+    ))
+    assert result.reason == "task_done"
+    assert len(seen) == 2  # 恰两次 chat
+    assistant = next(m for m in seen[1] if m.get("role") == "assistant")
+    assert assistant["reasoning_content"] == "思考：先确认 foo 在哪"
+
+
+def test_agent_loop_omits_reasoning_content_for_plain_model(tmp_path):
+    # 非 thinking 模型不产 reasoning_content → assistant 条目不应带该 key（避免 API 误读）。
+    ctx = _new_ctx(tmp_path)
+    seen: list[list[dict]] = []
+
+    class _PlainLLM:
+        def __init__(self) -> None:
+            self._played = False
+
+        async def chat(self, messages, tools):
+            seen.append(list(messages))
+            if not self._played:
+                self._played = True
+                return AgentTurn(content="", tool_calls=[ToolCall(name="grep_repo", args={"search_text": "x"})])
+            return AgentTurn(content="审毕", tool_calls=[ToolCall(name="task_done", args={})])
+
+        async def summarize(self, _f, _c) -> str:
+            return "sum"
+
+    asyncio.run(run_agent_session(_PlainLLM(), ToolRunner(ctx, ToolState()), "审查 a.py"))
+    assistant = next(m for m in seen[1] if m.get("role") == "assistant")
+    assert "reasoning_content" not in assistant
+    assert assistant["content"] is None  # 带工具调用的 assistant content 为 null（OpenAI/DeepSeek 契约）
