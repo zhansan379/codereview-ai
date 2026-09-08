@@ -72,6 +72,22 @@ class Settings(BaseSettings):
     review_static_enabled: bool = True
     static_workspace_dir: str = ""  # 临时工作区目录；空 = 系统临时目录
 
+    # —— agentic 审查（§12：默认关；开启后勾 agentic 的项目走「clone 全仓→只读工具」——
+    agent_review_enabled: bool = False  # 全局总开关；项目级 review_strategy="agentic" 时才真正走
+    agent_clone_cache_dir: str = ""  # 仓库 clone 缓存根；空 = 系统临时目录下 codereview-agent-repos
+    agent_max_iterations: int = 20  # 单组 agent 会话最大轮数；轮尽会进 grace 收尾轮逼补交
+    agent_max_time_seconds: float = 300.0  # 单组会话最大时长（秒），超时进 grace 收尾轮
+    agent_max_prompt_tokens: int = 80_000  # 单组提示 token 预算，超预算进 grace 收尾轮
+    agent_group_concurrency: int = 4  # 单次审查内多文件组并发跑的上限（有界信号量，防打爆速率）
+    agent_plan_enabled: bool = True  # OCR plan 阶段开关（大变更先规划，失败/空只略过）
+    agent_relocation_enabled: bool = True  # OCR re_location 钉行重锚开关（无行意见 LLM 兜底重钉）
+    agent_review_filter_enabled: bool = True  # OCR review_filter 事实核查开关（删铁证错评）
+    agent_scoring_enabled: bool = True  # 评分收尾开关（0-100 卡片，OCR 无，自创）
+    agent_plan_line_threshold: int = 300  # plan 门控：单个超大文件 churn≥此值才规划
+    agent_plan_group_line_threshold: int = 600  # plan 门控：组累计 churn≥此值才规划（需≥2文件）
+    agent_conversation_enabled: bool = True  # 原始 LLM 对话逐条落库（review_conversation 表）
+    agent_reuse_enabled: bool = True  # 增量轮未变更文件复用（sha1(new) 相同则不再喂 agent）
+
     # —— 日报调度（M5.7：本地时区每日整点）——
     daily_report_enabled: bool = True
     daily_report_hour: int = 9  # 每日推送时刻（本地时区，0-23）

@@ -13,6 +13,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -28,6 +29,9 @@ MAX_FIND_RESULTS = 100
 
 _CATEGORIES = {c.value: c for c in Category}
 _SEVERITIES = {s.value: s for s in Severity}
+# 导出给 schema 的枚举可选项（§12.1 code_comment 标准嵌套结构）。
+_CATEGORY_ENUM = [c.value for c in Category]
+_SEVERITY_ENUM = [s.value for s in Severity]
 
 
 @dataclass
@@ -174,29 +178,100 @@ def _norm(path: str) -> str:
     return path.removeprefix("/")
 
 
+#: 评论正文归一化：去空白折叠 + 小写，用于内容指纹去重（防同问题多组/多轮重复上报）。
+_WS_RE = re.compile(r"\s+")
+
+
+def finding_fingerprint(f: Finding) -> tuple[str, ...]:
+    """内容指纹（PR-Agent `body_fp OR code_fp`）：正文与 existing_code 归一化后的指纹集。
+
+    两个 fingerprint（body/code）都是归一化串；任一命中即视为重复，因此返回去重后的有序元组。
+    """
+    def _fp(text: str) -> str:
+        return _WS_RE.sub(" ", text.strip().lower())
+
+    fps = {x for x in (_fp(f.content), _fp(f.existing_code)) if x}
+    return tuple(sorted(fps))
+
+
+def finding_matches(a: Finding, b: Finding) -> bool:
+    """同文件且指纹有交集即视为重复评论（跨分组/跨轮兜底去重）。"""
+    if a.file != b.file:
+        return False
+    a_fps, b_fps = finding_fingerprint(a), finding_fingerprint(b)
+    if not a_fps or not b_fps:
+        return False
+    return bool(set(a_fps) & set(b_fps))
+
+
+def _as_int(v: Any) -> int | None:
+    """把上报的 line 归一成 int；缺省/非法返回 None（回落总结评论）。"""
+    if v is None or v == "":
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _t_code_comment(ctx: RepoContext, state: ToolState, args: dict[str, Any]) -> str:
     items = args.get("comments") or []
     if not isinstance(items, list) or not items:
+        logger.warning("code_comment: comments 非数组（%s→%r），args keys=%s",
+                       type(items).__name__, type(items), list(args.keys()))
         return json.dumps({"ok": False, "error": "缺少 comments 数组"}, ensure_ascii=False)
+    dropped = 0
+    accepted = 0
+    dropped_keys: dict[str, int] = {}
+    sample_shown = False
     for it in items:
         if not isinstance(it, dict):
+            dropped += 1
+            if not sample_shown:
+                sample_shown = True
+                logger.warning("code_comment 丢弃非对象项 %r", it)
             continue
         path = _norm(str(it.get("path") or ctx.group_key or ""))
         content = str(it.get("content") or "").strip()
         if not path or not content:
+            # 记下被丢条目的字段结构 + 缺哪个字段，诊断"模型交了但没落库"（DeepSeek 常把
+            # 正文塞进 content 之外的键，或 content 为空串被 strip 掉）。始终打印一整个条目
+            # 的原始 keys，好确认模型实际发的字段名，而不是只猜缺 content/path。
+            dropped += 1
+            for k in ("path", "content"):
+                if not it.get(k):
+                    dropped_keys[k] = dropped_keys.get(k, 0) + 1
+            if not sample_shown:
+                sample_shown = True
+                logger.warning("code_comment 丢弃条目样例 keys=%s values=%r",
+                               list(it.keys()), {k: (v[:60] if isinstance(v, str) else v)
+                                                 for k, v in it.items()})
             continue
         cat = _CATEGORIES.get(str(it.get("category")), Category.OTHER)
         sev = _SEVERITIES.get(str(it.get("severity")), Severity.LOW)
+        line = _as_int(it.get("line"))
+        old_line = _as_int(it.get("old_line"))
+        # agent 在 clone 全仓（reset 到 head）里读到的行号 = MR head 侧行号 = diff 新侧行号，
+        # 天然对齐；line 落在 diff hunk 可评论范围内时由 ResultWriter 发行级 inline，
+        # 越界/缺省则回落总结评论（result_writer.partition_findings）。
         state.comments.append(Finding(
             content=content,
             category=cat,
             severity=sev,
-            existing_code=str(it.get("existing_code") or ""),
-            suggestion_code=str(it.get("suggestion_code")) or None,
             file=path,
             side="RIGHT",
+            existing_code=str(it.get("existing_code") or ""),
+            suggestion_code=str(it.get("suggestion_code")) or None,
+            line=line,
+            old_line=old_line,
             source="agent",
         ))
+        accepted += 1
+    if dropped:
+        logger.warning(
+            "code_comment: 本条 %d 条中丢弃 %d（缺 path/content %s）、accept %d",
+            len(items), dropped, dict(dropped_keys), accepted,
+        )
     return "Successfully commented."
 
 
@@ -213,10 +288,40 @@ def _t_task_done(ctx: RepoContext, state: ToolState, args: dict[str, Any]) -> st
 # ── 注册表 ──────────────────────────────────────────────────────────────
 
 
+# code_comment 的 comments 元素：给 LLM 的标准嵌套 object schema。此前把它建模成
+# 一行散文字符串（type:"string"），模型拿不到真正的字段类型/必填/枚举，只能靠蒙，
+# 导致正文偶尔塞进 content 外的键、数组塞成字符串时被 _t_code_comment 整条丢弃。
+# 改为标准 `array → items(object)` 后，模型照说明书填，丢弃率显著下降。
+_COMMENT_ITEM = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "path": {"type": "string",
+                 "description": "相对仓库根的文件路径，如 src/main.py（必填）"},
+        "content": {"type": "string",
+                    "description": "批注正文：点明问题与建议（必填）"},
+        "existing_code": {"type": "string",
+                          "description": "定位锚点：问题处的现有代码片段，无 line 时用"},
+        "suggestion_code": {"type": "string",
+                            "description": "可选：建议替换成的新代码"},
+        "category": {"type": "string", "enum": _CATEGORY_ENUM,
+                     "description": "问题类别，取枚举之一"},
+        "severity": {"type": "string", "enum": _SEVERITY_ENUM,
+                     "description": "严重度，取枚举之一"},
+        "line": {"type": "integer",
+                 "description": "问题所在文件的新侧行号（参考 read_file 结果）"},
+        "old_line": {"type": "integer"},
+    },
+    "required": ["path", "content"],
+}
+
 _TOOLS: dict[str, tuple[str, dict[str, Any], Any]] = {
     "code_comment": (
-        "上报一条评论；LLM 产出审查意见的唯一通道",
-        {"comments": "list[{existing_code,suggestion_code,category,severity,path,thinking}]"},
+        "上报审查意见；LLM 产出结论的唯一通道。一次传一条或多条，每条是带 path/content "
+        "的对象。line 为该问题在文件中的新侧行号（可从 read_file 的结果得知；填了且落在 "
+        "diff 范围内会定位到具体代码行，不填则并入总结评论）",
+        {"comments": {"type": "array", "items": _COMMENT_ITEM,
+                      "description": "本次要上报的意见列表"}},
         _t_code_comment,
     ),
     "grep_repo": (
@@ -272,10 +377,12 @@ def tool_schemas(names: list[str] | None = None) -> list[dict[str, Any]]:
     for name, (_desc, params, _impl) in _TOOLS.items():
         if names and name not in names:
             continue
-        props = {k: {"type": "string"} for k in params}
-        if any(v == "int" for v in params.values()):
-            props = {k: ({"type": "integer"} if v == "int" else {"type": "string"})
-                     for k, v in params.items()}
+        props: dict[str, Any] = {}
+        for k, v in params.items():
+            if isinstance(v, dict) and "type" in v:
+                props[k] = v  # 已是标准 JSON-schema 属性（如 code_comment 的嵌套 items），透传
+            else:
+                props[k] = {"type": "integer" if v == "int" else "string"}
         out.append({
             "type": "function",
             "function": {

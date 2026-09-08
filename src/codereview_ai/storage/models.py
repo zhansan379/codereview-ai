@@ -140,6 +140,30 @@ class ReviewFinding(Base):
     reopened_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class ReviewConversation(Base):
+    """agentic 原始 LLM 对话逐条落库（对齐 OCR `session/persist.go` 的事件流）。
+
+    每条 = 一次 `llm.chat()/summarize()`：`request_json` 存完整 messages（OpenAI 格式，
+    含 tool 消息，故工具调用结果已内嵌）；`response_json` 存 {content, tool_calls, usage}。
+    `seq` 每 task 单调递增供展示排序；`phase` 标记 plan/main/…/scoring/compress/loop。
+    """
+
+    __tablename__ = "review_conversation"
+    __table_args__ = (
+        Index("idx_conv_task_seq", "task_id", "seq"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("review_task.id", ondelete="CASCADE"))
+    seq: Mapped[int] = mapped_column(Integer, default=0)
+    phase: Mapped[str] = mapped_column(String(32), default="loop")
+    model: Mapped[str] = mapped_column(String(64), default="")
+    trace_id: Mapped[str] = mapped_column(String(64), default="")
+    request_json: Mapped[str] = mapped_column(Text, default="")
+    response_json: Mapped[str] = mapped_column(Text, default="")
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class ModelConfig(Base):
     """模型配置（DESIGN §5 ERD）：api_key 以 Fernet 密文落库（§16）。"""
 

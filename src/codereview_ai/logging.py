@@ -15,7 +15,7 @@ import re
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -102,7 +102,8 @@ class JsonFormatter(logging.Formatter):
     )
 
     def format(self, record: logging.LogRecord) -> str:
-        ts = datetime.fromtimestamp(record.created, tz=UTC).isoformat()
+        # 日志 `ts` 面向读日志的人，用本地时区（并按系统 TZ 带偏移）；DB 里仍是 UTC 存储（§11）。
+        ts = datetime.fromtimestamp(record.created).astimezone().isoformat()
         payload: dict[str, Any] = {
             "ts": ts,
             "level": record.levelname,

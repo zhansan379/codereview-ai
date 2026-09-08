@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import tempfile
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from fnmatch import fnmatch
@@ -132,9 +133,61 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             static_analyzer = StaticAnalyzer(enabled=settings.review_static_enabled, workspace=ws)
             # 项目级配置（文件扩展名过滤）：按 (provider, repo_id) 实时读 project 启用行
             project_repo = ProjectRepository(engine)
+            # §12 agentic 审查：全局开 + 有可用 LLM 才接线运行时与工具工厂；否则留 None
+            # （worker 三条件不满足自动走 diff，不在这里抛错）。async token 回调按 provider
+            # 实时取平台 token 供 clone，DB/env 热更即时生效。
+            agent_runtime = agent_llm_factory = agent_config = None
+            if settings.agent_review_enabled:
+                async def _agent_token_for(provider: str) -> str | None:
+                    try:
+                        resolved = await provider_repo.resolve_forge(provider)
+                    except Exception:  # noqa: BLE001 —— token 临时取不到就让 clone 走公开地址
+                        return None
+                    return resolved.token if resolved else None
+
+                agent_resolved = await provider_repo.resolve_llm()
+                if agent_resolved and agent_resolved.model:
+                    from codereview_ai.review.agentic.llm_adapter import build_agent_llm
+                    from codereview_ai.review.agentic.llmloop import AgentConfig
+                    from codereview_ai.review.agentic.sandbox import LocalCloneRuntime
+
+                    cache_root = settings.agent_clone_cache_dir or str(
+                        Path(tempfile.gettempdir()) / "codereview-agent-repos"
+                    )
+                    agent_runtime = LocalCloneRuntime(cache_root=cache_root, enabled=True,
+                                                      token_for=_agent_token_for)
+                    # 会话上限（轮数/时长/预算）从 env（CR_AGENT_*）读取，单组独立会话生效
+                    agent_config = AgentConfig(
+                        max_iterations=settings.agent_max_iterations,
+                        max_time_seconds=settings.agent_max_time_seconds,
+                        max_prompt_tokens=settings.agent_max_prompt_tokens,
+                        group_concurrency=settings.agent_group_concurrency,
+                        plan_enabled=settings.agent_plan_enabled,
+                        relocation_enabled=settings.agent_relocation_enabled,
+                        review_filter_enabled=settings.agent_review_filter_enabled,
+                        scoring_enabled=settings.agent_scoring_enabled,
+                        plan_line_threshold=settings.agent_plan_line_threshold,
+                        plan_group_line_threshold=settings.agent_plan_group_line_threshold,
+                    )
+
+                    def _agent_llm_factory():
+                        # 每次分组重建一个独立会话（独立 trace_id），拿同一根解析配置
+                        return build_agent_llm(agent_resolved)
+
+                    agent_llm_factory = _agent_llm_factory
+                    logger.info("agentic 审查已启用（clone 缓存：%s，轮数=%d）",
+                                cache_root, settings.agent_max_iterations)
+                else:
+                    # 全局开关开但无可用 LLM：worker 三条件不满足自动走 diff 降级
+                    logger.warning("agent_review_enabled 开启但无可用 LLM，agentic 走 diff 降级")
             processor = make_processor(
                 lambda p: forge_registry.get(p), lambda _: reviewer, store, review_repo=review_repo,
                 notifier=notifier, push_gate=push_gate, static_analyzer=static_analyzer,
+                engine=engine,
+                agent_runtime=agent_runtime, agent_llm_factory=agent_llm_factory,
+                agent_config=agent_config,
+                agent_conversation_enabled=settings.agent_conversation_enabled,
+                agent_reuse_enabled=settings.agent_reuse_enabled,
                 project_config_factory=project_repo.config_for,
             )
             # 并发审查：固定数量 worker 循环 + 并发闸（上限可热更、落 DB 保留，

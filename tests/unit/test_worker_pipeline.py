@@ -160,6 +160,12 @@ class _RecordingReviewRepo:
     async def reconcile_findings(self, **k):
         return frozenset()
 
+    async def set_coverage(self, *a, **k):
+        pass  # 覆盖集写入（diff_snapshot，未变更文件复用用）—— 桩不落 DB
+
+    async def last_covered(self, *a, **k):
+        return None
+
 
 async def test_process_marks_running_then_completed():
     """mr 轨开审即标 running，收尾翻 completed（供管理页区分「正在跑」）。"""

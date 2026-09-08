@@ -10,6 +10,8 @@ review_task/review_finding 落库**：两轨（mr/push）幂等抢占靠部分�
 
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -136,6 +138,8 @@ class ReviewRepository:
         web_url: str = "",
         push_commits: str = "",
         payload: str = "",
+        trace_id: str = "",
+        diff_snapshot: str = "",
     ) -> int | None:
         """按幂等键幂等落一条 `queued` 审计行并返回 id；已被抢占/在审返回 None。
 
@@ -173,6 +177,7 @@ class ReviewRepository:
                 event_type=event_type, branch=branch, head_sha=head_sha,
                 base_sha=base_sha, pr_title=pr_title, web_url=web_url,
                 push_commits=push_commits, state="queued", payload=payload,
+                trace_id=trace_id, diff_snapshot=diff_snapshot,
             )
             s.add(task)
             try:
@@ -314,3 +319,69 @@ class ReviewRepository:
                     row.last_seen = now
             await s.commit()
         return frozenset(reopen)
+
+    async def set_coverage(self, task_id: int, covered: dict[str, str]) -> None:
+        """把本轮覆盖集 `{new_path: sha1(new)}` 写进 `diff_snapshot`（复用 + compare 依据）。"""
+        session = session_factory(self._engine)
+        async with session() as s:
+            row = (await s.execute(
+                select(ReviewTask).where(ReviewTask.id == task_id)
+            )).scalar_one_or_none()
+            if row is None:
+                return
+            row.diff_snapshot = json.dumps(covered, ensure_ascii=False, sort_keys=True)
+            await s.commit()
+
+    async def last_covered(
+        self, provider: str, repo_id: str, pr_number: int
+    ) -> dict[str, str] | None:
+        """读该 PR 最近一次 completed mr 任务的覆盖集；未审过/无覆盖 → None。"""
+        session = session_factory(self._engine)
+        async with session() as s:
+            row = (await s.execute(
+                select(ReviewTask).where(
+                    ReviewTask.provider == provider,
+                    ReviewTask.repo_id == repo_id,
+                    ReviewTask.pr_number == pr_number,
+                    ReviewTask.event_type == "mr",
+                    ReviewTask.state == "completed",
+                )
+                .order_by(ReviewTask.id.desc())
+                .limit(1)
+            )).scalar_one_or_none()
+            if row is None or not row.diff_snapshot:
+                return None
+        try:
+            data = json.loads(row.diff_snapshot)
+            return data if isinstance(data, dict) else None
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    async def findings_for_task(self, task_id: int) -> list[ReviewFinding]:
+        """任务全部 finding 行（供 compare 取 after 集）。"""
+        session = session_factory(self._engine)
+        async with session() as s:
+            rows = (await s.execute(
+                select(ReviewFinding).where(ReviewFinding.task_id == task_id)
+                .order_by(ReviewFinding.id)
+            )).scalars().all()
+            return list(rows)
+
+    async def previous_completed_task(
+        self, provider: str, repo_id: str, pr_number: int, exclude_task_id: int
+    ) -> ReviewTask | None:
+        """该 PR 上一次（排除本任务）completed mr 任务，供 compare 取 before 集。"""
+        session = session_factory(self._engine)
+        async with session() as s:
+            return (await s.execute(
+                select(ReviewTask).where(
+                    ReviewTask.provider == provider,
+                    ReviewTask.repo_id == repo_id,
+                    ReviewTask.pr_number == pr_number,
+                    ReviewTask.event_type == "mr",
+                    ReviewTask.state == "completed",
+                    ReviewTask.id != exclude_task_id,
+                )
+                .order_by(ReviewTask.id.desc())
+                .limit(1)
+            )).scalar_one_or_none()

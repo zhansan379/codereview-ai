@@ -17,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from codereview_ai.api.deps import get_current_user, get_db
+from codereview_ai.domain.models import PullRequest
+from codereview_ai.forges.base import repo_path_from_url
 from codereview_ai.storage.models import ReviewTask, _utcnow
 
 logger = logging.getLogger("codereview_ai.api.tasks")
@@ -69,6 +71,27 @@ async def list_tasks(
 _RETRYABLE_SKIPPED_REASONS = {"push_disabled", "branch_mismatch"}
 
 
+def _pr_from_task(row: ReviewTask) -> PullRequest:
+    """从审计行重建一个中立 PR，供补拉同款 fetch 路径重放。
+
+    补拉/补审入队的 MR 任务 `payload` 为空（原始 webhook body 不存在），重试无法用
+    `enqueue` 重放原始事件。这里用行内字段重建一个 `PullRequest`，交给 `enqueue_pr`
+    （补拉通道），worker 消费时走 `review_pull_request` 从平台实时 fetch——不再依赖 body。
+    """
+    return PullRequest(
+        provider=row.provider,
+        repo_id=row.repo_id,
+        repo_full_name=(repo_path_from_url(row.web_url, row.provider) if row.web_url else ""),
+        web_url=row.web_url,
+        pr_number=row.pr_number or 0,
+        title=row.pr_title,
+        source_branch=row.branch,
+        target_branch="",  # 审计行不落 target；fetch_pull_request 会补 diff_refs，target 仅展示用
+        head_sha=row.head_sha,
+        base_sha=row.base_sha,
+    )
+
+
 def _retryable(row: ReviewTask) -> bool:
     """该行是否允许手动重试/补审。
 
@@ -107,12 +130,24 @@ async def retry_task(
     # simple 档队列：仅翻 DB 侧 queued 不会让内存 worker 重新拾取。持原事件且
     # enqueuer 就绪时把任务重新投进队列，worker 才会真去跑；否则退化为只记状态翻转。
     enqueuer = getattr(request.app.state, "enqueuer", None)
-    if enqueuer is not None and row.payload:
-        # push 轨重跑会被幂等预检/门控短路；置 force_rerun 由 worker 强制补审（DESIGN §7.7）。
-        # 仅 push 任务设，避免在 mr 行遗留无意义标记。
-        if row.event_type == "push":
-            row.force_rerun = True
-            await session.commit()
-        await enqueuer.enqueue(row.provider, row.payload.encode())
-        logger.info("重试任务 %s：已重新入队（provider=%s）", row.id, row.provider)
+    re_enqueued = False
+    if enqueuer is not None:
+        if row.payload:
+            # push 轨重跑会被幂等预检/门控短路；置 force_rerun 由 worker 强制补审（DESIGN §7.7）。
+            # 仅 push 任务设，避免在 mr 行遗留无意义标记。
+            if row.event_type == "push":
+                row.force_rerun = True
+                await session.commit()
+            await enqueuer.enqueue(row.provider, row.payload.encode())
+            re_enqueued = True
+        elif row.event_type == "mr" and row.pr_number is not None:
+            # 无原始 body（补拉/补审入队，payload 为空）：重建 PR 走补拉 fetch 路径再审。
+            # 否则任务只翻 queued、内存队列里没有它，会永卡「排队中」。
+            await enqueuer.enqueue_pr(row.provider, _pr_from_task(row))
+            re_enqueued = True
+        else:
+            logger.warning("重试任务 %s：无 payload 且非 mr，无法重放（provider=%s, event=%s）",
+                           row.id, row.provider, row.event_type)
+        if re_enqueued:
+            logger.info("重试任务 %s：已重新入队（provider=%s）", row.id, row.provider)
     return TaskRetried(id=row.id, state=row.state, attempt=row.attempt)

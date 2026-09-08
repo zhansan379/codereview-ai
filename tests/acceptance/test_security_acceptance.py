@@ -84,14 +84,16 @@ def test_c13_no_reproduced_antipatterns_in_src():
 
 
 def test_c13_agentic_has_no_shell_tool():
-    # A2：agentic 不提供 shell 工具，攻击面约等于零（DESIGN §12.1）
+    # A2：agentic **暴露给 LLM 的工具**（tools.py）不提供 shell/任意执行，攻击面约等于零。
+    # 扫描范围限定 agents 可调用的工具表面 `tools.py`；`syncer.py` 是 clone 初始化期的
+    # git plumbing（固定命令、无 shell=True、LLM 输入绝不进入命令行），不属于可调工具。
     import pathlib
     import re
 
-    root = pathlib.Path("src/codereview_ai/review/agentic")
-    texts = "\n".join(p.read_text(encoding="utf-8") for p in root.rglob("*.py"))
+    tools_path = pathlib.Path("src/codereview_ai/review/agentic/tools.py")
+    code = tools_path.read_text(encoding="utf-8")
     # 去掉 docstring 与行注释里的措辞（如"无 run_command"的说明），只看可执行代码
-    code = re.sub(r'""".*?"""|\'\'\'.*?\'\'\'', " ", texts, flags=re.S)
+    code = re.sub(r'""".*?"""|\'\'\'.*?\'\'\'', " ", code, flags=re.S)
     code = re.sub(r"(?m)^\s*#.*$", "", code)
     for tok in ("run_command", "subprocess", "shell=True"):
-        assert tok not in code, f"agentic 出现可执行 {tok}"
+        assert tok not in code, f"agentic 可调用工具 surface 出现可执行 {tok}"

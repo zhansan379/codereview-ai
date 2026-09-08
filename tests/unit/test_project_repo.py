@@ -77,3 +77,17 @@ async def test_config_for_score_threshold_defaults(engine):
     assert cfg is not None
     assert cfg.score_threshold == 80
     assert cfg.enforce_score_threshold is False
+
+
+async def test_config_for_carries_review_strategy(engine):
+    await _seed(engine, provider="github", repo_id="77", review_strategy="agentic")
+    repo = ProjectRepository(engine)
+    cfg = await repo.config_for("github", "77")
+    assert cfg is not None and cfg.review_strategy == "agentic"
+
+
+async def test_config_for_review_strategy_defaults_diff(engine):
+    await _seed(engine, provider="github", repo_id="78")  # 缺省 diff
+    repo = ProjectRepository(engine)
+    cfg = await repo.config_for("github", "78")
+    assert cfg is not None and cfg.review_strategy == "diff"

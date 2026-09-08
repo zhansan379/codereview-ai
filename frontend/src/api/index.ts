@@ -307,6 +307,57 @@ export function deleteReview(id: number): Promise<any> {
 export function setFindingStatus(id: number, status: 'waived' | 'active'): Promise<ReviewFinding> {
   return client.post(`/reviews/findings/${id}/status`, { status }).then((r) => r.data)
 }
+
+// ===== agentic 对话 / 前后对比 =====
+export interface ConversationItem {
+  seq: number
+  phase: string
+  model: string
+  trace_id: string
+  request: any
+  response: any
+  ts: string
+}
+
+export interface ConversationPage {
+  items: ConversationItem[]
+  offset: number
+  limit: number
+  total: number
+  has_more: boolean
+}
+
+// compare 四桶：为后端 `bucket_compare` 平铺的 finding dict。
+export interface CompareBucketItem {
+  content: string
+  category: string
+  severity: string
+  file: string
+  line: number | null
+  old_line: number | null
+  existing_code: string
+  source: string
+}
+
+export interface CompareResult {
+  new: CompareBucketItem[]
+  persisting: CompareBucketItem[]
+  resolved: CompareBucketItem[]
+  not_reviewed: CompareBucketItem[]
+}
+
+export function fetchReviewConversation(
+  id: number,
+  offset = 0,
+  limit = 30,
+): Promise<ConversationPage> {
+  return client
+    .get(`/reviews/${id}/conversation`, { params: { offset, limit } })
+    .then((r) => r.data)
+}
+export function fetchReviewCompare(id: number): Promise<CompareResult> {
+  return client.get(`/reviews/${id}/compare`).then((r) => r.data)
+}
 // Excel 导出：以 blob 请求，返回下载文件原始字节。顶层筛选与列表一致（所见即所导）。
 export function exportReviews(
   params: ReviewFilter & { severities?: string[]; statuses?: string[] },

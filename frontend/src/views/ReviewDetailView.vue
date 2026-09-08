@@ -44,6 +44,16 @@
         <b>跳过原因</b>
         <pre class="analysis-text">{{ detail.error || 'push 审查未开启或该分支未命中规则，仅记录未审查。' }}</pre>
       </div>
+
+      <!-- agentic 原始对话 / 前后增量对比入口 -->
+      <div v-if="detail.event_type === 'mr'" class="agent-links">
+        <el-button type="primary" plain @click="$router.push(`/reviews/${id}/conversation`)">
+          <el-icon><ChatDotRound /></el-icon>&nbsp;原始对话
+        </el-button>
+        <el-button type="success" plain @click="$router.push(`/reviews/${id}/compare`)">
+          <el-icon><DataAnalysis /></el-icon>&nbsp;对比上次
+        </el-button>
+      </div>
     </el-card>
 
     <!-- push 轨：提交消息（多行）单独展示，不当标题 -->
@@ -135,6 +145,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { ChatDotRound, DataAnalysis } from '@element-plus/icons-vue'
 import { getReview, setFindingStatus, type ReviewDetail, type ReviewFinding } from '../api'
 import { formatTime, stateTagType, stateLabel } from '../utils/format'
 
@@ -223,6 +234,11 @@ onMounted(load)
   word-break: break-word;
   font-size: 13px;
   line-height: 1.6;
+}
+.agent-links {
+  margin-top: 16px;
+  display: flex;
+  gap: 12px;
 }
 .summary {
   white-space: pre-wrap;

@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -126,6 +127,24 @@ def test_code_comment_normalizes_bad_category(tmp_path):
     assert f.severity == Severity.LOW
 
 
+def test_code_comment_line_anchor_parsed(tmp_path):
+    # code_comment 带 line → Finding.line 填充（agent 读 clone 全仓的行号 = diff 新侧行号）
+    ctx = _new_ctx(tmp_path)
+    state = ToolState()
+    runner = ToolRunner(ctx, state)
+    runner.run_one("code_comment", {"comments": [
+        {"path": "b.py", "content": "x", "line": 42, "old_line": 3}]})
+    f = state.comments[0]
+    assert f.line == 42
+    assert f.old_line == 3
+    # 非法/缺省 line → None（回落总结），不抛
+    st2 = ToolState()
+    ToolRunner(ctx, st2).run_one("code_comment", {"comments": [
+        {"path": "b.py", "content": "y", "line": "abc"},
+        {"path": "b.py", "content": "z"}]})
+    assert all(f.line is None for f in st2.comments)
+
+
 def test_task_done_flags(tmp_path):
     ctx = _new_ctx(tmp_path)
     state = ToolState()
@@ -137,6 +156,25 @@ def test_task_done_flags(tmp_path):
 def test_tool_schemas_grace_only_two(tmp_path):
     names = tool_schemas(["code_comment", "task_done"])
     assert {t["function"]["name"] for t in names} == {"code_comment", "task_done"}
+
+
+def test_code_comment_schema_is_nested_array_of_objects():
+    # 修法回归：code_comment 的 comments 必须是标准 `array → items(object)` 嵌套结构——
+    # 带类型、必填、category/severity 枚举。之前是 type:"string"，模型拿不到结构只能
+    # 蒙，把正文塞进 content 外的键导致 _t_code_comment 整条丢弃（0 findings 根因）。
+    schemas = {t["function"]["name"]: t["function"] for t in tool_schemas()}
+    cc = schemas["code_comment"]
+    comments = cc["parameters"]["properties"]["comments"]
+    assert comments["type"] == "array"
+    items = comments["items"]
+    assert items["type"] == "object"
+    props = items["properties"]
+    assert props["path"]["type"] == "string"
+    assert props["content"]["type"] == "string"
+    assert props["line"]["type"] == "integer"
+    assert set(items["required"]) == {"path", "content"}
+    assert "bug" in props["category"]["enum"]
+    assert props["severity"]["enum"] == ["critical", "high", "medium", "low"]
 
 
 # ── llmloop（§12.3）───────────────────────────────────────────────────
@@ -156,6 +194,38 @@ async def test_llmloop_tool_roundtrip(tmp_path):
     assert result.reason == "task_done"
     assert len(result.comments) == 1
     assert result.comments[0].source == "agent"
+
+
+async def test_llmloop_tool_pair_wire_format(tmp_path):
+    # OpenAI/DeepSeek 契约：assistant 带 tool_calls(含 id)，随后 tool 消息以 tool_call_id 指回。
+    # 此 bug 离线 fake 看不见，只有真实 API 会拒（missing field tool_call_id）。
+    (tmp_path / "a.py").write_text("x = 1\n", "utf-8")
+    ctx = _new_ctx(tmp_path)
+    seen: list[list[dict]] = []
+
+    def make_llm():
+        class _WireLLM:
+            async def chat(self, messages, _tools):  # noqa: ANN001
+                seen.append(messages)
+                if not seen[0] or len([m for m in messages if m["role"] == "tool"]) == 0:
+                    return AgentTurn(tool_calls=[ToolCall("read_file", {"file_path": "a.py"})])
+                return AgentTurn(tool_calls=[ToolCall("task_done", {"state": "DONE"})])
+
+            async def summarize(self, _f, _c) -> str:
+                return "s"
+
+        return _WireLLM()
+
+    await run_agent_session(make_llm(), ToolRunner(ctx, ToolState()), "审查 a.py")
+    # 第一次 chat 后，下一次会话里应出现完整配对：assistant(tool_calls) → tool(tool_call_id)
+    pair_msgs = seen[1]
+    assistant = next(m for m in pair_msgs if m["role"] == "assistant" and m.get("tool_calls"))
+    cid = assistant["tool_calls"][0]["id"]
+    tool = next(m for m in pair_msgs if m["role"] == "tool")
+    assert cid and tool["tool_call_id"] == cid
+    assert tool["name"] == "read_file"
+    assert "tool_name" not in tool  # 非标准字段应去掉
+    assert assistant["tool_calls"][0]["function"]["name"] == "read_file"
 
 
 async def test_llmloop_empty_rounds_exhaust(tmp_path):
@@ -187,6 +257,31 @@ async def test_llmloop_grace_run_only_two_tools(tmp_path):
     )
     assert result.reason in {"task_done", "grace_round"}
     assert seen_tools and set(seen_tools[-1]) == {"code_comment", "task_done"}
+
+
+async def test_llmloop_iteration_cap_forces_conclusion(tmp_path):
+    # 爱"只探索不收尾"的模型（只 read_file，永不 task_done）——迭代触顶必须进 grace，
+    # 末轮只放 code_comment/task_done 逼它收敛；否则会撞 max_iterations 空手 break。
+    ctx = _new_ctx(tmp_path)
+    seen: list[set[str]] = []
+
+    class _StallLLM:
+        async def chat(self, _m, tools) -> AgentTurn:  # noqa: ANN001
+            names = {t["function"]["name"] for t in tools}
+            seen.append(names)
+            if names == {"code_comment", "task_done"}:
+                return AgentTurn(tool_calls=[ToolCall("task_done", {"state": "DONE"})])
+            return AgentTurn(tool_calls=[ToolCall("read_file", {"file_path": "a.py"})])
+
+        async def summarize(self, _f, _c) -> str:
+            return "s"
+
+    result = await run_agent_session(
+        _StallLLM(), ToolRunner(ctx, ToolState()), "审查",
+        cfg=AgentConfig(max_iterations=3),
+    )
+    assert result.reason == "task_done"
+    assert seen and set(seen[-1]) == {"code_comment", "task_done"}  # 末轮工具被收窄逼收尾
 
 
 async def test_llmloop_sync_compress_applies_summary(tmp_path):
@@ -282,6 +377,30 @@ async def test_run_agentic_review_source_agent(tmp_path):
     assert runtime._tmp is None  # stop 已清理
 
 
+async def test_run_agentic_review_line_goes_inline(tmp_path):
+    # agent 报 line（=clone 全仓读到的新侧行号）→ finding.line 填充 → partition 分发到行级 inline
+    raw = "--- a/a.py\n+++ b/a.py\n@@ -1 +1,2 @@\n ctx\n+added\n"
+    diffs = [FileDiff("a.py", "a.py", raw, 1, 0, ChangeType.MODIFIED, "ctx\nadded\n")]
+    runtime = FakeRuntime()
+
+    def factory():
+        return _FakeLLM([
+            AgentTurn(tool_calls=[ToolCall("code_comment", {"comments": [
+                {"path": "a.py", "content": "问题", "category": "bug",
+                 "severity": "high", "line": 2}]})]),
+            AgentTurn(tool_calls=[ToolCall("task_done", {"state": "DONE"})]),
+        ])
+
+    result = await run_agentic_review(runtime, factory, diffs)
+    assert len(result.findings) == 1
+    assert result.findings[0].line == 2
+    from codereview_ai.review.result_writer import partition_findings
+
+    inline, textual = partition_findings(result.findings, diffs)
+    assert len(inline) == 1  # 新增行 2 在可评论集合内 → 逐行 inline，而非总结
+    assert textual == []
+
+
 async def test_run_agentic_review_llm_failure_raises(tmp_path):
     runtime = FakeRuntime()
 
@@ -308,7 +427,7 @@ class _BrokenRuntime:
     async def guard(self) -> None:
         return None
 
-    async def start(self, diffs) -> None:
+    async def start(self, pr, diffs) -> None:
         raise SandboxDisabled("沙箱默认关")
 
     async def stop(self) -> None:
@@ -328,6 +447,21 @@ async def test_strategy_agentic_degrades_to_diff(tmp_path):
     assert result.findings[0].content == "diff 意见"
 
 
+async def test_strategy_agentic_zero_findings_falls_back_to_diff(tmp_path):
+    # agentic 跑完但 0 条意见（agent 未调用 code_comment）→ 降级普通 diff 审查兜底，绝不高成空成功
+    from codereview_ai.worker import _review_agent_or_diff
+
+    result = await _review_agent_or_diff(
+        _FakeReviewer(), None, _pr(), "t", _diffs(tmp_path), [],
+        strategy="agentic", agent_runtime=FakeRuntime(),
+        agent_llm_factory=lambda: _FakeLLM(
+            [AgentTurn(tool_calls=[ToolCall("task_done", {"state": "DONE"})])]),
+    )
+    assert len(result.findings) == 1
+    assert result.findings[0].content == "diff 意见"  # 来自 diff 兜底，而非空 agentic
+    assert result.findings[0].source != "agent"
+
+
 async def test_strategy_diff_uses_diff_review(tmp_path):
     from codereview_ai.worker import _review_agent_or_diff
 
@@ -336,3 +470,67 @@ async def test_strategy_diff_uses_diff_review(tmp_path):
         strategy="diff", agent_runtime=None, agent_llm_factory=None,
     )
     assert result.findings[0].content == "diff 意见"
+
+
+# ── 组并发（§12.5：group_concurrency 有界信号量）─────────────────────────
+
+
+class _ConcurrencyTracker:
+    """跨组共享：记录 chat 里同时在飞的最大会话数，证明组是并发而非串行。"""
+
+    def __init__(self) -> None:
+        self.active = 0
+        self.max_active = 0
+
+
+class _TrackedLLM:
+    def __init__(self, tracker: _ConcurrencyTracker) -> None:
+        self._tracker = tracker
+
+    async def chat(self, _messages, _tools) -> AgentTurn:  # noqa: ANN001
+        self._tracker.active += 1
+        self._tracker.max_active = max(self._tracker.max_active, self._tracker.active)
+        await asyncio.sleep(0.05)  # 人为制造重叠窗口，暴露并发度
+        self._tracker.active -= 1
+        return AgentTurn(tool_calls=[ToolCall("task_done", {"state": "DONE"})])
+
+    async def summarize(self, _frozen, _compress) -> str:
+        return "s"
+
+
+def _tracker_factory(tracker: _ConcurrencyTracker):
+    return lambda: _TrackedLLM(tracker)
+
+
+class _FakeGrouper:
+    """每个文件单独成组，方便造出 N 组并发。"""
+
+    async def group(self, diffs):  # noqa: ANN001
+        return [[d] for d in diffs]
+
+
+async def _run_concurrent(tmp_path, concurrency: int) -> _ConcurrencyTracker:
+    diffs = [FileDiff(f"{p}.py", f"{p}.py", "+ x = 1\n", 1, 0, ChangeType.MODIFIED,
+                      "x = 1\n") for p in ("a", "b", "c", "d")]
+    for p in ("a", "b", "c", "d"):
+        (tmp_path / f"{p}.py").write_text("x = 1\n", "utf-8")
+    runtime = FakeRuntime()
+    tracker = _ConcurrencyTracker()
+    result = await run_agentic_review(
+        runtime, _tracker_factory(tracker), diffs, cfg=AgentConfig(group_concurrency=concurrency),
+        grouper=_FakeGrouper(),
+    )
+    assert result.summary.startswith("agentic 共报告")
+    return tracker
+
+
+async def test_group_concurrency_bounded_by_gather(tmp_path):
+    # concurrency=4、4 组 → 峰值在飞 4（asyncio.gather + Semaphore 全放行）
+    tracker = await _run_concurrent(tmp_path, 4)
+    assert tracker.max_active == 4
+
+
+async def test_group_concurrency_serial_when_one(tmp_path):
+    # concurrency=1 → 串行，峰值在飞 1（信号量扣死）
+    tracker = await _run_concurrent(tmp_path, 1)
+    assert tracker.max_active == 1

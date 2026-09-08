@@ -31,6 +31,8 @@ class ProjectConfig:
     # F3.7 评分阈值：enforce 开通时，总分低于 score_threshold 发 failed 阻塞合并
     score_threshold: int = 80
     enforce_score_threshold: bool = False
+    # 审查策略：diff | agentic；worker 据其在 _do_review_pull_request 覆盖全局默认
+    review_strategy: str = "diff"
 
 
 class ProjectRepository:
@@ -66,4 +68,5 @@ class ProjectRepository:
             web_url=row.web_url or "",
             score_threshold=row.score_threshold,
             enforce_score_threshold=row.enforce_score_threshold,
+            review_strategy=row.review_strategy or "diff",
         )

@@ -31,6 +31,16 @@ const router = createRouter({
           component: () => import('../views/ReviewDetailView.vue'),
         },
         {
+          path: '/reviews/:id/conversation',
+          name: 'ReviewConversation',
+          component: () => import('../views/ConversationView.vue'),
+        },
+        {
+          path: '/reviews/:id/compare',
+          name: 'ReviewCompare',
+          component: () => import('../views/CompareView.vue'),
+        },
+        {
           path: '/projects',
           name: 'Projects',
           component: () => import('../views/ProjectsView.vue'),
