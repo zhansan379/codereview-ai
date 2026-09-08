@@ -88,6 +88,7 @@
         </el-form-item>
         <el-form-item label="@阈值">
           <el-input-number v-model="form.at_threshold" :min="0" />
+          <div class="form-tip">评分低于此阈值才 @提交者；达标则不 @，避免打扰。</div>
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
