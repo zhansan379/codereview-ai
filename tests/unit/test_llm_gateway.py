@@ -11,6 +11,7 @@ from codereview_ai.review.llm_gateway import (
     LLMGateway,
     parse_review_json,
     repair_json,
+    repair_json_array,
 )
 
 CLEAN = {
@@ -129,6 +130,44 @@ def test_repair_json_truncates_to_last_brace():
 
 def test_repair_json_returns_none_on_unrecoverable():
     assert repair_json("totally not json") is None
+
+
+# ── repair_json_array（OCR grouping 顶层数组输出） ───────────────────────
+
+
+def test_repair_json_array_valid():
+    assert repair_json_array('[{"label": "a", "files": ["a.py", "b.py"]}]') == [
+        {"label": "a", "files": ["a.py", "b.py"]}
+    ]
+
+
+def test_repair_json_array_strips_fence():
+    assert repair_json_array('```json\n[{"label": "a", "files": ["a.py"]}]\n```') == [
+        {"label": "a", "files": ["a.py"]}
+    ]
+
+
+def test_repair_json_array_fixes_trailing_comma():
+    assert repair_json_array('[{"label": "a", "files": ["a.py"],},]') == [
+        {"label": "a", "files": ["a.py"]}
+    ]
+
+
+def test_repair_json_array_unquoted_keys():
+    assert repair_json_array('[{label: "a", files: ["a.py"]}]') == [
+        {"label": "a", "files": ["a.py"]}
+    ]
+
+
+def test_repair_json_array_truncates_trailing_text():
+    assert repair_json_array('[{"label": "a", "files": ["a.py"]}] 以上就是分组结果') == [
+        {"label": "a", "files": ["a.py"]}
+    ]
+
+
+def test_repair_json_array_returns_none_on_unrecoverable():
+    assert repair_json_array("totally not json") is None
+    assert repair_json_array("{}") is None  # 目标是数组，dict 一律 None
 
 
 def test_parse_review_json_clean_dict():

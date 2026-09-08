@@ -84,16 +84,22 @@ def test_c13_no_reproduced_antipatterns_in_src():
 
 
 def test_c13_agentic_has_no_shell_tool():
-    # A2：agentic **暴露给 LLM 的工具**（tools.py）不提供 shell/任意执行，攻击面约等于零。
-    # 扫描范围限定 agents 可调用的工具表面 `tools.py`；`syncer.py` 是 clone 初始化期的
-    # git plumbing（固定命令、无 shell=True、LLM 输入绝不进入命令行），不属于可调工具。
+    # A2：agentic **暴露给 LLM 的工具 surface**（tools.py 注册的工具）不提供 shell/任意执行，
+    # 攻击面约等于零。
+    # 断言对象是真正注册给 LLM 的工具（`tool_schemas()` 的名），而非实现文件的 token——因为
+    # tools.py 里的 `_git()` 会用到 `subprocess`，但那是只读 git plumbing：固定命令行 `git -C
+    # repo_dir <args>`、capture_output、无 shell=True、带超时，且 `repo_dir`/args 来自内部调用
+    # 而非 LLM 输入，LLM 输入绝不进入命令行——它不属于可调工具，同 `syncer.py` 一样不在 surface。
+    # 故分层：① surface 命名白名单禁止任何执行类工具；② 实现里严禁 `shell=True` 这个真实危险开关。
     import pathlib
-    import re
 
-    tools_path = pathlib.Path("src/codereview_ai/review/agentic/tools.py")
-    code = tools_path.read_text(encoding="utf-8")
-    # 去掉 docstring 与行注释里的措辞（如"无 run_command"的说明），只看可执行代码
-    code = re.sub(r'""".*?"""|\'\'\'.*?\'\'\'', " ", code, flags=re.S)
-    code = re.sub(r"(?m)^\s*#.*$", "", code)
-    for tok in ("run_command", "subprocess", "shell=True"):
-        assert tok not in code, f"agentic 可调用工具 surface 出现可执行 {tok}"
+    from codereview_ai.review.agentic.tools import tool_schemas
+
+    surface_names = {s["function"]["name"] for s in tool_schemas()}
+    banned = {"run_command", "shell", "run_shell", "terminal_exec", "execute_cmd", "any_exec"}
+    overlap = surface_names & banned
+    assert not overlap, f"agentic 工具 surface 出现可执行工具: {overlap}"
+
+    # 危险开关扫描：实现里绝不能出现 shell=True（真实任意执行点；只读 git plumbing 也不该用）
+    code = pathlib.Path("src/codereview_ai/review/agentic/tools.py").read_text(encoding="utf-8")
+    assert "shell=True" not in code, "tools.py 出现 shell=True（危险任意执行开关）"

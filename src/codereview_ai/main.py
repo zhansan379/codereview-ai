@@ -137,6 +137,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # （worker 三条件不满足自动走 diff，不在这里抛错）。async token 回调按 provider
             # 实时取平台 token 供 clone，DB/env 热更即时生效。
             agent_runtime = agent_llm_factory = agent_config = None
+            grouper = None  # §7.2 LLM 语义分组；agentic 未启用或无 LLM 时留 None（worker 走整组/diff）
             if settings.agent_review_enabled:
                 async def _agent_token_for(provider: str) -> str | None:
                     try:
@@ -175,6 +176,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         return build_agent_llm(agent_resolved)
 
                     agent_llm_factory = _agent_llm_factory
+                    # §7.2 LLM 语义分组：复用 agent 同一根 LLM 档位做一次最便宜元数据调用，
+                    # 让 ≥4 文件的大变更真走分组并发；失败/不可行由 SemanticGrouper 降级 per-file。
+                    from codereview_ai.review.group_gateway import LLMGroupAdapter
+                    from codereview_ai.review.grouping import SemanticGrouper
+                    from codereview_ai.review.llm_gateway import LLMGateway
+
+                    grouper = SemanticGrouper(LLMGroupAdapter(LLMGateway(
+                        model=agent_resolved.model,
+                        api_key=agent_resolved.api_key,
+                        base_url=agent_resolved.base_url,
+                        max_tokens=agent_resolved.max_tokens,
+                        temperature=agent_resolved.temperature,
+                        json_object=True,
+                    )))
                     logger.info("agentic 审查已启用（clone 缓存：%s，轮数=%d）",
                                 cache_root, settings.agent_max_iterations)
                 else:
@@ -186,6 +201,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 engine=engine,
                 agent_runtime=agent_runtime, agent_llm_factory=agent_llm_factory,
                 agent_config=agent_config,
+                grouper=grouper,
                 agent_conversation_enabled=settings.agent_conversation_enabled,
                 agent_reuse_enabled=settings.agent_reuse_enabled,
                 project_config_factory=project_repo.config_for,

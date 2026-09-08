@@ -3,7 +3,8 @@
 - `ToolCallingLLM` 实现 `llmloop.AgentLLM` protocol：
   - `chat(messages, tools)` —— 走 `litellm.acompletion(..., tools=...)`，把响应的
     `tool_calls` 解析成 `AgentTurn`/`ToolCall`，失败归一为 `LLMError`（由主链降级）。
-  - `summarize(system_prompt, compress_messages)` —— 无工具轻量调用，产出三区压缩摘要。
+  - `summarize(system_prompt, compress_messages)` —— 无工具轻量调用，按 OCR memory_compression
+    五维契约产出结构化压缩摘要（已确认问题带 file+severity）。
 - 复用 `llm_gateway.LLMError` 的失败语义，与 diff 审查路径一致。
 - 构造参数对齐 `ResolvedLLM`（model/api_key/base_url/max_tokens/temperature），
   `build_agent_llm()` 供生产接线从 DB 解析结果直接建实例。
@@ -19,6 +20,7 @@ from typing import Any
 from codereview_ai.config.repository import ResolvedLLM
 from codereview_ai.review.agentic.capture import ACTIVE_PHASE, ACTIVE_RECORDER
 from codereview_ai.review.agentic.llmloop import AgentTurn, ToolCall
+from codereview_ai.review.agentic.prompts import MEMORY_COMPRESSION_SYSTEM
 from codereview_ai.review.llm_gateway import LLMError
 
 logger = logging.getLogger("codereview_ai.agentic.adapter")
@@ -137,14 +139,15 @@ class ToolCallingLLM:
         return AgentTurn(content=str(content), tool_calls=tool_calls)
 
     async def summarize(self, system_prompt: str, compress_messages: list[dict[str, Any]]) -> str:
-        """对压缩区做一次无工具摘要调用；失败抛 `LLMError`（调用方「压缩失败不截断」）。"""
-        prompt = (
-            "把下面的对话压缩成一段简短中文摘要，保留已审查的结论、已发现的问题与"
-            "待查的关键点，供后续轮次沿用。只输出摘要正文。"
-        )
+        """对压缩区做一次无工具摘要调用；失败抛 `LLMError`（调用方「压缩失败不截断」）。
+
+        用 OCR memory_compression 五维契约（已确认问题带 file+severity / 工具结论 /
+        已完成 / 待办 / 当前焦点）摘摘要，保证压缩不丢已确认的证据；`compress_messages`
+        即模板 user 侧的 `{{context}}`（`_split_zones` 的 frozen 已含原 system+首条 user）。
+        """
         messages = [
             {"role": "system", "content": system_prompt or "你是代码审查 agent。"},
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": MEMORY_COMPRESSION_SYSTEM},
             *compress_messages,
         ]
         try:

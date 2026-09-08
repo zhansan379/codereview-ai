@@ -576,3 +576,39 @@ async def test_group_concurrency_serial_when_one(tmp_path):
     # concurrency=1 → 串行，峰值在飞 1（信号量扣死）
     tracker = await _run_concurrent(tmp_path, 1)
     assert tracker.max_active == 1
+
+# ── llm_adapter.summarize：OCR memory_compression 五维契约 ─────────────
+def test_summarize_uses_memory_compression_template():
+    """压缩用 OCR 五维契约（保留 file+severity）取代原中文一句话，上下文仍是压缩对象。"""
+    import asyncio
+
+    from codereview_ai.review.agentic.llm_adapter import ToolCallingLLM
+    from codereview_ai.review.agentic.prompts import MEMORY_COMPRESSION_SYSTEM
+
+    seen: dict = {}
+
+    class _M:
+        content = "五维摘要"
+
+    class _C:
+        message = _M()
+
+    class _R:
+        choices = [_C()]
+
+    async def fake_backend(messages, tools):
+        seen["messages"] = messages
+        return _R()
+
+    llm = ToolCallingLLM(model="fake/model", backend=fake_backend)
+    asyncio.run(llm.summarize("sys", [{"role": "user", "content": "待压缩上下文"}]))
+
+    msgs = seen["messages"]
+    # user 位装的是 OCR memory_compression 契约模板（保留文件路径 + 严重度的五维结构）
+    assert msgs[1]["role"] == "user"
+    assert msgs[1]["content"] == MEMORY_COMPRESSION_SYSTEM
+    assert "Confirmed Code Issues" in msgs[1]["content"] or "Identified Code Issues" in msgs[1]["content"]
+    # 原中文一句话已移除
+    assert "把下面的对话压缩成一段简短中文摘要" not in msgs[1]["content"]
+    # compress_messages 仍作为 {{context}} 原样追加在后
+    assert msgs[-1] == {"role": "user", "content": "待压缩上下文"}
