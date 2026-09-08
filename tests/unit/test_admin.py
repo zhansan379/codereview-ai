@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from codereview_ai.api.admin import forges, notifiers, projects, pull, reviews, tasks
 from codereview_ai.api.admin import models as admin_models
+from codereview_ai.api.admin import settings as admin_settings
 from codereview_ai.api.auth import issue_token
 from codereview_ai.api.auth import router as auth_router
 from codereview_ai.config.repository import ConfigRepository
@@ -33,7 +34,10 @@ async def app(tmp_path) -> AsyncIterator[tuple[FastAPI, str]]:
     engine = create_engine(url)
     await init_db(engine)
 
-    settings = type("S", (), {"secret_key": "s", "encryption_key": _fernet_key()})()
+    settings = type("S", (), {
+        "secret_key": "s", "encryption_key": _fernet_key(),
+        "push_review_enabled": False,  # §7.7 全局默认 env；无落库行时回落此值
+    })()
 
     fast = FastAPI()
     fast.state.engine = engine
@@ -48,6 +52,7 @@ async def app(tmp_path) -> AsyncIterator[tuple[FastAPI, str]]:
     fast.include_router(reviews.router, prefix="/api")
     fast.include_router(tasks.router, prefix="/api")
     fast.include_router(pull.router, prefix="/api")
+    fast.include_router(admin_settings.router, prefix="/api")
 
     token = issue_token(settings.secret_key)
     try:
@@ -207,6 +212,24 @@ def test_notifiers_crud_and_masking(app):
         assert c.get("/api/notifiers").json()[0]["webhook"] == "******"
         assert c.delete(f"/api/notifiers/{nid}").status_code == 204
         assert c.delete(f"/api/notifiers/{nid}").status_code == 404
+
+
+def test_push_review_default_api_roundtrip(app):
+    """§7.7 全局自动审查默认开关 API：初始回落 env、POST 落库、GET 读回 db 与紧源码。"""
+    fast, token = app
+    with _client(fast, token) as c:
+        # 无落库行 → 回落 env 默认（settings.push_review_enabled=False），source=env
+        g = c.get("/api/settings/push-review-default").json()
+        assert g == {"enabled": False, "source": "env"}
+
+        # 开启并落库 → source=db，后续 GET 读回库值
+        r = c.post("/api/settings/push-review-default", json={"enabled": True}).json()
+        assert r == {"enabled": True, "source": "db"}
+        assert c.get("/api/settings/push-review-default").json()["enabled"] is True
+
+        # 关闭 → 库值覆盖，不回落 env
+        r = c.post("/api/settings/push-review-default", json={"enabled": False}).json()
+        assert r == {"enabled": False, "source": "db"}
 
 
 def test_reviews_list_pagination_and_detail(app):

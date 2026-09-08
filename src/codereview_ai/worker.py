@@ -33,6 +33,7 @@ from codereview_ai.review.agentic.llmloop import AgentConfig, AgentLLM
 from codereview_ai.review.agentic.sandbox import SandboxDisabled, SandboxRuntime, run_agentic_review
 from codereview_ai.review.group_review import review_in_groups
 from codereview_ai.review.grouping import SemanticGrouper
+from codereview_ai.storage.setting_repo import PUSH_REVIEW_DEFAULT_KEY, SettingRepository
 from codereview_ai.review.increments import (
     REASON_ALREADY,
     IncrementReference,
@@ -652,12 +653,13 @@ async def process_raw_event(
         ev = forge.parse_push_event(data)
         if ev is None:
             return  # 非 merge_request 也非 push 事件：任务即完成，无需回写
+        setting_repo = SettingRepository(engine) if engine is not None else None
         await _review_push_event(
             forge, reviewer, ev, review_repo=review_repo, grouper=grouper,
             notifier=notifier, push_gate=push_gate, static_analyzer=static_analyzer,
             review_strategy=review_strategy, agent_runtime=agent_runtime,
             agent_llm_factory=agent_llm_factory, agent_config=agent_config,
-            project_config_factory=project_config_factory,
+            project_config_factory=project_config_factory, setting_repo=setting_repo,
             raw_payload=raw.decode("utf-8", "replace"),
         )
         return
@@ -694,6 +696,7 @@ async def _review_push_event(
     agent_llm_factory: Callable[[], AgentLLM] | None = None,
     agent_config: AgentConfig | None = None,
     project_config_factory: ProjectConfigFactory | None = None,
+    setting_repo: SettingRepository | None = None,
     raw_payload: str = "",
 ) -> None:
     """push 轨审查（DESIGN §7.7）：幂等落审计行 → 门控 → 差量三分支 → 单条总结回写。
@@ -741,9 +744,15 @@ async def _review_push_event(
                     error="push 事件为删除分支，仅记录未审查",
                 )
             return
-        # 门控解析：enabled / branch_match = 全局 env 默认（push_gate）→ 项目显式覆盖（cfg）
+        # 门控解析：enabled / branch_match = 全局默认 → 项目显式覆盖（cfg）
+        # 全局默认 = app_setting `push_review_default`（后台「自动审查触发」可热更）
+        #   → 无落库行则回落到 env/push_gate；项目 push_enabled 仍可单独覆盖
         enabled = push_gate.enabled if push_gate is not None else False
         branch_match = push_gate.branch_match if push_gate is not None else None
+        if setting_repo is not None:
+            db_default = await setting_repo.get_bool_optional(PUSH_REVIEW_DEFAULT_KEY)
+            if db_default is not None:
+                enabled = db_default
         if cfg is not None and cfg.push_enabled is not None:
             enabled = cfg.push_enabled
         if cfg is not None and cfg.push_branch_globs:

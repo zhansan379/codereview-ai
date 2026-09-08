@@ -12,6 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from codereview_ai.storage.db import session_factory
 from codereview_ai.storage.models import AppSetting
 
+#: push 轨全局默认开关的键（值 "1"/"0"）。worker 按 push 事件热读，缺行则回落到 env
+#: `CR_PUSH_REVIEW_ENABLED`；项目级 `push_enabled` 仍可覆盖（follow/enforce 双态）。
+PUSH_REVIEW_DEFAULT_KEY = "push_review_default"
+
 
 class SettingRepository:
     """`app_setting` 表读取/写入；值一律存字符串，调用方按需转换。"""
@@ -48,3 +52,15 @@ class SettingRepository:
             return int(raw)
         except ValueError:
             return default
+
+    async def get_bool_optional(self, key: str) -> bool | None:
+        """读布尔键；缺行/非法 → `None`（调用方决定回落到 env 默认）。"""
+        raw = await self.get(key)
+        if raw is None:
+            return None
+        v = raw.strip().lower()
+        if v in ("1", "true", "yes", "on"):
+            return True
+        if v in ("0", "false", "no", "off"):
+            return False
+        return None
