@@ -146,3 +146,19 @@ async def test_setting_repo_roundtrip(tmp_path):
         assert await repo.get_int("worker_concurrency", 7) == 7  # 非法回落
     finally:
         await engine.dispose()
+
+
+async def test_setting_repo_get_bool_optional(tmp_path):
+    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'settings.db'}")
+    await init_db(engine)
+    try:
+        repo = SettingRepository(engine)
+        assert await repo.get_bool_optional("missing") is None  # 缺行 → None
+        await repo.set("push_review_default", "1")
+        assert await repo.get_bool_optional("push_review_default") is True
+        await repo.set("push_review_default", "0")
+        assert await repo.get_bool_optional("push_review_default") is False
+        await repo.set("push_review_default", "junk")
+        assert await repo.get_bool_optional("push_review_default") is None  # 非法回落
+    finally:
+        await engine.dispose()

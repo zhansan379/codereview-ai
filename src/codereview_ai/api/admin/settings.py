@@ -1,12 +1,17 @@
-"""全局运行时设置 REST（当前：审查并发数）。
+"""全局运行时设置 REST（当前：审查并发数 + push 自动审查默认开关）。
 
-并发值存 `app_setting["worker_concurrency"]`（落 DB，重启保留）；改动经
-`request.app.state.worker_pool.resize(n)` 即时热更生效，无需重启后端。
+- 并发值存 `app_setting["worker_concurrency"]`（落 DB，重启保留）；改动经
+  `request.app.state.worker_pool.resize(n)` 即时热更生效，无需重启后端。
+- push 自动审查默认开关存 `app_setting["push_review_default"]`；worker 按事件热读，
+  缺行回落到 env `CR_PUSH_REVIEW_ENABLED`。项目级 `push_enabled` 仍可单独覆盖。
 
 - `GET /settings/concurrency`：读当前并发（库值；缺省回落到 env
   `CR_MAX_CONCURRENT_REVIEWS`）+ `active`（worker 池是否在跑）。
 - `POST /settings/concurrency`：写库并热更；`applied` = 是否已即时生效
   （worker 未启动时只落库，待运行器就绪后按库值生效——与 SchedulesView 一致的落库待生效语义）。
+- `GET /settings/push-review-default`：读全局 push 自动审查默认开关；`source` 标
+  `"db"`（落库生效）或 `"env"`（无落库行，由 env `CR_PUSH_REVIEW_ENABLED` 决定）。
+- `POST /settings/push-review-default`：写库并热更（worker 每事件热读即生效，不依赖重启）。
 读/写无需 worker 也允许。
 """
 
@@ -17,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from codereview_ai.api.deps import get_current_user
 from codereview_ai.queue.concurrency import WORKER_LOOP_CAP
-from codereview_ai.storage.setting_repo import SettingRepository
+from codereview_ai.storage.setting_repo import PUSH_REVIEW_DEFAULT_KEY, SettingRepository
 
 router = APIRouter(prefix="/settings", dependencies=[Depends(get_current_user)])
 
@@ -66,3 +71,33 @@ async def set_concurrency(
         pool.resize(value)  # 热更：调大即时抢额度，调小不打断在跑审查
         applied = True
     return ConcurrencyOut(concurrency=value, active=pool is not None, applied=applied)
+
+
+# —— push 自动审查默认开关（§7.7 全局默认；项目级仍可覆盖）——
+
+class PushReviewDefaultOut(BaseModel):
+    enabled: bool
+    source: str  # "db"（落库生效）| "env"（无落库行，跟随 CR_PUSH_REVIEW_ENABLED）
+
+
+class PushReviewDefaultWrite(BaseModel):
+    enabled: bool
+
+
+@router.get("/push-review-default", response_model=PushReviewDefaultOut)
+async def get_push_review_default(request: Request) -> PushReviewDefaultOut:
+    repo = _repo(request)
+    env_default = request.app.state.settings.push_review_enabled
+    db_value = await repo.get_bool_optional(PUSH_REVIEW_DEFAULT_KEY)
+    if db_value is not None:
+        return PushReviewDefaultOut(enabled=db_value, source="db")
+    return PushReviewDefaultOut(enabled=env_default, source="env")
+
+
+@router.post("/push-review-default", response_model=PushReviewDefaultOut)
+async def set_push_review_default(
+    body: PushReviewDefaultWrite, request: Request
+) -> PushReviewDefaultOut:
+    await _repo(request).set(PUSH_REVIEW_DEFAULT_KEY, "1" if body.enabled else "0")
+    # worker 每次 push 事件热读本键即生效，无需重启后端
+    return PushReviewDefaultOut(enabled=body.enabled, source="db")

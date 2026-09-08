@@ -27,6 +27,7 @@ from codereview_ai.forges.gitlab import parse_push_event_payload
 from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.models import ReviewFinding, ReviewTask
 from codereview_ai.storage.project_repo import ProjectConfig
+from codereview_ai.storage.setting_repo import PUSH_REVIEW_DEFAULT_KEY, SettingRepository
 from codereview_ai.storage.review_repo import ReviewRepository
 from codereview_ai.worker import PushGate, build_push_summary, process_raw_event
 
@@ -208,6 +209,33 @@ async def test_push_default_off_records_skipped_audit(tmp_path):
         assert task.error == "push 审查未开启（默认关闭），仅记录未审查"
         # skipped 分型：门控/配置类 → 可供「补审」（DESIGN §7.7）
         assert task.skip_reason == "push_disabled"
+    assert reviewer.calls == 0 and forge.summaries == []
+    await engine.dispose()
+
+
+async def test_push_global_default_db_on_overrides_off_env_gate(tmp_path):
+    """全局默认热读 app_setting：落库「开」优先于 env/push_gate 的关闭默认。"""
+    engine = create_engine(f"sqlite:///{tmp_path}/t.db")
+    await init_db(engine)
+    repo = SettingRepository(engine)
+    await repo.set(PUSH_REVIEW_DEFAULT_KEY, "1")  # DB 默认开，即使未传 push_gate
+    forge = _FakePushForge()
+    reviewer = _FakeReviewer()
+    await process_raw_event(forge, reviewer, _gl_push(), engine=engine)
+    assert reviewer.calls == 1 and len(forge.summaries) == 1
+    await engine.dispose()
+
+
+async def test_push_global_default_db_off_overrides_on_env_gate(tmp_path):
+    """全局默认热读 app_setting：落库「关」能压住开启的 push_gate（env 兜底）。"""
+    engine = create_engine(f"sqlite:///{tmp_path}/t.db")
+    await init_db(engine)
+    repo = SettingRepository(engine)
+    await repo.set(PUSH_REVIEW_DEFAULT_KEY, "0")  # 显式关
+    forge = _FakePushForge()
+    reviewer = _FakeReviewer()
+    await process_raw_event(forge, reviewer, _gl_push(),
+                            push_gate=PushGate(enabled=True), engine=engine)
     assert reviewer.calls == 0 and forge.summaries == []
     await engine.dispose()
 

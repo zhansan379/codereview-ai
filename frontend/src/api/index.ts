@@ -250,6 +250,18 @@ export function setConcurrency(data: { concurrency: number }): Promise<Concurren
   return client.post('/settings/concurrency', data).then((r) => r.data)
 }
 
+// ===== push 自动审查默认开关（§7.7 全局默认）=====
+export interface PushReviewDefaultSetting {
+  enabled: boolean
+  source: 'db' | 'env'
+}
+export function getPushReviewDefault(): Promise<PushReviewDefaultSetting> {
+  return client.get('/settings/push-review-default').then((r) => r.data)
+}
+export function setPushReviewDefault(data: { enabled: boolean }): Promise<PushReviewDefaultSetting> {
+  return client.post('/settings/push-review-default', data).then((r) => r.data)
+}
+
 // ===== 主动补拉 PR/MR =====
 export interface PollReport {
   projects: number

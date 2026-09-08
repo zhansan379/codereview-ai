@@ -81,6 +81,28 @@
       </div>
     </el-card>
 
+    <el-card class="push-card">
+      <template #header>自动审查触发</template>
+      <p class="intro">
+        有 push / MR 进来时是否自动执行代码审查（§7.7）。保存后即时生效，无需重启后端。
+        项目可单独覆盖此默认：<strong>项目 → 编辑 → Push 审查</strong>（开启 / 关闭 / 跟随全局）。
+      </p>
+      <el-form label-width="110px">
+        <el-form-item label="自动审查">
+          <el-switch v-model="pushEnabled" />
+          <span class="form-tip" style="margin-left: 8px">
+            开 = 推送/MR 到达即自动审；关 = 仅记录、不自动审（可用「补审」手动触发）。
+          </span>
+        </el-form-item>
+        <el-form-item v-if="pushSource === 'env'" label="当前来源">
+          <span class="hint">未落库，由环境变量 <code>CR_PUSH_REVIEW_ENABLED</code> 决定；保存后以这里为准。</span>
+        </el-form-item>
+      </el-form>
+      <div class="save-bar">
+        <el-button type="primary" :loading="pushSaving" @click="onSavePushDefault">保存</el-button>
+      </div>
+    </el-card>
+
     <el-card class="note-card">
       <template #header>安全说明</template>
       <el-descriptions :column="1" border>
@@ -101,7 +123,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { listForges, updateForge, testForge, getConcurrency, setConcurrency } from '../api'
+import { listForges, updateForge, testForge, getConcurrency, setConcurrency, getPushReviewDefault, setPushReviewDefault } from '../api'
 import type { ForgeCapability } from '../api'
 
 const MASK = '******'
@@ -131,6 +153,35 @@ const saving = ref(false)
 const concurrency = ref(4)
 const ccActive = ref(true)
 const ccSaving = ref(false)
+
+// —— push 自动审查默认开关（§7.7 全局默认）——
+const pushEnabled = ref(false)
+const pushSource = ref<'db' | 'env'>('db')
+const pushSaving = ref(false)
+
+async function loadPushDefault() {
+  try {
+    const s = await getPushReviewDefault()
+    pushEnabled.value = s.enabled
+    pushSource.value = s.source
+  } catch {
+    /* 后端未暴露该接口时（旧版）静默跳过，不阻塞平台页加载 */
+  }
+}
+
+async function onSavePushDefault() {
+  pushSaving.value = true
+  try {
+    const s = await setPushReviewDefault({ enabled: pushEnabled.value })
+    pushEnabled.value = s.enabled
+    pushSource.value = s.source
+    ElMessage.success(s.enabled ? '已开启自动审查（即时生效）' : '已关闭自动审查（即时生效）')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '保存失败')
+  } finally {
+    pushSaving.value = false
+  }
+}
 
 async function loadConcurrency() {
   try {
@@ -200,6 +251,7 @@ async function onSave() {
 onMounted(() => {
   load()
   loadConcurrency()
+  loadPushDefault()
 })
 </script>
 
@@ -250,6 +302,7 @@ onMounted(() => {
   color: #606266;
 }
 .concurrency-card,
+.push-card,
 .note-card {
   margin-top: 16px;
 }
