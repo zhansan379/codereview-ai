@@ -88,7 +88,44 @@
         </el-form-item>
         <el-form-item label="@阈值">
           <el-input-number v-model="form.at_threshold" :min="0" />
-          <div class="form-tip">评分低于此阈值才 @提交者；达标则不 @，避免打扰。</div>
+          <div class="form-tip">评分低于此阈值才触发 @；达标则不 @，避免打扰。</div>
+        </el-form-item>
+        <el-form-item label="@所有人">
+          <el-switch v-model="form.at_all" />
+          <div class="form-tip">达到 @阈值时，在群里 @全部成员。</div>
+        </el-form-item>
+        <el-form-item label="@指定成员">
+          <div style="width: 100%">
+            <el-button size="small" type="primary" plain @click="addTarget">添加成员</el-button>
+            <el-table :data="form.at_targets" size="small" border style="margin-top: 8px">
+              <el-table-column label="Fork 用户名" min-width="120">
+                <template #default="{ row }">
+                  <el-input v-model="row.author" placeholder="如 zhangsan" />
+                </template>
+              </el-table-column>
+              <el-table-column label="手机号" min-width="130">
+                <template #default="{ row }">
+                  <el-input v-model="row.mobile" placeholder="钉钉/企微用" />
+                </template>
+              </el-table-column>
+              <el-table-column label="企微 userid" min-width="130">
+                <template #default="{ row }">
+                  <el-input v-model="row.wecom_userid" placeholder="企业在职用户" />
+                </template>
+              </el-table-column>
+              <el-table-column label="飞书 open_id" min-width="150">
+                <template #default="{ row }">
+                  <el-input v-model="row.feishu_open_id" placeholder="ou_xxx，需通讯录查" />
+                </template>
+              </el-table-column>
+              <el-table-column label="" width="60">
+                <template #default="{ $index }">
+                  <el-button link type="danger" @click="removeTarget($index)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="form-tip">达到 @阈值时 @这些成员（按平台填对应列）；飞书 open_id 成员不可见，需用通讯录接口查。</div>
+          </div>
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
@@ -124,6 +161,8 @@ const emptyForm = () => ({
   secret: '',
   project_id: null as number | null,
   at_threshold: 60,
+  at_all: false,
+  at_targets: [] as Array<{ author: string; mobile?: string; wecom_userid?: string; feishu_open_id?: string }>,
   enabled: true,
 })
 const form = reactive(emptyForm())
@@ -164,6 +203,8 @@ function openEdit(row: Notifier) {
     secret: row.channel === 'wecom' ? '' : (row.secret || REDACTED),
     project_id: row.project_id ?? null,
     at_threshold: row.at_threshold ?? 60,
+    at_all: row.at_all ?? false,
+    at_targets: row.at_targets ?? [],
     enabled: row.enabled,
   })
   dialogVisible.value = true
@@ -173,6 +214,13 @@ function onChannelChange() {
   if (form.channel === 'wecom') {
     form.secret = ''
   }
+}
+
+function addTarget() {
+  form.at_targets.push({ author: '' })
+}
+function removeTarget(index: number) {
+  form.at_targets.splice(index, 1)
 }
 
 async function onSave() {

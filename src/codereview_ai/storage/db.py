@@ -91,6 +91,10 @@ _COLUMN_FALLBACKS: dict[str, list[tuple[str, str, str]]] = {
         ("push_commits", "TEXT", "DEFAULT ''"),
         ("web_url", "VARCHAR(1024)", "DEFAULT ''"),
     ],
+    "notifier_config": [
+        ("at_all", "BOOLEAN", "DEFAULT 0"),        # 命中阈值时 @所有人
+        ("at_targets", "JSON", "DEFAULT '[]'"),    # 命中阈值时 @的成员映射
+    ],
 }
 
 

@@ -196,6 +196,8 @@ class NotifierConfig(Base):
     secret_encrypted: Mapped[str] = mapped_column(Text, default="")  # Fernet 密文（签名密钥）
     project_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     at_threshold: Mapped[int] = mapped_column(Integer, default=60)
+    at_all: Mapped[bool] = mapped_column(Boolean, default=False)  # 命中阈值时 @所有人
+    at_targets: Mapped[list] = mapped_column(JSON, default=list)  # [{author,mobile,wecom_userid,feishu_open_id}]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

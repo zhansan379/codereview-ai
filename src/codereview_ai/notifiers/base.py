@@ -31,7 +31,12 @@ class ReviewNotification:
     summary_md: str
     url: str
     findings_count: dict[str, int] = field(default_factory=dict)
-    at_users: list[str] = field(default_factory=list)  # 平台无关标识，由 Notifier 映射
+    at_users: list[str] = field(default_factory=list)  # 平台无关标识（历史保留，sink 改用 at_targets）
+    at_all: bool = False  # 命中阈值时 @所有人
+    at_targets: list = field(
+        default_factory=list
+    )  # 命中阈值时 @的成员映射 [{author,mobile,wecom_userid,feishu_open_id}]
+    # 由 dispatch 从路由配置解析填入；sink 只按平台取各自字段渲染真 @。
 
 
 class Notifier(Protocol):

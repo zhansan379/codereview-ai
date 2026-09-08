@@ -79,23 +79,26 @@ async def test_dispatch_filters_routes_by_project_and_sends():
     assert sent == 1  # 只命中全局默认，项目级 7 不匹配 None
 
 
-async def test_at_threshold_keeps_at_when_score_low():
-    """F4.3：评分 < at_threshold → @提交者；≥ → 清空 at。"""
+async def test_at_threshold_carries_mention_when_score_low():
+    """F4.3：评分 < at_threshold → 带入 at_all/at_targets 渲染 @；≥ → 全清空。"""
     captured: list[httpx.Request] = []
 
     async def routes(project_id: int | None):
-        return [_route(at_threshold=60)]
+        return [NotifierRoute(channel="dingtalk", webhook="https://oapi.dingtalk.com/robot/send?"
+                                                           "access_token=x", secret="s",
+                              project_id=None, at_threshold=60,
+                              at_all=True, at_targets=[{"author": "alice", "mobile": "13800000000"}])]
 
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(await _capture_collector(captured))
     ) as client:
         disp = NotifierDispatcher(routes, http=client)
-        await disp.dispatch(_pr(author="alice"), _result(50))  # 低于 60
+        await disp.dispatch(_pr(), _result(50))  # 低于 60
         at = _req_json(captured[0])["at"]
-        assert at["atMobiles"] == ["alice"] and at["isAtAll"] is False
+        assert at["atMobiles"] == ["13800000000"] and at["isAtAll"] is True
         captured.clear()
-        await disp.dispatch(_pr(author="bob"), _result(85))  # 高于 60
-        assert _req_json(captured[0])["at"]["atMobiles"] == []
+        await disp.dispatch(_pr(), _result(85))  # 高于 60 → 清空
+        assert _req_json(captured[0])["at"] == {"atMobiles": [], "isAtAll": False}
 
 
 async def test_retry_with_backoff_on_5xx():

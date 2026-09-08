@@ -120,13 +120,15 @@ class ResolvedLLM:
 
 @dataclass
 class NotifierRoute:
-    """一条通知路由（channel + 解密后的 webhook/secret，及 @ 阈值）。"""
+    """一条通知路由（channel + 解密后的 webhook/secret，及 @ 阈值 / @目标）。"""
 
     channel: str
     webhook: str
     secret: str
     project_id: int | None
     at_threshold: int
+    at_all: bool = False  # 命中阈值时 @所有人
+    at_targets: list = field(default_factory=list)  # 命中阈值时 @的成员映射
 
 
 @dataclass
@@ -255,6 +257,8 @@ class ConfigRepository:
                 secret=decrypt(n.secret_encrypted, self._enc) if n.secret_encrypted else "",
                 project_id=n.project_id,
                 at_threshold=n.at_threshold,
+                at_all=n.at_all,
+                at_targets=n.at_targets or [],
             ))
         return routes
 
