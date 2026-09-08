@@ -84,8 +84,8 @@
     <el-card class="push-card">
       <template #header>自动审查触发</template>
       <p class="intro">
-        有 push / MR 进来时是否自动执行代码审查（§7.7）。保存后即时生效，无需重启后端。
-        项目可单独覆盖此默认：<strong>项目 → 编辑 → Push 审查</strong>（开启 / 关闭 / 跟随全局）。
+        有 push / MR 进来时是否自动执行代码审查。保存后即时生效，无需重启后端。
+        覆盖优先级：<strong>项目页面 Push审查开关 > 设置页开关 >  env CR_PUSH_REVIEW_ENABLED</strong>。
       </p>
       <el-form label-width="110px">
         <el-form-item label="自动审查">

@@ -36,78 +36,115 @@
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑项目' : '新增项目'" width="640px">
+    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑项目' : '新增项目'" width="860px">
       <el-form :model="form" label-width="110px">
-        <el-form-item label="平台" required>
-          <el-select v-model="form.provider" style="width: 100%">
-            <el-option label="GitHub" value="github" />
-            <el-option label="GitLab" value="gitlab" />
-            <el-option label="Gitea" value="gitea" />
-            <el-option label="Gitee" value="gitee" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="仓库 ID" required>
-          <el-input v-model="form.repo_id" />
-        </el-form-item>
-        <el-form-item label="仓库全名" required>
-          <el-input v-model="form.repo_full_name" placeholder="owner/repo" />
-        </el-form-item>
-        <el-form-item label="Web URL">
-          <el-input
-            v-model="form.web_url"
-            placeholder="粘贴仓库链接后点「解析」，自动回填 仓库ID / 仓库全名"
-          >
-            <template #append>
-              <el-button :loading="resolving" @click="onResolve">解析</el-button>
-            </template>
-          </el-input>
-        </el-form-item>
-        <el-form-item label="分支规则">
-          <el-input v-model="form.branch_rule" placeholder="如 main" />
-        </el-form-item>
-        <el-form-item label="Push 审查">
-          <el-radio-group v-model="form.push_mode">
-            <el-radio label="on">开启</el-radio>
-            <el-radio label="off">关闭</el-radio>
-            <el-radio label="inherit">跟随全局</el-radio>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="Push 分支规则">
-          <el-input
-            v-model="form.push_branch_globs"
-            placeholder="逗号分隔 glob，如 main,release/*；留空继承全局"
-          />
-        </el-form-item>
-        <el-form-item label="文件扩展名">
-          <el-select
-            v-model="form.file_extensions"
-            multiple
-            filterable
-            allow-create
-            default-first-option
-            placeholder="输入后回车添加，如 .py"
-            style="width: 100%"
-          />
-        </el-form-item>
-        <el-form-item label="审查策略">
-          <el-select v-model="form.review_strategy" style="width: 100%">
-            <el-option label="diff（普通 diff 分组审查）" value="diff" />
-            <el-option label="agentic（沙箱探索式，需额外配置）" value="agentic" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="Prompt 后缀">
-          <el-input v-model="form.prompt_suffix" type="textarea" :rows="3" />
-        </el-form-item>
-        <el-form-item label="得分阈值">
-          <el-input-number v-model="form.score_threshold" :min="0" :max="100" />
-        </el-form-item>
-        <el-form-item label="阻塞合并">
-          <el-switch v-model="form.enforce_score_threshold" />
-          <span class="field-hint">开：总分低于阈值时对 head commit 发失败状态（阻塞合并）。分平台效果：<br>· GitHub 写 commit status「failure」(context codereview-ai)，分支保护要求该检查通过才真正阻塞合并<br>· GitLab 写 commit status「failed」，合并检查「Pipeline must succeed」开启时才阻塞<br>· Gitea / Gitee 暂未实现该状态回写，开启无效果</span>
-        </el-form-item>
-        <el-form-item label="仓库启用">
-          <el-switch v-model="form.enabled" />
-        </el-form-item>
+        <!-- 矮字段两两一行压缩弹窗高度（A 方案：双列网格） -->
+        <el-row :gutter="12">
+          <el-col :span="12">
+            <el-form-item label="平台" required>
+              <el-select v-model="form.provider" style="width: 100%">
+                <el-option label="GitHub" value="github" />
+                <el-option label="GitLab" value="gitlab" />
+                <el-option label="Gitea" value="gitea" />
+                <el-option label="Gitee" value="gitee" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="审查策略">
+              <el-select v-model="form.review_strategy" style="width: 100%">
+                <el-option label="diff（普通 diff 分组审查）" value="diff" />
+                <el-option label="agentic（沙箱探索式，需额外配置）" value="agentic" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="仓库 ID" required>
+              <el-input v-model="form.repo_id" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="仓库全名" required>
+              <el-input v-model="form.repo_full_name" placeholder="owner/repo" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="Web URL">
+              <el-input
+                v-model="form.web_url"
+                placeholder="粘贴仓库链接后点「解析」，自动回填 仓库ID / 仓库全名"
+              >
+                <template #append>
+                  <el-button :loading="resolving" @click="onResolve">解析</el-button>
+                </template>
+              </el-input>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="分支规则">
+              <el-input v-model="form.branch_rule" placeholder="如 main" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="Push 分支规则">
+              <el-input
+                v-model="form.push_branch_globs"
+                placeholder="如 main,release/*；留空继承全局"
+              />
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="Push 审查">
+              <el-radio-group v-model="form.push_mode">
+                <el-radio label="on">开启</el-radio>
+                <el-radio label="off">关闭</el-radio>
+                <el-radio label="inherit">跟随全局</el-radio>
+              </el-radio-group>
+              <div class="field-hint">跟随全局 = 交全局默认层裁决：「设置」页「自动审查触发」开关落库值优先，无落库行才回落到环境变量 CR_PUSH_REVIEW_ENABLED。</div>
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="文件扩展名">
+              <el-select
+                v-model="form.file_extensions"
+                multiple
+                filterable
+                allow-create
+                default-first-option
+                placeholder="输入后回车添加，如 .py"
+                style="width: 100%"
+              />
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="Prompt 后缀">
+              <el-input v-model="form.prompt_suffix" type="textarea" :rows="2" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="得分阈值">
+              <el-input-number v-model="form.score_threshold" :min="0" :max="100" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="仓库启用">
+              <el-switch v-model="form.enabled" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="阻塞合并">
+              <el-switch v-model="form.enforce_score_threshold" />
+              <span class="field-hint" style="margin-left: 8px">开：总分低于阈值时对 head commit 发失败状态（阻塞合并）
+                <el-tooltip placement="top" :show-after="50">
+                  <template #content>
+                    分平台效果：<br/>· GitHub 写 commit status「failure」(context codereview-ai)，分支保护要求该检查通过才真正阻塞合并<br/>· GitLab 写 commit status「failed」，合并检查「Pipeline must succeed」开启时才阻塞<br/>· Gitea / Gitee 暂未实现该状态回写，开启无效果
+                  </template>
+                  <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </span>
+            </el-form-item>
+          </el-col>
+        </el-row>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -150,7 +187,7 @@ const emptyForm = () => ({
   score_threshold: 80,
   enforce_score_threshold: false,
   enabled: true,
-  // push 审查（三态）：on=开启 / off=关闭 / inherit=跟随全局 env 默认
+  // push 审查（三态）：on=开启 / off=关闭 / inherit=跟随全局默认（DB 落库值优先，env 兜底）
   push_mode: 'inherit' as 'on' | 'off' | 'inherit',
   push_branch_globs: '',
 })
