@@ -68,7 +68,7 @@ class DingTalkNotifier:
             "at": {
                 # atMobiles 要手机号；at_users 已由 dispatch 按渠道解析成可用手机号
                 "atMobiles": list(msg.at_users),
-                "isAtAll": False,
+                "isAtAll": msg.at_all,  # @所有人（注意：@全员会给人人发应用内/短信提醒，慎用）
             },
         }
         resp = await self._http.post(url, json=payload)

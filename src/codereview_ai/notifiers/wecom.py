@@ -6,6 +6,8 @@
 **@ 成员**：企微群机器人支持真@——把 `at_users`（已按渠道解析成的 wecom userid）
 以 `<@userid>` 扩展语法嵌进 content 即触发@提醒（官方文档 path/91770）；
 `mention_names` 仍是文案点名（fork 用户名企微不认识，只作显示，不参与真@）。
+**@所有人**：`at_all` 时在 markdown 里加 `mentioned_list:["@all"]` 触发全员@
+（markdown/text 支持，`markdown_v2` 不支持）。
 """
 
 from __future__ import annotations
@@ -59,10 +61,11 @@ class WeComNotifier:
         return f"{header}{score_part}{counts}{at_line}{mentions}{body}{link}"
 
     async def send(self, msg: ReviewNotification) -> None:
-        payload: dict[str, object] = {
-            "msgtype": "markdown",
-            "markdown": {"content": self._render_content(msg)},
-        }
+        markdown: dict[str, object] = {"content": self._render_content(msg)}
+        # @所有人：markdown 支持 mentioned_list 传 "@all"（官方 path/91770）；@all 触发真@提醒
+        if msg.at_all:
+            markdown["mentioned_list"] = ["@all"]
+        payload: dict[str, object] = {"msgtype": "markdown", "markdown": markdown}
         resp = await self._http.post(self._webhook, json=payload)
         if resp.status_code >= 300:
             raise RuntimeError(f"企业微信推送 http {resp.status_code}: {resp.text[:200]}")

@@ -63,6 +63,9 @@ class FeishuNotifier:
         # @ 人：卡片 lark_md 支持 <at user_id>；at_users 已由 dispatch 解析成 open_id
         for oid in msg.at_users:
             content_lines.append(f'<at user_id="{oid}">{oid}</at>')
+        # @所有人：<at user_id="all"> 触发全员@（官方 bot 文档）
+        if msg.at_all:
+            content_lines.append('<at user_id="all">所有人</at>')
         body = "\n".join(content_lines)
         return {
             "config": {"wide_screen_mode": True},

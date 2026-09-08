@@ -204,21 +204,23 @@ def test_notifiers_crud_and_masking(app):
         }).json()
         r = c.post("/api/notifiers", json={
             "channel": "dingtalk", "webhook": "https://oapi.dingtalk.com/robot/send?access_token=abc",
-            "secret": "SECsecret", "project_id": None, "at_threshold": 60,
+            "secret": "SECsecret", "project_id": None, "at_threshold": 60, "at_all": True,
             "at_member_ids": [alice["id"], bob["id"]],
         })
         assert r.status_code == 201, r.text
         nid = r.json()["id"]
         assert r.json()["webhook"] == "******" and r.json()["secret"] == "******"
         assert r.json()["channel"] == "dingtalk" and r.json()["project_id"] is None
+        assert r.json()["at_all"] is True
         assert r.json()["at_member_ids"] == [alice["id"], bob["id"]]
 
         upd = c.put(f"/api/notifiers/{nid}", json={
             "channel": "dingtalk", "webhook": "******", "secret": "******",
-            "project_id": 3, "at_threshold": 80,
+            "project_id": 3, "at_threshold": 80, "at_all": False,
             "at_member_ids": [alice["id"]],
         }).json()
         assert upd["project_id"] == 3 and upd["at_threshold"] == 80
+        assert upd["at_all"] is False
         assert upd["at_member_ids"] == [alice["id"]]
 
         assert c.get("/api/notifiers").json()[0]["webhook"] == "******"

@@ -56,6 +56,7 @@ export interface Notifier {
   secret: string
   project_id: number | null
   at_threshold: number | null
+  at_all: boolean
   at_member_ids: number[]
 }
 

@@ -92,7 +92,9 @@ _COLUMN_FALLBACKS: dict[str, list[tuple[str, str, str]]] = {
         ("push_commits", "TEXT", "DEFAULT ''"),
         ("web_url", "VARCHAR(1024)", "DEFAULT ''"),
     ],
-    "notifier_config": [],
+    "notifier_config": [
+        ("at_all", "BOOLEAN", "DEFAULT 0"),     # 评分低于阈值时是否 @全员
+    ],
 }
 
 

@@ -133,6 +133,7 @@ class NotifierRoute:
     secret: str
     project_id: int | None
     at_threshold: int
+    at_all: bool = False  # 评分低于阈值时是否 @所有人
     at_members: list[NotifierMember] = field(default_factory=list)
 
 
@@ -248,6 +249,7 @@ class ConfigRepository:
                 secret=decrypt(n.secret_encrypted, self._enc) if n.secret_encrypted else "",
                 project_id=n.project_id,
                 at_threshold=n.at_threshold,
+                at_all=n.at_all,
                 at_members=[self._members[mid] for mid in self._route_members.get(n.id, [])
                             if mid in self._members],
             ))
