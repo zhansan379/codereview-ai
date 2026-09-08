@@ -2,6 +2,13 @@
   <div v-loading="loading">
     <el-page-header @back="$router.back()" :content="`审查详情 #${id}`" />
 
+    <div v-if="detail" class="review-toolbar">
+      <el-button type="primary" plain :disabled="busy || loading" @click="copyMarkdown">
+        <el-icon><DocumentCopy /></el-icon>&nbsp;复制完整 Markdown
+      </el-button>
+      <span class="toolbar-hint">可直接粘贴到 agent 平台用于修复问题</span>
+    </div>
+
     <el-card v-if="detail" class="info-card">
       <el-descriptions :column="3" border>
         <el-descriptions-item label="标题">{{ detail.event_type === 'push' ? '—' : (detail.pr_title || '—') }}</el-descriptions-item>
@@ -145,7 +152,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { ChatDotRound, DataAnalysis } from '@element-plus/icons-vue'
+import { ChatDotRound, DataAnalysis, DocumentCopy } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { getReview, setFindingStatus, type ReviewDetail, type ReviewFinding } from '../api'
 import { formatTime, stateTagType, stateLabel } from '../utils/format'
 
@@ -184,6 +192,95 @@ function sourceTagType(source: string | null): any {
   if (source === 'llm') return 'primary'
   if (source && source.startsWith('static')) return 'warning'
   return 'info'
+}
+
+function fence(code: string | null): string {
+  if (!code) return ''
+  return '```\n' + code + '\n```'
+}
+
+function buildMarkdown(d: ReviewDetail): string {
+  const L: string[] = []
+  L.push(`# 代码审查报告 #${d.id}`)
+  L.push('')
+  L.push('## 元信息')
+  L.push(`- 平台：${d.provider || '—'}`)
+  L.push(`- 仓库 ID：${d.repo_id || '—'}`)
+  L.push(`- 事件类型：${d.event_type || '—'}`)
+  if (d.pr_number != null) L.push(`- PR/MR 号：${d.pr_number}`)
+  if (d.pr_title) L.push(`- 标题：${d.pr_title}`)
+  if (d.branch) L.push(`- 分支：${d.branch}`)
+  if (d.head_sha) L.push(`- 提交 SHA：${d.head_sha}`)
+  if (d.base_sha) L.push(`- 比对基线：${d.base_sha}`)
+  L.push(`- 评分：${d.score_total ?? '—'}`)
+  if (d.web_url) L.push(`- 直达链接：${d.web_url}`)
+  L.push('')
+
+  L.push('## 总结')
+  L.push(d.summary_md || '（无总结）')
+  L.push('')
+
+  const findings = d.findings || []
+  L.push(`## 发现的问题（${findings.length}）`)
+  if (findings.length === 0) {
+    L.push('未发现需要处理的问题。')
+  } else {
+    findings.forEach((f, i) => {
+      const sev = f.severity || 'unknown'
+      L.push(`### [${i + 1}] ${sev} · ${f.category || '未分类'}：${f.title}`)
+      L.push('')
+      L.push(`- 文件：\`${f.file}\``)
+      L.push(`- 行号：${f.new_line ?? '—'}`)
+      L.push(`- 来源：${f.source || '未知'}`)
+      L.push(`- 状态：${statusLabel(f.status)}`)
+      if (f.existing_code) {
+        L.push('')
+        L.push('**原代码：**')
+        L.push(fence(f.existing_code))
+      }
+      if (f.suggestion) {
+        L.push('')
+        L.push('**建议修复：**')
+        L.push(fence(f.suggestion))
+      }
+      if (f.detail) {
+        L.push('')
+        L.push('**详细分析：**')
+        L.push(f.detail)
+      }
+      L.push('')
+      L.push('---')
+      L.push('')
+    })
+  }
+  return L.join('\n').replace(/^\n+/, '').replace(/\n+$/, '')
+}
+
+async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+  // 非 HTTPS / 旧浏览器降级
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.style.position = 'fixed'
+  ta.style.opacity = '0'
+  document.body.appendChild(ta)
+  ta.select()
+  const ok = document.execCommand('copy')
+  document.body.removeChild(ta)
+  if (!ok) throw new Error('copy failed')
+}
+
+async function copyMarkdown() {
+  if (!detail.value) return
+  try {
+    await copyText(buildMarkdown(detail.value))
+    ElMessage.success('已复制完整 Markdown')
+  } catch (e: any) {
+    ElMessage.error('复制失败，请手动选择文本复制')
+  }
 }
 
 async function load() {
@@ -239,6 +336,16 @@ onMounted(load)
   margin-top: 16px;
   display: flex;
   gap: 12px;
+}
+.review-toolbar {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.toolbar-hint {
+  font-size: 12px;
+  color: #909399;
 }
 .summary {
   white-space: pre-wrap;
