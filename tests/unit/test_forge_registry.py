@@ -51,8 +51,8 @@ class _FakeRepo:
         self._values = values
         self.calls: list[str] = []
 
-    async def resolve_forge(self, provider: str, *, force: bool = False):
-        self.calls.append(f"{provider}:{force}")
+    async def resolve_forge(self, provider: str):
+        self.calls.append(provider)
         return self._values.get(provider)
 
 

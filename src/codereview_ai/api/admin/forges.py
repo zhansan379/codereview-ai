@@ -169,7 +169,7 @@ async def test_forge(
         # 未传凭据 → 用当前有效配置（env 优先、DB 兜底）
         repo = getattr(request.app.state, "config_repository", None)
         if repo is not None:
-            resolved = await repo.resolve_forge(provider, force=True)
+            resolved = await repo.resolve_forge(provider)
             if resolved:
                 url = url or resolved.url or None
                 token = token or resolved.token or None
