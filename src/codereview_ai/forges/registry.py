@@ -66,7 +66,7 @@ class ForgeRegistry:
         """重解析全部受支持平台，重建适配器表（从 DB / env）。"""
         built: dict[str, ForgeAdapter] = {}
         for provider in SUPPORTED_PROVIDERS:
-            resolved = await self._repo.resolve_forge(provider, force=True)
+            resolved = await self._repo.resolve_forge(provider)
             if resolved is None:
                 continue
             adapter = build_adapter(provider, resolved.url, resolved.token, self._http)

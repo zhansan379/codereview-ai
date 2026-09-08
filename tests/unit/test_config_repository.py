@@ -1,4 +1,4 @@
-"""DB 驱动配置仓库测试（DESIGN §16）：分层合并、TTL 缓存、白名单、env 重放、离线审查装配。
+"""DB 驱动配置仓库测试（DESIGN §16）：分层合并、白名单、env 重放、离线审查装配。
 
 离线：临时 SQLite + 注入 fake LLM backend（零网络、零 token）。
 """
@@ -6,14 +6,11 @@
 from __future__ import annotations
 
 import base64
-from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from codereview_ai.config.repository import (
-    CACHE_TTL_SECONDS,
     DEFAULT_FORGE_URLS,
     FORBIDDEN_OVERRIDE_WORDS,
     ConfigRepository,
@@ -120,57 +117,6 @@ async def test_notifier_routes_filter_by_project_and_decrypt(engine, monkeypatch
 
 
 
-async def test_ttl_cache_hit_and_expiry(engine, monkeypatch):
-    key = _fernet_key()
-    await _seed_model(engine, name="a", model="m-a", priority=5)
-    repo = ConfigRepository(engine, encryption_key=key)
-
-    llm = await repo.resolve_llm()
-    assert llm and llm.model == "m-a"
-
-    # TTL 内存缓存命中：DB 已删模型但仍取到缓存（同一次构造、未过期）
-    session = session_factory(engine)
-    async with session() as s:
-        for row in (await s.execute(select(ModelConfig))).scalars().all():
-            await s.delete(row)
-        await s.commit()
-    assert (await repo.resolve_llm()).model == "m-a"  # 未过期 → 命中缓存
-
-    # 手动把缓存标记为陈旧，模拟 TTL 到期 → 重新拉取后模型为 None
-    repo._loaded_at = datetime.now(UTC) - timedelta(seconds=CACHE_TTL_SECONDS + 1)
-    stub_clock = iter([datetime.now(UTC)])
-
-    async def _fake_fetch() -> None:
-        repo._models = []
-        repo._notifiers = []
-        repo._loaded_at = next(stub_clock)
-
-    monkeypatch.setattr(repo, "_fetch", _fake_fetch)
-    assert await repo.resolve_llm() is None  # TTL 到期 → 重新拉取（fake 清空）
-
-
-
-async def test_transient_failure_not_cached_stale_returned(engine, monkeypatch):
-    key = _fernet_key()
-    await _seed_model(engine, name="a", model="m-a", priority=5)
-    repo = ConfigRepository(engine, encryption_key=key)
-    assert (await repo.resolve_llm()).model == "m-a"
-
-    calls = {"n": 0}
-
-    async def _flaky() -> None:
-        calls["n"] += 1
-        raise RuntimeError("db down")
-
-    # 把缓存标记为陈旧，迫使下一次调用重新拉取
-    repo._loaded_at = datetime.now(UTC) - timedelta(seconds=CACHE_TTL_SECONDS + 1)
-    monkeypatch.setattr(repo, "_fetch", _flaky)
-    # DB 暂不可用：返回上次缓存；TTL 时间戳未刷新（下次会再试）
-    assert (await repo.resolve_llm()).model == "m-a"
-    assert calls["n"] == 1
-    # 再调用一次仍会重试（失败未缓存，时间戳未刷新）
-    assert (await repo.resolve_llm()).model == "m-a"
-    assert calls["n"] == 2
 
 
 
@@ -364,19 +310,3 @@ async def test_resolve_forge_none_when_unconfigured(engine, monkeypatch):
     assert await repo.resolve_forge("github") is None
 
 
-async def test_resolve_forge_force_hot_reload(engine, monkeypatch):
-    """保存后 force=True 立即读到新 DB 值（热更路径），TTL 缓存被绕过。"""
-    key = _fernet_key()
-    monkeypatch.delenv("CR_GITHUB_TOKEN", raising=False)
-    await _seed_forge(engine, provider="github", url="", token_encrypted=encrypt("v1", key))
-    repo = ConfigRepository(engine, encryption_key=key)
-    assert (await repo.resolve_forge("github")).token == "v1"
-
-    # DB 更新成 v2；TTL 未到期（不传 force 应命中旧缓存）
-    session = session_factory(engine)
-    async with session() as s:
-        row = (await s.execute(select(ForgeConfig))).scalars().one()
-        row.token_encrypted = encrypt("v2", key)
-        await s.commit()
-    assert (await repo.resolve_forge("github")).token == "v1"  # TTL 缓存命中
-    assert (await repo.resolve_forge("github", force=True)).token == "v2"  # force 吃到新值

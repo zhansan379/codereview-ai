@@ -1,6 +1,6 @@
 """DB 驱动配置（DESIGN §16）：把后台落库的模型/通知配置合并成 worker 可用的解析结果。
 
-分层（低→高）：内嵌默认 < DB 拉取（**15 分钟 TTL 内存缓存**，transient 失败不缓存）
+分层（低→高）：内嵌默认 < DB 拉取（每次调用实时查询，不做内存缓存）
 < env 重放。env 重放放最后，且**只补缺失、绝不覆盖**——host 侧已显式配置的
 `CR_LLM_MODEL` / `CR_*_TOKEN` / `CR_*_API_KEY` 永远优先于 DB，保证密钥压不住。
 
@@ -18,7 +18,6 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -31,9 +30,6 @@ from codereview_ai.storage.db import session_factory
 from codereview_ai.storage.models import ForgeConfig, ModelConfig, NotifierConfig
 
 logger = logging.getLogger("codereview_ai.config_repository")
-
-#: 内存缓存 TTL（DESIGN §16：15 分钟）
-CACHE_TTL_SECONDS = 15 * 60
 
 #: host-only 禁词清单：命中任一即拒绝作为项目覆盖键（§16）
 FORBIDDEN_OVERRIDE_WORDS = (
@@ -150,17 +146,11 @@ class ConfigRepository:
         self._models: list[ModelConfig] = []
         self._notifiers: list[NotifierConfig] = []
         self._forges: list[ForgeConfig] = []
-        self._loaded_at: datetime | None = None
 
-    # —— 缓存 & 拉取 ——
-
-    def _fresh(self) -> bool:
-        if self._loaded_at is None:
-            return False
-        return datetime.now(UTC) - self._loaded_at < timedelta(seconds=CACHE_TTL_SECONDS)
+    # —— 拉取 ——
 
     async def _fetch(self) -> None:
-        """从 DB 拉取启用的模型/通知/平台；成功才更新缓存与时间戳（transient 失败不缓存）。"""
+        """每次调用实时从 DB 拉取启用的模型/通知/平台（内存 TTL 缓存已移除）。"""
         session = session_factory(self._engine)
         async with session() as s:
             models = (await s.execute(
@@ -179,22 +169,6 @@ class ConfigRepository:
         self._models = list(models)
         self._notifiers = list(notifiers)
         self._forges = list(forges)
-        self._loaded_at = datetime.now(UTC)
-
-    async def _ensure_loaded(self, *, force: bool = False) -> None:
-        if not force and self._fresh():
-            return
-        try:
-            await self._fetch()
-        except Exception as exc:  # noqa: BLE001  DB 暂不可用（transient）
-            if self._models or self._notifiers:
-                logger.warning("DB 配置刷新失败，沿用上次缓存（ttl 未刷新）: %s", exc)
-                return  # 保留旧缓存，不更新时间戳 → 下次调用会再试
-            logger.warning("DB 配置拉取失败且无缓存，按空配置降级: %s", exc)
-            self._models = []
-            self._notifiers = []
-            self._forges = []
-            self._loaded_at = None  # 失败不置缓存时间戳
 
     # —— 解析 ——
 
@@ -203,7 +177,7 @@ class ConfigRepository:
         env_model = (os.environ.get("CR_LLM_MODEL") or "").strip()
         if env_model:
             return ResolvedLLM(name=env_model, provider="", model=env_model)
-        await self._ensure_loaded()
+        await self._fetch()
         if not self._models:
             return None
         top = self._models[0]  # 已按 priority 降序
@@ -227,7 +201,7 @@ class ConfigRepository:
         env_model = (os.environ.get("CR_LLM_MODEL") or "").strip()
         if env_model:
             return [ResolvedLLM(name=env_model, provider="", model=env_model)]
-        await self._ensure_loaded()
+        await self._fetch()
         if not self._models:
             return []
         chain: list[ResolvedLLM] = []
@@ -246,7 +220,7 @@ class ConfigRepository:
 
     async def notifier_routes(self, project_id: int | None = None) -> list[NotifierRoute]:
         """给出项目的通知路由（无项目号时含全局默认）；隐式密钥解密，日志只记 channel。"""
-        await self._ensure_loaded()
+        await self._fetch()
         routes: list[NotifierRoute] = []
         for n in self._notifiers:
             if n.project_id is not None and n.project_id != project_id:
@@ -262,14 +236,12 @@ class ConfigRepository:
             ))
         return routes
 
-    async def resolve_forge(
-        self, provider: str, *, force: bool = False
-    ) -> ResolvedForge | None:
+    async def resolve_forge(self, provider: str) -> ResolvedForge | None:
         """返回一个平台的接入凭据；**env 优先、DB 兜底**（host env 压不住）。
 
         与 `resolve_llm` 语义一致：env 显式配了 `CR_{PROVIDER}_TOKEN` → 用 env；
-        否则读 DB `forge_config` 该 provider 的启用行（token 解密）。`force=True`
-        清 TTL 强制重拉，供后台保存后热更。都无 token 返回 None（该平台不注册）。
+        否则读 DB `forge_config` 该 provider 的启用行（token 解密）。无 token
+        返回 None（该平台不注册）。每次调用实时读取 DB，后台保存后立即生效。
         """
         key = provider.upper()
         env_token = (os.environ.get(f"CR_{key}_TOKEN") or "").strip()
@@ -281,7 +253,7 @@ class ConfigRepository:
                 env_token,
                 source="env",
             )
-        await self._ensure_loaded(force=force)
+        await self._fetch()
         for f in self._forges:
             if f.provider != provider:
                 continue
