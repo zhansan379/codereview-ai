@@ -89,6 +89,11 @@ class _FileLock:
 
     def __enter__(self) -> _FileLock:
         self._path.touch(exist_ok=True)
+        # Windows `msvcrt.locking` 在 0 字节文件上锁 1 字节（越过 EOF）会抛 OSError，
+        # 被下方 `except OSError: pass` 吞掉 → 锁形同虚设，并发会竞争同一 clone 目录。
+        # 先把锁文件垫到 ≥1 字节，保证 msvcrt 锁真实生效。
+        if self._path.stat().st_size == 0:
+            self._path.write_bytes(b"\x00")
         self._fh = open(self._path, "a+")  # noqa: SIM115 —— 跨平台锁句柄，保持打开
         try:
             try:
@@ -154,12 +159,34 @@ class RepoCloner:
         lock_path = self.cache_root / f"{slugify_key(key)}.lock"
         auth_url = _auth_url(url, token)
         with _FileLock(lock_path):
-            if not (target / ".git").exists():
+            if not self._valid_repo(target):
+                # 残缺/无效的 .git（半途被中断的 clone）直接清掉重来，而非跳过修复。
+                if target.exists():
+                    shutil.rmtree(target, ignore_errors=True)
                 self._clone(auth_url, target)
             else:
                 self._reset_remote(target, auth_url)
             self._fetch_and_checkout(target, ref)
         return target
+
+    def _valid_repo(self, target: Path) -> bool:
+        """判断 `target` 是否完好的 git 工作树。
+
+        只判 `.git` 存在不够——被中断的 clone 会留下只有 hooks/info 的残缺 `.git`，
+        仍能被 `exists()` 命中，却在后续 `git fetch` 时报 ``not a git repository``。
+        这里让 git 自行识别，识别不了即判定无效。
+        """
+        if not (target / ".git").exists():
+            return False
+        try:
+            proc = subprocess.run(
+                ["git", "rev-parse", "--is-inside-work-tree"], cwd=target, check=False,
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=30,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return False
+        return proc.returncode == 0 and proc.stdout.strip() == "true"
 
     def _clone(self, url: str, target: Path) -> None:
         _run(["git", "clone", url, str(target)], timeout=self.timeout)
