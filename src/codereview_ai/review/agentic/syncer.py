@@ -12,8 +12,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
+import stat
 import subprocess
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -159,15 +161,49 @@ class RepoCloner:
         lock_path = self.cache_root / f"{slugify_key(key)}.lock"
         auth_url = _auth_url(url, token)
         with _FileLock(lock_path):
-            if not self._valid_repo(target):
-                # 残缺/无效的 .git（半途被中断的 clone）直接清掉重来，而非跳过修复。
-                if target.exists():
-                    shutil.rmtree(target, ignore_errors=True)
-                self._clone(auth_url, target)
-            else:
+            if self._valid_repo(target):
                 self._reset_remote(target, auth_url)
-            self._fetch_and_checkout(target, ref)
+                self._fetch_and_checkout(target, ref)
+                return target
+            self._rebuild(target, url=auth_url, ref=ref)
         return target
+
+    def _rebuild(self, target: Path, *, url: str, ref: str) -> None:
+        """把残缺/无效的缓存工作树重建好：清掉重 clone，删不净则复用/明确报错。
+
+        半途被中断的 clone 会留下只有 hooks/info 的残缺 `.git`——此前
+        `shutil.rmtree(..., ignore_errors=True)` 遇文件被占用/只读会静默残留非空目录，
+        后续 `git clone` 便报误导性的 ``already exists and is not an empty directory``。
+        这里改为：先尽力删干净（含只读文件转可写），删不净即视为被并发进程占用——
+        若占用方已把仓库整理有效则顺势增量同步复用，否则抛清晰的"占用"错误，
+        不再让 git clone 报那条误导信息。
+        """
+        self._force_remove(target)
+        if _is_non_empty(target):
+            # 删不净 = 正被占用。能判定它是有效仓库就复用，避免重复 clone 竞争。
+            if self._valid_repo(target):
+                logger.warning("缓存仓库 %s 被占用但状态有效，改走增量同步", target)
+                self._reset_remote(target, url)
+                self._fetch_and_checkout(target, ref)
+                return
+            raise RuntimeError(
+                f"缓存仓库 {target} 正被其他进程占用（残留文件无法删除），无法重建"
+            )
+        self._clone(url, target)
+
+    def _force_remove(self, target: Path) -> None:
+        """删除 `target`（含 Windows 只读文件）；删不净则静默保留现场，交由调用方判定。"""
+        def _onerror(func, path, _exc_info):  # noqa: ANN001
+            # 只读属性（Windows 上 rmtree 对只读文件会失败）→ 转可写后重试一次；
+            # 仍失败（真被占用锁定）则留给上层判定，而非被 ignore_errors 静默吞掉。
+            try:
+                os.chmod(path, stat.S_IWRITE)
+                func(path)
+            except OSError:
+                pass
+
+        if target.exists():
+            shutil.rmtree(target, onerror=_onerror)
 
     def _valid_repo(self, target: Path) -> bool:
         """判断 `target` 是否完好的 git 工作树。
@@ -217,6 +253,11 @@ class RepoCloner:
 def _contains_token(url: str) -> bool:
     """判断 clone URL 是否已带 userinfo 凭据（避免无谓改写，也让 `_reset_remote` 可读）。"""
     return "@" in (urlparse(url).netloc or "")
+
+
+def _is_non_empty(path: Path) -> bool:
+    """目录存在且非空。git clone 只拒绝「已存在且非空」的目标，空目录允许直接写入。"""
+    return path.is_dir() and any(path.iterdir())
 
 
 # 供运行时以 async 方式在后台线程跑 git（不阻塞事件循环）。
