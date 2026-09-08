@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -81,16 +82,33 @@ def test_git_clone_url_from_web_url():
     )) == ""
 
 
+def _bare_has(ws: Path, rev: str, path: str) -> bool:
+    """bare 仓库里按 rev 读 path 对象并返回是否 == "hi\n"（辅助断言）。"""
+    res = subprocess.run(
+        ["git", "-C", str(ws), "cat-file", "blob", f"{rev}:{path}"],
+        check=False, capture_output=True,
+    )
+    return res.returncode == 0 and res.stdout == b"hi\n"
+
+
 @pytest.mark.skipif(not RepoCloner.available(), reason="本地无 git")
 def test_cloner_sync_to_clone_and_idempotent(tmp_path):
     uri, head = _seed_remote(tmp_path)
     cloner = RepoCloner(tmp_path / "cache")
     ws = cloner.sync_to(url=uri, key="owner/repo", ref=head, token="")
-    assert (ws / "a.txt").read_text("utf-8") == "hi\n"
+    # bare 仓库：无 working tree，直接按 sha 读 git 对象
+    res = subprocess.run(
+        ["git", "rev-parse", "--is-bare-repository"], cwd=ws, check=False,
+        capture_output=True, text=True,
+    )
+    assert res.stdout.strip() == "true"
+    assert (ws / "HEAD").exists()
+    assert (ws / "objects").exists()
+    assert _bare_has(ws, head, "a.txt")
     # 幂等二次同步：同一仓库、同一 sha 仍可用且路径一致
     ws2 = cloner.sync_to(url=uri, key="owner/repo", ref=head, token="")
     assert ws2 == ws
-    assert (ws / "a.txt").exists()
+    assert _bare_has(ws, head, "a.txt")
 
 
 @pytest.mark.skipif(not RepoCloner.available(), reason="本地无 git")
@@ -102,17 +120,23 @@ def test_cloner_sync_to_missing_url_raises(tmp_path):
 
 @pytest.mark.skipif(not RepoCloner.available(), reason="本地无 git")
 def test_cloner_recovers_corrupt_repo(tmp_path):
-    """残缺 .git（被中断的 clone，只剩 hooks/info 模板）会被识别无效并重新 clone。"""
+    """残缺 bare（被中断的 clone：缺对象库的残留）会被识别无效并重新 clone。"""
     uri, head = _seed_remote(tmp_path)
     cloner = RepoCloner(tmp_path / "cache")
     cache_dir = tmp_path / "cache" / "owner_repo"  # slugify_key("owner/repo")=owner_repo
-    # 模拟半途被中断的 clone：.git 下仅有 git init 最早创建的 hooks/info
-    (cache_dir / ".git" / "hooks").mkdir(parents=True)
-    (cache_dir / ".git" / "info").mkdir(parents=True)
+    # 模拟半途被中断的 bare clone：只有 HEAD 声明 + 空 objects，git 不认它是个仓库
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "HEAD").write_text("ref: refs/heads/missing\n", "utf-8")
+    (cache_dir / "objects").mkdir()
     ws = cloner.sync_to(url=uri, key="owner/repo", ref=head, token="")
-    assert (ws / "a.txt").read_text("utf-8") == "hi\n"
-    # 残缺目录被清掉重 clone，得到完整 .git/HEAD
-    assert (cache_dir / ".git" / "HEAD").exists()
+    res = subprocess.run(
+        ["git", "rev-parse", "--is-bare-repository"], cwd=ws, check=False,
+        capture_output=True, text=True,
+    )
+    assert res.stdout.strip() == "true"
+    assert _bare_has(ws, head, "a.txt")
+    # 残缺残留被清掉重 clone：HEAD 指向正常 ref，而非残留的 missing
+    assert (ws / "HEAD").read_text("utf-8").strip() != "ref: refs/heads/missing"
 
 
 @pytest.mark.skipif(not RepoCloner.available(), reason="本地无 git")
@@ -121,8 +145,10 @@ def test_cloner_occupied_invalid_dir_raises_clear(tmp_path, monkeypatch):
     uri, head = _seed_remote(tmp_path)
     cloner = RepoCloner(tmp_path / "cache")
     cache_dir = tmp_path / "cache" / "owner_repo"
-    # 制造无效且非空的残留目标（残缺 .git）
-    (cache_dir / ".git" / "hooks").mkdir(parents=True)
+    # 制造无效且非空的残留目标（残缺 bare：垃圾 HEAD + 空 objects，非有效仓库）
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "HEAD").write_text("garbage\n", "utf-8")
+    (cache_dir / "objects").mkdir()
     # 模拟 Windows 上被占用删不掉：force_remove 成了空操作
     monkeypatch.setattr(cloner, "_force_remove", lambda _t: None)
     with pytest.raises(RuntimeError) as exc:
@@ -147,7 +173,7 @@ def test_cloner_clears_readonly_junk_before_reclone(tmp_path):
         pass
     assert junk.exists()
     ws = cloner.sync_to(url=uri, key="owner/repo", ref=head, token="")
-    assert (ws / "a.txt").read_text("utf-8") == "hi\n"
+    assert _bare_has(ws, head, "a.txt")
 
 
 # ── llm_adapter（fake backend）────────────────────────────────────────

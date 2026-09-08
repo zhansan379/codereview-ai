@@ -1,7 +1,7 @@
 """仓库同步：把被审仓库 clone 到本地做 agent 全仓上下文（DESIGN §12.1 补齐）。
 
-借鉴 AI-Codereview-Gitlab `biz/agent/repo_syncer.py` 的机制，但**只取其 git 同步逻辑**：
-- 懒 clone（首次）+ 增量 `fetch --all --prune` + `reset --hard <ref>` 到指定 commit/分支；
+借鉴 AI-Codereview-Gitlab `biz/agent/repo_syncer.py` 的机制，但**只取其 git 只读同步逻辑**：
+- 懒 **bare clone**（首次）+ 增量 `fetch --all --prune`（**无 working tree、无 reset**）；
 - 带 `oauth2:<token>` 鉴权注入（http(s) URL），host 匹配平台 token；
 - 可移植文件锁（POSIX `fcntl` / Windows `msvcrt`）防并发 clone。
 
@@ -134,10 +134,11 @@ class _FileLock:
 
 
 class RepoCloner:
-    """把远程仓库惰性 clone 到 `cache_root`，之后增量同步到目标 ref。
+    """把远程仓库惰性 bare clone 到 `cache_root`，之后增量同步到目标 ref。
 
-    每个 repo 一个子目录：`cache_root/<safe_key>/`（git 工作树）+ 一个 .lock 文件。
-    cache 跨审查复用：下次直接 `fetch --all --prune` + `reset --hard` 到位，不重复 clone。
+    每个 repo 一个子目录：`cache_root/<safe_key>/`（**bare 仓库**，无 working tree）
+    + 一个 .lock 文件。cache 跨审查复用：下次直接 `fetch --all --prune` 到位，
+    不重复 clone。agent 以 ref(sha) 寻址对象库读取，无需物化工作树。
     """
 
     def __init__(self, cache_root: Path | str, *, timeout: int = 300) -> None:
@@ -150,10 +151,10 @@ class RepoCloner:
         return shutil.which("git") is not None
 
     def sync_to(self, *, url: str, key: str, ref: str, token: str = "") -> Path:
-        """确保 `key` 仓库本地可用且 `ref` 已 checkout，返回工作树路径。
+        """确保 `key` 仓库本地可用且 `ref` 对象已入库，返回 bare 仓库目录。
 
-        `ref` 若是 7-40 位十六进制则按 commit checkout（`reset --hard <sha>`），
-        否则按分支（`reset --hard origin/<ref>`，自动跟随远端新提交）。
+        bare 仓库无 working tree：读由上层以 `ref`(sha) 寻址 git 对象完成。`ref`
+        若是 7-40 位十六进制则额外确保该 commit 已 fetch 到位；否则仅保持仓库新鲜。
         """
         if not url:
             raise RuntimeError("缺少 clone URL")
@@ -163,7 +164,7 @@ class RepoCloner:
         with _FileLock(lock_path):
             if self._valid_repo(target):
                 self._reset_remote(target, auth_url)
-                self._fetch_and_checkout(target, ref)
+                self._fetch_and_check(target, ref)
                 return target
             self._rebuild(target, url=auth_url, ref=ref)
         return target
@@ -184,7 +185,7 @@ class RepoCloner:
             if self._valid_repo(target):
                 logger.warning("缓存仓库 %s 被占用但状态有效，改走增量同步", target)
                 self._reset_remote(target, url)
-                self._fetch_and_checkout(target, ref)
+                self._fetch_and_check(target, ref)
                 return
             raise RuntimeError(
                 f"缓存仓库 {target} 正被其他进程占用（残留文件无法删除），无法重建"
@@ -206,17 +207,16 @@ class RepoCloner:
             shutil.rmtree(target, onerror=_onerror)
 
     def _valid_repo(self, target: Path) -> bool:
-        """判断 `target` 是否完好的 git 工作树。
+        """判断 `target` 是否完好的 bare 仓库（git 目录即 `target` 本身）。
 
-        只判 `.git` 存在不够——被中断的 clone 会留下只有 hooks/info 的残缺 `.git`，
-        仍能被 `exists()` 命中，却在后续 `git fetch` 时报 ``not a git repository``。
-        这里让 git 自行识别，识别不了即判定无效。
+        裸仓库没有 `.git` 子目录，直接让 git 自认：`rev-parse --is-bare-repository`
+        输出 ``true`` 才算有效对象库；被中断的 clone 或纯残留目录识别不了即无效。
         """
-        if not (target / ".git").exists():
+        if not target.is_dir():
             return False
         try:
             proc = subprocess.run(
-                ["git", "rev-parse", "--is-inside-work-tree"], cwd=target, check=False,
+                ["git", "rev-parse", "--is-bare-repository"], cwd=target, check=False,
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=30,
             )
@@ -225,7 +225,7 @@ class RepoCloner:
         return proc.returncode == 0 and proc.stdout.strip() == "true"
 
     def _clone(self, url: str, target: Path) -> None:
-        _run(["git", "clone", url, str(target)], timeout=self.timeout)
+        _run(["git", "clone", "--bare", url, str(target)], timeout=self.timeout)
 
     def _reset_remote(self, target: Path, auth_url: str) -> None:
         # 已 cache 的仓库可能无凭据 / token 更新：改写 origin 让后续 fetch 走新版。
@@ -243,11 +243,36 @@ class RepoCloner:
         if existing != auth_url or _contains_token(existing):
             _run(["git", "remote", "set-url", "origin", auth_url], cwd=target, timeout=30)
 
-    def _fetch_and_checkout(self, target: Path, ref: str) -> None:
+    def _fetch_and_check(self, target: Path, ref: str) -> None:
+        """增量 fetch 到最新，并确保 `ref`（若是 7-40 位 hex）对象已入库。
+
+        bare 仓库无 working tree 可 `reset --hard`——读全走 git 对象，因此这里只负责
+        让对象/refs 新鲜。head 若是远端临时分支已删、不在任何已拉 ref 可达历史的 sha，
+        补 `git fetch origin <sha>`（服务端允许 reachable 时有效）；仍缺失则抛错，
+        由上层降级为普通 diff 审查（等价旧 `reset --hard` 失败降级）。
+        """
         _run(["git", "fetch", "--all", "--prune"], cwd=target, timeout=self.timeout)
         is_sha = bool(re.fullmatch(r"[0-9a-fA-F]{7,40}", ref))
-        checkout_ref = ref if is_sha else f"origin/{ref}"
-        _run(["git", "reset", "--hard", checkout_ref], cwd=target, timeout=self.timeout)
+        if is_sha and not self._object_present(target, ref):
+            try:
+                _run(["git", "fetch", "origin", ref], cwd=target, timeout=self.timeout)
+            except RuntimeError:
+                pass  # 服务端可能拒绝按 sha fetch，交由下方存在性校验定夺
+            if not self._object_present(target, ref):
+                raise RuntimeError(f"目标 commit {ref} 在 fetch 后仍不可达")
+
+    @staticmethod
+    def _object_present(target: Path, ref: str) -> bool:
+        """`git cat-file -t <ref>` 判定对象是否已在库（commit 即视为可达）。"""
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(target), "cat-file", "-t", ref], check=False,
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=30,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return False
+        return proc is not None and proc.returncode == 0 and bool((proc.stdout or "").strip())
 
 
 def _contains_token(url: str) -> bool:

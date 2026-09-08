@@ -132,11 +132,12 @@ class DockerRuntime:
 
 
 class LocalCloneRuntime:
-    """进程内只读工作区：把被审仓库 clone 到本地做全仓上下文（生产默认运行时）。
+    """进程内只读上下文：把被审仓库 **bare clone** 到本地做全仓对象库（生产默认运行时）。
 
-    借鉴旧项目 repo_syncer 的 clone 机制，但**不提供 shell**——agent 只能经只读结构化
-    工具看这个 clone 的工作树，无任意代码执行，故不需要 docker 容器隔离。cache 目录跨
-    审查复用：`RepoCloner` 增量 fetch 到位，不重复 clone。停用不删 cache（保留复用）。
+    借鉴旧项目 repo_syncer 的 clone 机制，但**不提供 shell、不物化 working tree**——
+    agent 只能经只读结构化工具按 `pinned_sha` 寻址 git 对象读取，无任意代码执行，
+    故不需要 docker 容器隔离。cache 目录跨审查复用：`RepoCloner` 增量 fetch 到位，
+    不重复 clone。停用不删 cache（保留复用）。
 
     `token_for` 是按 provider 取平台凭据的异步回调；缺省/无 token 时 clone 走公开地址
     （私有仓库会失败，由上层降级）。
@@ -171,9 +172,9 @@ class LocalCloneRuntime:
             ref=pr.head_sha, token=token,
         )
         self._workspace = workspace
-        diff_map = _materialize(diffs, workspace)  # 兜底：确保变更文件也存在
-        # repo_dir+pinned_sha：使三个读文件工具走不可变 git 对象（按 head_sha 寻址），
-        # 免疫并发审查下工作树被其它 PR reset 覆盖的竞态。
+        diff_map = _materialize(diffs, workspace)  # 兜底：diff 文本 + 变更文件写入
+        # repo_dir+pinned_sha：三个读文件工具一律走不可变 git 对象（按 head_sha 寻址），
+        # 不依赖任何 working tree 实体（bare 仓库也无此物）。
         return RepoContext(
             workspace=workspace, diff_map=diff_map,
             repo_dir=workspace, pinned_sha=pr.head_sha,
@@ -234,7 +235,8 @@ async def run_agentic_review(
                 group_key = g[0].new_path if g else ""
                 runner = ToolRunner(
                     RepoContext(workspace=ctx.workspace, diff_map=ctx.diff_map,
-                                group_key=group_key),
+                                group_key=group_key,
+                                repo_dir=ctx.repo_dir, pinned_sha=ctx.pinned_sha),
                     ToolState(),
                 )
                 change_files = sorted({d.new_path for d in g})

@@ -145,6 +145,38 @@ def test_git_context_reads_immutable(tmp_path):
     assert "hi" in out and "CLOBBERED" not in out
 
 
+def _make_bare(tmp_path, src):
+    """把工作树 `src`（含头提交）克隆成 bare 仓库，返回 bare 目录。"""
+    import subprocess
+
+    bare = tmp_path / "bare.git"
+    subprocess.run(
+        ["git", "clone", "--bare", str(src), str(bare)],
+        check=True, capture_output=True,
+    )
+    return bare
+
+
+@pytest.mark.skipif(not _HAVE_GIT, reason="本地无 git")
+def test_git_context_reads_from_bare_repo(tmp_path):
+    """bare 仓库（无 working tree）下 repo_dir+pinned_sha 三只读工具仍按 git 对象读。"""
+    import subprocess as sp
+
+    src, head = _seed_git(tmp_path)
+    bare = _make_bare(tmp_path, src)
+    # bare 目录本身即 git 仓库根
+    assert sp.run(["git", "rev-parse", "--is-bare-repository"], cwd=bare,
+                  check=True, capture_output=True, text=True).stdout.strip() == "true"
+    ctx = RepoContext(workspace=bare, diff_map={}, repo_dir=bare, pinned_sha=head)
+    assert ctx.repo_git()
+    runner = ToolRunner(ctx, ToolState())
+    assert "hi" in runner.run_one("read_file", {"file_path": "a.txt"})
+    assert "backend.py:2" in runner.run_one("grep_repo", {"search_text": "os.system"})
+    assert "sub/backend.py" in runner.run_one("file_find", {"query_name": "backend"})
+    # cat_file/blob 路径在 bare 下不可见文件实体，但对象可读（working tree 物化非必需）
+    assert not (bare / "a.txt").exists()
+
+
 def test_code_comment_fallback_group_key(tmp_path):
     ctx = RepoContext(workspace=tmp_path, group_key="fallback.py")
     state = ToolState()
