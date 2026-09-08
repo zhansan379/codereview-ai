@@ -198,9 +198,35 @@ class NotifierConfig(Base):
     secret_encrypted: Mapped[str] = mapped_column(Text, default="")  # Fernet 密文（签名密钥）
     project_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     at_threshold: Mapped[int] = mapped_column(Integer, default=60)
-    at_all: Mapped[bool] = mapped_column(Boolean, default=False)  # 命中阈值时 @所有人
-    at_targets: Mapped[list] = mapped_column(JSON, default=list)  # [{author,mobile,wecom_userid,feishu_open_id}]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class NotifierMember(Base):
+    """系统级 @成员名单（一行 = 一个真人，含跨平台 ID 别名）。
+
+    `git_username` 是 forge 提交用户名，供 `pr.author` 按渠道解析成该平台认识的
+    @ID（命中不到的人只进文案点名，不进 `atMobiles`）。三平台字段各自可空/为空就
+    表示该平台没有标识（推送时跳过）。与渠道的绑定关系存 `NotifierRouteMember`。
+    """
+
+    __tablename__ = "notifier_member"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), default="")  # 展示名
+    git_username: Mapped[str] = mapped_column(String(128), default="")  # fork 提交用户名
+    dingtalk_mobile: Mapped[str] = mapped_column(String(64), default="")  # 钉钉 @ 手机号
+    wecom_userid: Mapped[str] = mapped_column(String(128), default="")  # 企微 userid
+    feishu_open_id: Mapped[str] = mapped_column(String(128), default="")  # 飞书 open_id
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class NotifierRouteMember(Base):
+    """渠道 × 成员 绑定（无外键，沿用本模块风格；删任一侧需显式清理）。"""
+
+    __tablename__ = "notifier_route_member"
+
+    notifier_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    member_id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
 
 class ForgeConfig(Base):

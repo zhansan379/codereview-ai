@@ -31,6 +31,7 @@ from codereview_ai.api.admin import (
     stats,
     tasks,
 )
+from codereview_ai.api.admin.notifier_members import router as members  # 系统级 @成员名单
 from codereview_ai.api.admin import (
     settings as admin_settings,  # 全局运行时设置（并发数）
 )
@@ -122,7 +123,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if n_replay:
                 logger.info("启动回放：重新入队 %s 条遗留任务续跑", n_replay)
             # F4/M4.7：路由从 DB notifier_config 拉取（project_id=None→仅全局默认）
-            notifier = NotifierDispatcher(provider_repo.notifier_routes, http=http)
+            notifier = NotifierDispatcher(
+                provider_repo.notifier_routes,
+                http=http,
+                resolve_member=provider_repo.resolve_member_by_git_username,
+            )
             # §7.7：push 轨默认关；由 env 开关 + 分支 glob 构造 PushGate
             push_gate = PushGate(
                 enabled=settings.push_review_enabled,
@@ -284,6 +289,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router, prefix="/api")
     app.include_router(projects.router, prefix="/api")
     app.include_router(models.router, prefix="/api")
+    app.include_router(members, prefix="/api")
     app.include_router(notifiers.router, prefix="/api")
     app.include_router(forges.router, prefix="/api")
     app.include_router(reviews.router, prefix="/api")

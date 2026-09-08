@@ -3,6 +3,7 @@
     <el-card>
       <div class="toolbar">
         <el-button type="primary" @click="openCreate">新增通知渠道</el-button>
+        <el-button @click="openMemberManager">@成员管理</el-button>
       </div>
       <el-table :data="items" v-loading="loading" stripe>
         <el-table-column prop="id" label="ID" width="70" />
@@ -90,42 +91,15 @@
           <el-input-number v-model="form.at_threshold" :min="0" />
           <div class="form-tip">评分低于此阈值才触发 @；达标则不 @，避免打扰。</div>
         </el-form-item>
-        <el-form-item label="@所有人">
-          <el-switch v-model="form.at_all" />
-          <div class="form-tip">达到 @阈值时，在群里 @全部成员。</div>
-        </el-form-item>
-        <el-form-item label="@指定成员">
-          <div style="width: 100%">
-            <el-button size="small" type="primary" plain @click="addTarget">添加成员</el-button>
-            <el-table :data="form.at_targets" size="small" border style="margin-top: 8px">
-              <el-table-column label="Fork 用户名" min-width="120">
-                <template #default="{ row }">
-                  <el-input v-model="row.author" placeholder="如 zhangsan" />
-                </template>
-              </el-table-column>
-              <el-table-column label="手机号" min-width="130">
-                <template #default="{ row }">
-                  <el-input v-model="row.mobile" placeholder="钉钉/企微用" />
-                </template>
-              </el-table-column>
-              <el-table-column label="企微 userid" min-width="130">
-                <template #default="{ row }">
-                  <el-input v-model="row.wecom_userid" placeholder="企业在职用户" />
-                </template>
-              </el-table-column>
-              <el-table-column label="飞书 open_id" min-width="150">
-                <template #default="{ row }">
-                  <el-input v-model="row.feishu_open_id" placeholder="ou_xxx，需通讯录查" />
-                </template>
-              </el-table-column>
-              <el-table-column label="" width="60">
-                <template #default="{ $index }">
-                  <el-button link type="danger" @click="removeTarget($index)">删除</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-            <div class="form-tip">达到 @阈值时 @这些成员（按平台填对应列）；飞书 open_id 成员不可见，需用通讯录接口查。</div>
-          </div>
+        <el-form-item label="指定成员">
+          <el-select v-model="form.at_member_ids" multiple filterable style="width: 100%"
+            :placeholder="members.length ? '选择该渠道要 @ 的人（评分低于阈值时触发）' : '请先在「@成员管理」添加'">
+            <el-option v-for="m in members" :key="m.id" :value="m.id" :label="memberLabel(m)">
+              <span>{{ m.name || m.git_username || '成员 #' + m.id }}</span>
+              <el-tag size="small" type="info" class="member-tag">{{ m.dingtalk_mobile || '—' }} / {{ m.wecom_userid || '—' }} / {{ m.feishu_open_id || '—' }}</el-tag>
+            </el-option>
+          </el-select>
+          <div class="form-tip">评分低于阈值时才 @ 这些成员 + @提交者；fork 用户名只作正文点名，不进 @ID。</div>
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
@@ -136,13 +110,52 @@
         <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 系统级 @成员管理 -->
+    <el-dialog v-model="memberDialogVisible" title="系统级 @成员管理" width="860px">
+      <div class="toolbar">
+        <el-button type="primary" @click="openMemberForm()">新增成员</el-button>
+      </div>
+      <el-table :data="members" v-loading="membersLoading" stripe>
+        <el-table-column prop="name" label="姓名" width="120" />
+        <el-table-column prop="git_username" label="fork用户名" width="140" />
+        <el-table-column prop="dingtalk_mobile" label="钉钉手机号" width="130" />
+        <el-table-column prop="wecom_userid" label="企微userid" min-width="120" />
+        <el-table-column prop="feishu_open_id" label="飞书open_id" min-width="130" />
+        <el-table-column label="操作" width="140" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openMemberForm(row)">编辑</el-button>
+            <el-button link type="danger" @click="onDeleteMember(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
+    <el-dialog v-model="memberFormVisible" :title="memberIsEdit ? '编辑成员' : '新增成员'" width="520px"
+      :modal="false" append-to-body>
+      <el-form :model="memberForm" label-width="120px">
+        <el-form-item label="姓名"><el-input v-model="memberForm.name" placeholder="展示名，可空" /></el-form-item>
+        <el-form-item label="fork用户名"><el-input v-model="memberForm.git_username" placeholder="提交者 @ 的命中键，如 zhansan379" /></el-form-item>
+        <el-form-item label="钉钉手机号"><el-input v-model="memberForm.dingtalk_mobile" placeholder="钉钉 @ 用" /></el-form-item>
+        <el-form-item label="企微userid"><el-input v-model="memberForm.wecom_userid" placeholder="企微点名用" /></el-form-item>
+        <el-form-item label="飞书open_id"><el-input v-model="memberForm.feishu_open_id" placeholder="飞书 @ 用" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="memberFormVisible = false">取消</el-button>
+        <el-button type="primary" :loading="memberSaving" @click="onSaveMember">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listNotifiers, createNotifier, updateNotifier, deleteNotifier, listProjects, type Notifier, type Project } from '../api'
+import {
+  listNotifiers, createNotifier, updateNotifier, deleteNotifier, listProjects,
+  listMembers, createMember, updateMember, deleteMember,
+  type Notifier, type Project, type NotifierMember,
+} from '../api'
 
 const items = ref<Notifier[]>([])
 const projects = ref<Project[]>([])
@@ -153,6 +166,16 @@ const dialogVisible = ref(false)
 const isEdit = ref(false)
 const editingId = ref<number | null>(null)
 
+// —— 系统级 @成员管理 ——
+const members = ref<NotifierMember[]>([])
+const membersLoading = ref(false)
+const memberDialogVisible = ref(false)
+const memberFormVisible = ref(false)
+const memberSaving = ref(false)
+const memberIsEdit = ref(false)
+const memberEditingId = ref<number | null>(null)
+const memberForm = reactive({ name: '', git_username: '', dingtalk_mobile: '', wecom_userid: '', feishu_open_id: '' })
+
 const REDACTED = '******'
 
 const emptyForm = () => ({
@@ -161,9 +184,8 @@ const emptyForm = () => ({
   secret: '',
   project_id: null as number | null,
   at_threshold: 60,
-  at_all: false,
-  at_targets: [] as Array<{ author: string; mobile?: string; wecom_userid?: string; feishu_open_id?: string }>,
   enabled: true,
+  at_member_ids: [] as number[],
 })
 const form = reactive(emptyForm())
 
@@ -185,6 +207,62 @@ async function loadProjects() {
   }
 }
 
+async function loadMembers() {
+  membersLoading.value = true
+  try {
+    members.value = await listMembers()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '加载成员失败')
+  } finally {
+    membersLoading.value = false
+  }
+}
+
+function openMemberManager() {
+  memberDialogVisible.value = true
+  loadMembers()
+}
+function openMemberForm(row?: NotifierMember) {
+  memberIsEdit.value = !!row
+  memberEditingId.value = row?.id ?? null
+  Object.assign(memberForm, {
+    name: row?.name ?? '',
+    git_username: row?.git_username ?? '',
+    dingtalk_mobile: row?.dingtalk_mobile ?? '',
+    wecom_userid: row?.wecom_userid ?? '',
+    feishu_open_id: row?.feishu_open_id ?? '',
+  })
+  memberFormVisible.value = true
+}
+async function onSaveMember() {
+  memberSaving.value = true
+  try {
+    if (memberIsEdit.value && memberEditingId.value != null) {
+      await updateMember(memberEditingId.value, { ...memberForm })
+    } else {
+      await createMember({ ...memberForm })
+    }
+    ElMessage.success('已保存成员')
+    memberFormVisible.value = false
+    loadMembers()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '保存成员失败')
+  } finally {
+    memberSaving.value = false
+  }
+}
+async function onDeleteMember(row: NotifierMember) {
+  await ElMessageBox.confirm(`确认删除成员「${row.name || row.git_username || row.id}」？`, '提示', { type: 'warning' })
+  await deleteMember(row.id)
+  ElMessage.success('已删除')
+  loadMembers()
+}
+
+function memberLabel(m: NotifierMember): string {
+  if (m.name) return `${m.name}${m.git_username ? '（@' + m.git_username + '）' : ''}`
+  return m.git_username || `成员 #${m.id}`
+}
+
 function openCreate() {
   isEdit.value = false
   editingId.value = null
@@ -203,9 +281,8 @@ function openEdit(row: Notifier) {
     secret: row.channel === 'wecom' ? '' : (row.secret || REDACTED),
     project_id: row.project_id ?? null,
     at_threshold: row.at_threshold ?? 60,
-    at_all: row.at_all ?? false,
-    at_targets: row.at_targets ?? [],
     enabled: row.enabled,
+    at_member_ids: row.at_member_ids || [],
   })
   dialogVisible.value = true
 }
@@ -214,13 +291,6 @@ function onChannelChange() {
   if (form.channel === 'wecom') {
     form.secret = ''
   }
-}
-
-function addTarget() {
-  form.at_targets.push({ author: '' })
-}
-function removeTarget(index: number) {
-  form.at_targets.splice(index, 1)
 }
 
 async function onSave() {
@@ -254,7 +324,11 @@ async function onDelete(row: Notifier) {
   load()
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadProjects()
+  loadMembers()
+})
 </script>
 
 <style scoped>
@@ -265,5 +339,9 @@ onMounted(load)
   font-size: 12px;
   color: #909399;
   margin-top: 2px;
+}
+.member-tag {
+  margin-left: 8px;
+  font-variant-numeric: tabular-nums;
 }
 </style>

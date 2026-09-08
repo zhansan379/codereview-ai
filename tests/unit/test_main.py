@@ -48,7 +48,8 @@ def test_app_refuses_to_start_without_keys(tmp_path):
     result = subprocess.run(
         # 访问惰性 app 触发 Settings 构造，等效 uvicorn main:app 的启动路径
         [sys.executable, "-c", "import codereview_ai.main as m; _ = m.app"],
-        capture_output=True, text=True, env=env, cwd=str(tmp_path),
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        env=env, cwd=str(tmp_path),
     )
     assert result.returncode != 0
     assert "CR_SECRET_KEY" in result.stderr or "CR_SECRET_KEY" in result.stdout

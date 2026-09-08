@@ -122,8 +122,15 @@ def sign_feishu(secret: str) -> tuple[str, str]:
 
 **限制**：
 - content 上限 **4096 字节**（三家里最小，很容易超）
-- 不支持 `@` 特定成员（只能 `<@userid>` 语法，且需要在 content 里）
 - 支持有限的 HTML 着色：`<font color="info|comment|warning">`
+
+**@ 特定成员（真@）**：企微群机器人 webhook 是支持的，官方文档 path/91770：
+- markdown/text 类型：把 `<@userid>` 直接嵌进 `content` 即触发 @（userid 之间用空格分隔）；
+- text 类型另有独立字段 `mentioned_list`（按 userid）与 `mentioned_mobile_list`（按手机号），
+  也用于「提醒群中指定成员」。
+- 注意：`markdown_v2` 类型不支持 `<@userid>` 扩展语法，用旧 markdown 类型。
+（修正历史：本表曾误标「不支持@特定成员」——那是只看到 `<@userid>` 一种写法、漏了
+`mentioned_list`/`mentioned_mobile_list`；企微与其他两家一样能真@。）
 
 **超长处理**：LLM 的 review 结果经常超过 4096 字节。
 原项目的做法是直接发，超了就失败。正确做法是：截断 + 附一条"查看完整报告"的链接。

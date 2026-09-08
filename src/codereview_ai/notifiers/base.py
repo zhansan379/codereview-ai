@@ -23,7 +23,14 @@ MAX_TEXT_BYTES: dict[str, int] = {
 
 @dataclass
 class ReviewNotification:
-    """一次审查结果的中性通知，供各渠道 Notifier 渲染。"""
+    """一次审查结果的中性通知，供各渠道 Notifier 渲染。
+
+    `at_users` 与 `mention_names` 语义分家：
+    - `at_users`：**该平台认识的 @ID**（手机号/open_id/userid），由 dispatch 按渠道
+      解析好再给 sink，sink 直接放进 at 字段即可——不再携带裸 fork username。
+    - `mention_names`：**文案点名**（fork 用户名等平台不认识的标识），不受 @ 阈值
+      门控，sink 渲染进正文，与真正的 @ 分开。
+    """
 
     project_name: str
     title: str
@@ -31,12 +38,8 @@ class ReviewNotification:
     summary_md: str
     url: str
     findings_count: dict[str, int] = field(default_factory=dict)
-    at_users: list[str] = field(default_factory=list)  # 平台无关标识（历史保留，sink 改用 at_targets）
-    at_all: bool = False  # 命中阈值时 @所有人
-    at_targets: list = field(
-        default_factory=list
-    )  # 命中阈值时 @的成员映射 [{author,mobile,wecom_userid,feishu_open_id}]
-    # 由 dispatch 从路由配置解析填入；sink 只按平台取各自字段渲染真 @。
+    at_users: list[str] = field(default_factory=list)  # 该渠道可用的 @ID
+    mention_names: list[str] = field(default_factory=list)  # 文案点名（非门控）
 
 
 class Notifier(Protocol):
@@ -49,9 +52,13 @@ class Notifier(Protocol):
 
 
 def build_review_notification(
-    pr: PullRequest, result: ReviewResult, *, at_users: list[str] | None = None
+    pr: PullRequest, result: ReviewResult
 ) -> ReviewNotification:
-    """把一次审查结果组装成中性通知（供各 sink 渲染）。"""
+    """把一次审查结果组装成中性通知（供各 sink 渲染）。
+
+    作者不再进 `at_users`（fork username 平台不认），只进 `mention_names` 作文案点名；
+    真正的 @ 由 dispatch 按渠道解析成员表后填充。
+    """
     by_sev: dict[str, int] = {}
     for f in result.findings:
         by_sev[f.severity.value] = by_sev.get(f.severity.value, 0) + 1
@@ -62,7 +69,7 @@ def build_review_notification(
         summary_md=result.summary or "（无摘要）",
         url=pr.web_url,
         findings_count=by_sev,
-        at_users=list(at_users or []),
+        mention_names=[pr.author] if pr.author else [],
     )
 
 

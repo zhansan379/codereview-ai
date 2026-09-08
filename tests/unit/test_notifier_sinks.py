@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 
 import httpx
@@ -22,7 +23,6 @@ from codereview_ai.domain.models import (
 )
 from codereview_ai.notifiers.base import build_review_notification, truncate_utf8
 from codereview_ai.notifiers.dingtalk import DingTalkNotifier
-from codereview_ai.notifiers.feishu import FeishuNotifier
 from codereview_ai.notifiers.wecom import WeComNotifier
 
 DINGTALK_WEBHOOK = "https://oapi.dingtalk.com/robot/send?access_token=abc"
@@ -61,12 +61,12 @@ def _req_json(req: httpx.Request) -> dict:
 
 
 async def test_dingtalk_sign_per_send_and_payload():
-    """DESIGN F4 / reference §1：加签每次 send 都算，payload 结构正确、at 透传（手机号）。"""
+    """DESIGN F4 / reference §1：加签每次 send 都算，payload 结构正确、at 透传。"""
     captured: list[httpx.Request] = []
     client = _make_client(captured)
     notifier = DingTalkNotifier(DINGTALK_WEBHOOK, secret="s3cret", http=client)
     msg = build_review_notification(_pr(), _result(85, [_finding(Severity.HIGH)]))
-    msg.at_targets = [{"author": "alice", "mobile": "13800000000"}]
+    msg.at_users = ["13800138000"]  # dispatch 已解析好的平台 ID
     await notifier.send(msg)
 
     req = captured[0]
@@ -76,20 +76,12 @@ async def test_dingtalk_sign_per_send_and_payload():
     assert body["msgtype"] == "markdown"
     assert body["markdown"]["title"] == "代码审查报告"
     assert "总分：**85**" in body["markdown"]["text"]
-    # atMobiles 取映射手机号（不再把 fork 用户名当天真填进手机号位）
-    assert body["at"] == {"atMobiles": ["13800000000"], "isAtAll": False}
-    await client.aclose()
-
-
-async def test_dingtalk_at_all_sets_is_at_all():
-    """钉钉 @所有人 → at.isAtAll=True；无手机号 → atMobiles 空。"""
-    captured: list[httpx.Request] = []
-    client = _make_client(captured)
-    notifier = DingTalkNotifier(DINGTALK_WEBHOOK, http=client)
-    msg = build_review_notification(_pr(), _result(50, []))
-    msg.at_all = True
-    await notifier.send(msg)
-    assert _req_json(captured[0])["at"] == {"atMobiles": [], "isAtAll": True}
+    assert body["at"] == {"atMobiles": ["13800138000"], "isAtAll": False}
+    # fork 用户名走文案点名（mention_names），不进 at
+    msg.mention_names = ["fork_user"]
+    await notifier.send(dataclasses.replace(msg, at_users=[]))
+    assert "相关：@fork_user" in _req_json(captured[1])["markdown"]["text"]
+    assert _req_json(captured[1])["at"] == {"atMobiles": [], "isAtAll": False}
     await client.aclose()
 
 
@@ -163,51 +155,11 @@ async def test_wecom_content_truncated_to_4096_bytes():
     assert len(content.encode("utf-8")) <= 4096
 
 
-async def test_feishu_card_mentions_at_targets_and_all():
-    """飞书 @：卡片 lark_md 正文追加 <at> 标签；@所有人 + @指定 open_id。"""
-    captured: list[httpx.Request] = []
-    client = _make_client(captured)
-    notifier = FeishuNotifier("https://open.feishu.cn/open-apis/bot/v2/hook/x", http=client)
-    msg = build_review_notification(_pr(), _result(50, []))
-    msg.at_all = True
-    msg.at_targets = [{"author": "alice", "feishu_open_id": "ou_abc"}]
-    await notifier.send(msg)
-    body = _req_json(captured[0])
-    assert body["msg_type"] == "interactive"
-    content = body["card"]["elements"][0]["text"]["content"]
-    assert '<at user_id="all">全体成员</at>' in content
-    assert '<at user_id="ou_abc">alice</at>' in content
-    await client.aclose()
-
-
-async def test_wecom_mention_sends_text_with_mention_lists():
-    """企微 @：markdown 不支持 @ → 有 @ 需求时切 text，mentioned_list/mobile 正确含 @all。"""
-    captured: list[httpx.Request] = []
-    client = _make_client(captured)
-
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda r: captured.append(r) or httpx.Response(200, json={"errcode": 0}))
-    ) as http:
-        notifier = WeComNotifier("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=x", http=http)
-        msg = build_review_notification(_pr(), _result(50, []))
-        msg.at_all = True
-        msg.at_targets = [
-            {"author": "alice", "mobile": "13800000000", "wecom_userid": "alice"},
-            {"author": "bob", "mobile": "13900000000"},
-        ]
-        await notifier.send(msg)
-    body = _req_json(captured[0])
-    assert body["msgtype"] == "text"
-    assert body["text"]["mentioned_list"] == ["alice", "@all"]
-    assert body["text"]["mentioned_mobile_list"] == ["13800000000", "13900000000"]
-    await client.aclose()
-
-
-async def test_wecom_no_mention_stays_markdown():
-    """企微无 @ 需求（at_all 关、targets 空）→ 仍发 markdown 富文本，不回退 text。"""
+async def test_wecom_renders_real_at_via_userid_marks():
+    """企微真@：at_users（wecom userid）解析成 <@userid> 嵌进 content；mention 仅点名。"""
     captured: list[httpx.Request] = []
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx.Request) -> httpx.Response:
         captured.append(request)
         return httpx.Response(200, json={"errcode": 0})
 
@@ -216,8 +168,14 @@ async def test_wecom_no_mention_stays_markdown():
             "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=x", http=client
         )
         msg = build_review_notification(_pr(), _result(85, []))
+        msg.at_users = ["zhangsan", "lisi"]  # 该渠道可用 wecom userid
+        msg.mention_names = ["fork_user"]
         await notifier.send(msg)
-    assert _req_json(captured[0])["msgtype"] == "markdown"
+    content = _req_json(captured[0])["markdown"]["content"]
+    assert "<@zhangsan>" in content and "<@lisi>" in content
+    assert "fork_user" in content  # 点名的 fork 用户名仍显示，但只用 text、不产生 <@>
+    assert "相关" in content
+    await client.aclose()
 
 
 def test_truncate_utf8_keeps_char_boundary():

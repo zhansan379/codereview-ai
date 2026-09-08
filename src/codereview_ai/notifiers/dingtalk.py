@@ -53,6 +53,8 @@ class DingTalkNotifier:
         if msg.findings_count:
             parts = "、".join(f"{sev} ×{n}" for sev, n in sorted(msg.findings_count.items()))
             lines.append(f"- 发现：{parts}")
+        if msg.mention_names:
+            lines.append("- 相关：@" + "、@".join(msg.mention_names))
         lines.append("")
         lines.append(truncate_utf8(msg.summary_md, self.max_text_bytes))
         lines.append(f"\n[查看详情]({msg.url})")
@@ -64,9 +66,9 @@ class DingTalkNotifier:
             "msgtype": "markdown",
             "markdown": {"title": "代码审查报告", "text": self._render_text(msg)},
             "at": {
-                # atMobiles 要手机号：从 at_targets 取 mobile（不接裸露用户名）
-                "atMobiles": [t["mobile"] for t in msg.at_targets if t.get("mobile")],
-                "isAtAll": msg.at_all,
+                # atMobiles 要手机号；at_users 已由 dispatch 按渠道解析成可用手机号
+                "atMobiles": list(msg.at_users),
+                "isAtAll": False,
             },
         }
         resp = await self._http.post(url, json=payload)

@@ -56,13 +56,16 @@ export interface Notifier {
   secret: string
   project_id: number | null
   at_threshold: number | null
-  at_all: boolean
-  at_targets: Array<{
-    author: string
-    mobile?: string
-    wecom_userid?: string
-    feishu_open_id?: string
-  }>
+  at_member_ids: number[]
+}
+
+export interface NotifierMember {
+  id: number
+  name: string
+  git_username: string
+  dingtalk_mobile: string
+  wecom_userid: string
+  feishu_open_id: string
 }
 
 export interface ForgeConfig {
@@ -304,6 +307,19 @@ export function pollPullStatus(): Promise<PollStatus> {
 }
 
 // ===== 通知渠道 =====
+export function listMembers(): Promise<NotifierMember[]> {
+  return client.get('/notifiers/members').then((r) => r.data)
+}
+export function createMember(data: Partial<NotifierMember>): Promise<NotifierMember> {
+  return client.post('/notifiers/members', data).then((r) => r.data)
+}
+export function updateMember(id: number, data: Partial<NotifierMember>): Promise<NotifierMember> {
+  return client.put(`/notifiers/members/${id}`, data).then((r) => r.data)
+}
+export function deleteMember(id: number): Promise<any> {
+  return client.delete(`/notifiers/members/${id}`).then((r) => r.data)
+}
+
 export function listNotifiers(): Promise<Notifier[]> {
   return client.get('/notifiers').then((r) => r.data)
 }

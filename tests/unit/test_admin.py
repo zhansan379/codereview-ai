@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from codereview_ai.api.admin import forges, notifiers, projects, pull, reviews, tasks
 from codereview_ai.api.admin import models as admin_models
+from codereview_ai.api.admin import notifier_members
 from codereview_ai.api.admin import settings as admin_settings
 from codereview_ai.api.auth import issue_token
 from codereview_ai.api.auth import router as auth_router
@@ -48,6 +49,7 @@ async def app(tmp_path) -> AsyncIterator[tuple[FastAPI, str]]:
     fast.include_router(auth_router, prefix="/api")
     fast.include_router(projects.router, prefix="/api")
     fast.include_router(admin_models.router, prefix="/api")
+    fast.include_router(notifier_members.router, prefix="/api")
     fast.include_router(notifiers.router, prefix="/api")
     fast.include_router(forges.router, prefix="/api")
     fast.include_router(reviews.router, prefix="/api")
@@ -193,24 +195,31 @@ def test_models_missing_api_key_400_on_create(app):
 def test_notifiers_crud_and_masking(app):
     fast, token = app
     with _client(fast, token) as c:
+        # 先建系统级成员，拿到 @ 绑定的 member_id
+        alice = c.post("/api/notifiers/members", json={
+            "name": "Alice", "git_username": "alice", "dingtalk_mobile": "13800000000",
+        }).json()
+        bob = c.post("/api/notifiers/members", json={
+            "name": "Bob", "git_username": "bob", "wecom_userid": "wbob",
+        }).json()
         r = c.post("/api/notifiers", json={
             "channel": "dingtalk", "webhook": "https://oapi.dingtalk.com/robot/send?access_token=abc",
             "secret": "SECsecret", "project_id": None, "at_threshold": 60,
-            "at_all": True, "at_targets": [{"author": "alice", "mobile": "13800000000"}],
+            "at_member_ids": [alice["id"], bob["id"]],
         })
         assert r.status_code == 201, r.text
         nid = r.json()["id"]
         assert r.json()["webhook"] == "******" and r.json()["secret"] == "******"
         assert r.json()["channel"] == "dingtalk" and r.json()["project_id"] is None
-        assert r.json()["at_all"] is True and r.json()["at_targets"] == [{"author": "alice", "mobile": "13800000000"}]
+        assert r.json()["at_member_ids"] == [alice["id"], bob["id"]]
 
         upd = c.put(f"/api/notifiers/{nid}", json={
             "channel": "dingtalk", "webhook": "******", "secret": "******",
             "project_id": 3, "at_threshold": 80,
-            "at_all": False, "at_targets": [{"author": "bob", "wecom_userid": "bob"}],
+            "at_member_ids": [alice["id"]],
         }).json()
         assert upd["project_id"] == 3 and upd["at_threshold"] == 80
-        assert upd["at_all"] is False and upd["at_targets"] == [{"author": "bob", "wecom_userid": "bob"}]
+        assert upd["at_member_ids"] == [alice["id"]]
 
         assert c.get("/api/notifiers").json()[0]["webhook"] == "******"
         assert c.delete(f"/api/notifiers/{nid}").status_code == 204

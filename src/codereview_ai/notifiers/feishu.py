@@ -56,15 +56,13 @@ class FeishuNotifier:
         if msg.findings_count:
             parts = "、".join(f"{sev}×{n}" for sev, n in sorted(msg.findings_count.items()))
             content_lines.append(f"**发现**：{parts}")
+        if msg.mention_names:
+            content_lines.append(f"**相关**：{'、'.join(msg.mention_names)}")
         content_lines.append("")
         content_lines.append(truncate_utf8(msg.summary_md, self.max_text_bytes))
-        # @ 人：卡片 lark_md 支持 <at user_id>；open_id/全部 需管理员预填
-        if msg.at_all:
-            content_lines.append('<at user_id="all">全体成员</at>')
-        for t in msg.at_targets:
-            oid = t.get("feishu_open_id")
-            if oid:
-                content_lines.append(f'<at user_id="{oid}">{t.get("author")}</at>')
+        # @ 人：卡片 lark_md 支持 <at user_id>；at_users 已由 dispatch 解析成 open_id
+        for oid in msg.at_users:
+            content_lines.append(f'<at user_id="{oid}">{oid}</at>')
         body = "\n".join(content_lines)
         return {
             "config": {"wide_screen_mode": True},
