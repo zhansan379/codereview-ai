@@ -24,6 +24,8 @@
         <el-button v-if="showDelete" link type="danger" @click="$emit('delete', row.id)">删除</el-button>
         <el-button v-if="showRetry && isRetryable(row)" link type="danger" :loading="retryingId === row.id"
           @click="$emit('retry', row)">{{ row.state === 'skipped' ? '补审' : '重试' }}</el-button>
+        <el-button v-if="showRedeliver && row.writeback_failed" link type="warning" :loading="redeliveringId === row.id"
+          @click="$emit('redeliver', row)">重新发送</el-button>
       </template>
     </el-table-column>
   </el-table>
@@ -50,8 +52,12 @@ const props = withDefaults(
     showRetry?: boolean
     /** 是否显示"删除"按钮（审查记录页开启；仪表盘共用表格关，默认关） */
     showDelete?: boolean
+    /** 是否显示"重新发送"按钮（仅 writeback_failed 行；审查记录页开启） */
+    showRedeliver?: boolean
     /** 当前正在重试的行 id，用于锁住对应"重试"按钮的 loading 态 */
     retryingId?: number | null
+    /** 当前正在重发的行 id，用于锁住对应"重新发送"按钮的 loading 态 */
+    redeliveringId?: number | null
     /** 展示哪个时间字段：排队时间或完成时间 */
     timeField?: 'queued_at' | 'finished_at'
   }>(),
@@ -60,8 +66,10 @@ const props = withDefaults(
     showAction: true,
     showProcess: false,
     showRetry: false,
+    showRedeliver: false,
     showDelete: false,
     retryingId: null,
+    redeliveringId: null,
     timeField: 'queued_at',
   },
 )
@@ -69,6 +77,7 @@ const props = withDefaults(
 defineEmits<{
   (e: 'detail', id: number): void
   (e: 'retry', row: ReviewItem): void
+  (e: 'redeliver', row: ReviewItem): void
   (e: 'delete', id: number): void
 }>()
 

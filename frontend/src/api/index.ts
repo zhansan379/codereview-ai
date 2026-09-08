@@ -116,6 +116,7 @@ export interface ReviewItem {
   score_total: number | null
   queued_at: string | null
   finished_at: string | null
+  writeback_failed: boolean | null
 }
 
 export interface ReviewDetail extends ReviewItem {
@@ -142,6 +143,7 @@ export interface TaskItem {
   error: string | null
   skip_reason: string | null
   queued_at: string | null
+  writeback_failed: boolean | null
 }
 
 // ===== 认证 =====
@@ -373,6 +375,10 @@ export function listTasks(params: { state?: string }): Promise<TaskItem[]> {
 }
 export function retryTask(id: number): Promise<{ id: number; state: string; attempt: number }> {
   return client.post(`/tasks/${id}/retry`).then((r) => r.data)
+}
+
+export function redeliverTask(id: number): Promise<{ id: number; status: string }> {
+  return client.post(`/tasks/${id}/redeliver`).then((r) => r.data)
 }
 
 // ===== 看板统计 =====

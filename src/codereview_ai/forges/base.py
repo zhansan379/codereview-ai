@@ -117,6 +117,14 @@ class ForgeAdapter(ABC):
     async def post_inline(self, pr: PullRequest, comments: list[dict[str, Any]]) -> None:
         """并行发行级评论。"""
 
+    async def list_comments(self, pr: PullRequest) -> list[str]:
+        """列出 PR 上已存在的评论正文（幂等去重用）。
+
+        非抽象默认返回空：未实现列表能力（如测试/分析子类）时幂等检查降级为"从未投递过"，
+        重发会照发。实现者按平台取行级评论 + 总结评论两类正文合并返回。
+        """
+        return []
+
     # ── push 轨（§7.7）：非抽象默认，未实现的分析/测试子类可只保 MR 轨 ──
     def parse_push_event(self, data: dict[str, Any]) -> PushEvent | None:
         """从 webhook 的 push 事件解析出中立 PushEvent；不支持/非 push 返回 None。"""

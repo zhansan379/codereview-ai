@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from collections.abc import Awaitable, Callable
 
@@ -124,17 +125,53 @@ class ResultWriter:
         self._backoff_base = float(backoff_base)
         self._backoff_max = float(backoff_max)
 
-    async def write(self, pr: PullRequest, diffs: list[FileDiff], result: ReviewResult) -> None:
+    async def write(
+        self,
+        pr: PullRequest,
+        diffs: list[FileDiff],
+        result: ReviewResult,
+        *,
+        fingerprint: str = "",
+        summary: str | None = None,
+    ) -> None:
+        """把一个 ReviewResult 落到 forge 上：先行级评论，再总结评论。
+
+        `fingerprint` 给定时先做**幂等检查**：平台已含该指纹（上一轮重发已落地，或读超时
+        歧义下评论已发出）→ 整体跳过，杜绝双发。指纹以 HTML 注释行 ``<!-- {fp} -->`` 附在
+        总结末尾作唯一 sentinel（行级批量 + 总结各自是原子 POST，一个标志即够）。
+        `summary` 给定时直接用（重发用已持久化的 `summary_md`，不再重新 build）。
+        """
+        if fingerprint and await self._already_delivered(pr, fingerprint):
+            logger.info("回写跳过：评论已含指纹 %s（幂等命中）", fingerprint)
+            return
         inline, textual = partition_findings(result.findings, diffs)
+        summary_text = summary if summary is not None else build_summary_markdown(pr, textual, result)
+        if fingerprint:
+            summary_text = f"{summary_text}\n<!-- {fingerprint} -->"
         if inline:
             await self._post(
                 lambda: self.forge.post_inline(pr, [finding_to_comment(f) for f in inline]),
                 what="行级评论",
             )
         await self._post(
-            lambda: self.forge.post_summary(pr, build_summary_markdown(pr, textual, result)),
+            lambda: self.forge.post_summary(pr, summary_text),
             what="总结评论",
         )
+
+    async def _already_delivered(self, pr: PullRequest, fingerprint: str) -> bool:
+        """平台是否已含该指纹，命中即视为本审查已投递（幂等跳过）。
+
+        权宜守卫：极简/测试桩 forge 可能没有 `list_comments`（真实适配器一律继承
+        基类默认返回空列表），此时无法幂等去重，降级为照发（与基类默认语义一致）。
+        """
+        list_comments = getattr(self.forge, "list_comments", None)
+        if list_comments is None:
+            return False
+        marker = f"<!-- {fingerprint} -->"
+        for body in await list_comments(pr):
+            if marker in body:
+                return True
+        return False
 
     async def _post(self, fn: Callable[[], Awaitable[None]], *, what: str) -> None:
         """带指数退避重试执行一次 forge 回写；只对网络层异常重试。"""
@@ -164,3 +201,32 @@ def _describe_httpx(exc: BaseException) -> str:
     if not detail and exc.__cause__ is not None:
         detail = str(exc.__cause__).strip()
     return detail or f"{type(exc).__name__}({type(exc.__cause__).__name__ if exc.__cause__ else '?'})"
+
+
+def review_fingerprint(*, provider: str, repo_id: str, pr_number: int, head_sha: str) -> str:
+    """同一份审查的稳定指纹：同 (provider, repo_id, pr_number, head_sha) 幂等可跨平台去重。"""
+    raw = f"{provider}:{repo_id}:{pr_number}:{head_sha}"
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()[:16]
+
+
+async def redeliver(
+    forge: ForgeAdapter,
+    *,
+    pr: PullRequest,
+    findings: list[Finding],
+    summary_md: str,
+    fingerprint: str,
+) -> None:
+    """把**已持久化**的审查成果补发到平台；不重算（无 LLM 调用），只重取 diff + 回写。
+
+    供「重新发送」按钮在首次回写失败（`writeback_failed`）后调用：从 DB 取回
+    `findings` + `summary_md`，重建结果并走与正常回写同一套 `ResultWriter`
+    （含指纹幂等 + 网络重试），点击幂等、重复触发不会在 PR 上双发评论。
+    """
+    refreshed = await forge.fetch_pull_request(pr)
+    diffs = await forge.fetch_files(refreshed)
+    result = ReviewResult(summary="", findings=list(findings))
+    await ResultWriter(forge).write(
+        refreshed, diffs, result,
+        fingerprint=fingerprint, summary=summary_md,
+    )

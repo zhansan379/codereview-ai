@@ -151,10 +151,13 @@
         :loading="loading"
         show-process
         show-retry
+        show-redeliver
         show-delete
         :retrying-id="retryingId"
+        :redelivering-id="redeliveringId"
         @detail="goDetail"
         @retry="onRetry"
+        @redeliver="onRedeliver"
         @delete="onDelete"
       />
 
@@ -181,6 +184,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   listReviews,
   retryTask,
+  redeliverTask,
   exportReviews,
   deleteReview,
   type ReviewFilter,
@@ -195,6 +199,7 @@ const items = ref<ReviewItem[]>([])
 const total = ref(0)
 const loading = ref(false)
 const retryingId = ref<number | null>(null)
+const redeliveringId = ref<number | null>(null)
 // 筛选条件持久化到 URL query，避免进入详情返回后丢失（DESIGN 精神：URL 即状态）。
 const query = reactive<{
   state: string
@@ -376,6 +381,21 @@ async function onRetry(row: ReviewItem) {
     ElMessage.error(e?.response?.data?.detail || '重试失败')
   } finally {
     retryingId.value = null
+  }
+}
+
+// 重新发送评论（writeback_failed 行）：从 DB 取已持久化成果补发，不重算。
+// 后端 fire-and-forget 后台执行，成功与否在后台翻转 writeback_failed，这里仅提示已发起。
+async function onRedeliver(row: ReviewItem) {
+  redeliveringId.value = row.id
+  try {
+    await redeliverTask(row.id)
+    ElMessage.success('已发起重新发送，稍后刷新查看结果')
+    load() // 刷新一下，防用户连续点击
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '重新发送失败')
+  } finally {
+    redeliveringId.value = null
   }
 }
 

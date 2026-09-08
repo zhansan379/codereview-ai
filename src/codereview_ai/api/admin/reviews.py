@@ -79,6 +79,7 @@ class ReviewListItem(BaseModel):
     score_total: int
     queued_at: datetime
     finished_at: datetime | None
+    writeback_failed: bool
 
 
 class ReviewDetail(ReviewListItem):

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 
@@ -18,8 +19,10 @@ from starlette import status
 
 from codereview_ai.api.deps import get_current_user, get_db
 from codereview_ai.domain.models import PullRequest
-from codereview_ai.forges.base import repo_path_from_url
+from codereview_ai.forges.base import ForgeAdapter, repo_path_from_url
+from codereview_ai.review.result_writer import redeliver, review_fingerprint
 from codereview_ai.storage.models import ReviewTask, _utcnow
+from codereview_ai.storage.review_repo import ReviewRepository
 
 logger = logging.getLogger("codereview_ai.api.tasks")
 
@@ -41,12 +44,19 @@ class TaskOut(BaseModel):
     error: str
     skip_reason: str
     queued_at: datetime
+    #: 回写失败标记（DESIGN §9.2）：首次评论回写失败置 True，供前端展示「重新发送」。
+    writeback_failed: bool
 
 
 class TaskRetried(BaseModel):
     id: int
     state: str
     attempt: int
+
+
+class TaskRedelivered(BaseModel):
+    id: int
+    status: str
 
 
 async def _get_or_404(session: AsyncSession, task_id: int) -> ReviewTask:
@@ -151,3 +161,59 @@ async def retry_task(
         if re_enqueued:
             logger.info("重试任务 %s：已重新入队（provider=%s）", row.id, row.provider)
     return TaskRetried(id=row.id, state=row.state, attempt=row.attempt)
+
+
+async def _background_redeliver(
+    row: ReviewTask,
+    forge: ForgeAdapter,
+    repo: ReviewRepository,
+) -> None:
+    """后台重发已持久化的审查成果；成功归零 writeback_failed，失败保留标记供再点。
+
+    整个重发**不做**任何 LLM 调用（用落库的 findings + summary_md），只重取 diff +
+    回写；`redeliver` 内部自带指纹幂等 + 网络重试，重复点击不会在平台上双发。
+    """
+    pr = _pr_from_task(row)
+    try:
+        findings = await repo.findings_for_task(int(row.id))
+        fp = review_fingerprint(
+            provider=row.provider, repo_id=row.repo_id,
+            pr_number=row.pr_number, head_sha=row.head_sha,
+        )
+        await redeliver(
+            forge, pr=pr, findings=findings,
+            summary_md=row.summary_md or "", fingerprint=fp,
+        )
+        await repo.mark_writeback(int(row.id), False)
+        logger.info("重发成功：任务 %s 评论已补齐（provider=%s）", row.id, row.provider)
+    except Exception as exc:  # noqa: BLE001
+        # 失败仅记日志并保留 writeback_failed 标记：前端刷新后「重新发送」按钮仍在
+        logger.warning("重发失败（任务 %s，provider=%s）：%s", row.id, row.provider, exc)
+
+
+@router.post("/{task_id}/redeliver", response_model=TaskRedelivered)
+async def redeliver_task(
+    task_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+) -> TaskRedelivered:
+    """重发已持久化的审查成果（不重算、无 LLM）。仅 `writeback_failed=True` 的任务可重发。
+
+    首次回写失败后成果已在 DB（先落库方案）；这里从 DB 取 findings + summary_md，
+    后台 fire-and-forget 走与正常回写同一套 `redeliver`（含指纹幂等）。立即返回
+    「已发起」，成功与否在后台完成后翻转 `writeback_failed`，前端刷新可见。
+    """
+    row = await _get_or_404(session, task_id)
+    if not row.writeback_failed:
+        raise HTTPException(status.HTTP_409_CONFLICT, "该任务无需重发（writeback_failed 未置位）")
+    if row.event_type != "mr" or row.pr_number is None:
+        # 重发只针对 mr 轨（评论挂 PR）；push 轨评论挂 commit，走重试而不是重发
+        raise HTTPException(status.HTTP_409_CONFLICT, "仅 mr 轨任务可重发评论")
+    forge = request.app.state.forge_registry.get(row.provider)
+    if forge is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"平台适配器不可用（{row.provider}）")
+    # 与 settings.py 同模式：由 app.state.engine 现建仓储（DB 会话按调用自开）
+    repo = ReviewRepository(request.app.state.engine)
+    asyncio.create_task(_background_redeliver(row, forge, repo))
+    logger.info("已发起重发：任务 %s（provider=%s）", row.id, row.provider)
+    return TaskRedelivered(id=row.id, status="redelivering")
