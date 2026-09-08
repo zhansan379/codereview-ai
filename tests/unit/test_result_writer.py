@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
+import pytest
+
 from codereview_ai.domain.models import (
     Category,
     ChangeType,
@@ -131,3 +134,70 @@ def test_writer_posts_inline_then_summary():
     assert len(forge.inline_calls) == 1
     assert forge.inline_calls[0][0]["line"] == 2
     assert "总结项" in forge.summary_calls[0]
+
+
+# ── 回写网络重试兜底（ConnectError 等瞬时故障）─────────────────────────
+
+
+def test_writer_retries_transient_connecterror_then_succeeds():
+    """总结评论 ConnectError 两次后成功 → 重试兜住，不丢已算好的审查。"""
+    class FakeForge:
+        def __init__(self) -> None:
+            self.summary_attempts = 0
+
+        async def post_inline(self, pr, comments: list[dict]) -> None:
+            pass
+
+        async def post_summary(self, pr, body: str) -> None:
+            self.summary_attempts += 1
+            if self.summary_attempts <= 2:
+                raise httpx.ConnectError("")  # 模拟本次空消息的瞬时连接故障
+
+    result = ReviewResult(summary="OK", scores=ReviewScores(correctness=30, security=20, practices=15, performance=4, commit_quality=3))  # noqa: E501
+    forge = FakeForge()
+    # 极短退避避免拖慢测试
+    writer = ResultWriter(forge, backoff_base=0.001, backoff_max=0.01)  # type: ignore[arg-type]
+    asyncio.run(writer.write(_pr(), [], result))
+
+    assert forge.summary_attempts == 3  # 首 + 2 次重试
+
+
+def test_writer_gives_up_after_exhausted_retries_with_readable_error():
+    """连接持续失败 → 重试耗尽后抛可读错误（带底层信息），而非裸空消息。"""
+    class FakeForge:
+        async def post_inline(self, pr, comments: list[dict]) -> None:
+            pass
+
+        async def post_summary(self, pr, body: str) -> None:
+            raise httpx.ConnectError("") from OSError("Connection refused")
+
+    writer = ResultWriter(FakeForge(), retries=1, backoff_base=0.001, backoff_max=0.01)  # type: ignore[arg-type]
+    with pytest.raises(RuntimeError) as exc:
+        asyncio.run(writer.write(_pr(), [], ReviewResult(
+            summary="s", scores=ReviewScores(correctness=1, security=1, practices=1, performance=1, commit_quality=1),
+        )))
+    # 文案补上底层连接原因，排障可读
+    assert "Connection refused" in str(exc.value)
+    assert "总结评论" in str(exc.value)
+
+
+def test_writer_does_not_retry_http_status_error():
+    """HTTPStatusError（平台真实拒绝，如 403/422）不重试，只调一次原样上抛。"""
+    class FakeForge:
+        def __init__(self) -> None:
+            self.summary_attempts = 0
+
+        async def post_inline(self, pr, comments: list[dict]) -> None:
+            pass
+
+        async def post_summary(self, pr, body: str) -> None:
+            self.summary_attempts += 1
+            raise httpx.HTTPStatusError("bad", request=None, response=None)
+
+    forge = FakeForge()
+    writer = ResultWriter(forge, retries=5, backoff_base=0.001, backoff_max=0.01)  # type: ignore[arg-type]
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(writer.write(_pr(), [], ReviewResult(
+            summary="s", scores=ReviewScores(correctness=1, security=1, practices=1, performance=1, commit_quality=1),
+        )))
+    assert forge.summary_attempts == 1
