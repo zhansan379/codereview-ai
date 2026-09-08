@@ -267,6 +267,21 @@ class GitLabForge(ForgeAdapter):
             )
             resp.raise_for_status()
 
+    async def list_comments(self, pr: PullRequest) -> list[str]:
+        """列出 MR 上已存在评论正文（notes），供幂等去重。"""
+        try:
+            resp = await self._http.get(
+                f"{self._base}/api/v4/projects/{pr.repo_id}/merge_requests/{pr.pr_number}/notes",
+                headers=self._auth_headers(),
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError:
+            return []  # 拉不到不阻断幂等检查，降级为照发
+        return [
+            str(item["body"]) for item in resp.json()
+            if isinstance(item, dict) and item.get("body")
+        ]
+
     # ── push 轨（§7.7）：compare / 单 commit diff / head commit 总结回写 ──
     async def _get_diffs_with_retry(self, path: str) -> list[FileDiff]:
         """GET 变化 API 并按 changes/diffs 数组转换；空数组指数退避重试。"""

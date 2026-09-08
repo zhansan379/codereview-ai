@@ -291,6 +291,24 @@ class GitHubForge(ForgeAdapter):
         )
         resp.raise_for_status()
 
+    async def list_comments(self, pr: PullRequest) -> list[str]:
+        """列出 PR 上已存在评论正文（行级 review 评论 + issues 总结评论），供幂等去重。"""
+        owner, repo = _owner_repo(pr.repo_id)
+        bodies: list[str] = []
+        for path in (
+            f"{self._base}/repos/{owner}/{repo}/pulls/{pr.pr_number}/comments",
+            f"{self._base}/repos/{owner}/{repo}/issues/{pr.pr_number}/comments",
+        ):
+            try:
+                resp = await self._http.get(path, headers=self._auth_headers())
+                resp.raise_for_status()
+            except httpx.HTTPError:
+                continue  # 拉不到（如权限）不阻断幂等检查，降级为照发
+            for item in resp.json():
+                if isinstance(item, dict) and item.get("body"):
+                    bodies.append(str(item["body"]))
+        return bodies
+
     # ── push 轨（§7.7）：compare / 单 commit / head commit 总结回写 ──
     async def get_push_changes(self, ev: PushEvent) -> list[FileDiff]:
         """compare {before}...{after}；after 全 0（删分支）直接返回空。"""

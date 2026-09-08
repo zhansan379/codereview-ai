@@ -41,7 +41,7 @@ from codereview_ai.review.increments import (
     decide_from_ref,
     dedup_findings,
 )
-from codereview_ai.review.result_writer import ResultWriter
+from codereview_ai.review.result_writer import ResultWriter, review_fingerprint
 from codereview_ai.review.reuse import covered_file_map, prune_unchanged
 from codereview_ai.review.reviewer import Reviewer
 from codereview_ai.review.static_analysis import StaticAnalyzer
@@ -505,33 +505,76 @@ async def _do_review_pull_request(
             # 只审增量：按内容指纹滤掉上次已报过的 finding（DESIGN §7.3 / §13.3）
             result.findings = dedup_findings(result.findings, ref)
 
-        await ResultWriter(forge).write(refreshed, diffs, result)
-
-        if review_repo is not None:
+        # ── 成果先落库（兜底方案 1+6：DESIGN §9.2）──────────────────────────
+        # findings 持久化放在回写之前：即使网络回写失败，审查成果也不丢失，
+        # 可从前端「重新发送」用已持久化内容补齐评论，**不重算**昂贵 agentic 审查。
+        if review_repo is not None and task_id is not None:
             # mr 轨真落库（幂等；同 head 已存在则跳过，不重复写）
-            if task_id is not None:
-                # 非增量全量轮：finding 生命周期对账（DESIGN §7.3）。
-                # 缺席→resolved / 复现→回 active+reopened；复现指纹返回作 skip 去重。
-                skip: frozenset[str] = frozenset()
-                if not incremental and ref is not None:
-                    covered = {p for d in diffs for p in (d.old_path, d.new_path)}
-                    skip = await review_repo.reconcile_findings(
-                        provider=pr.provider, repo_id=pr.repo_id, pr_number=pr.pr_number,
-                        current_findings=result.findings, covered_files=covered,
-                        exclude_task_id=task_id,
+            # 非增量全量轮：finding 生命周期对账（DESIGN §7.3）。
+            # 缺席→resolved / 复现→回 active+reopened；复现指纹返回作 skip 去重。
+            skip: frozenset[str] = frozenset()
+            if not incremental and ref is not None:
+                covered = {p for d in diffs for p in (d.old_path, d.new_path)}
+                skip = await review_repo.reconcile_findings(
+                    provider=pr.provider, repo_id=pr.repo_id, pr_number=pr.pr_number,
+                    current_findings=result.findings, covered_files=covered,
+                    exclude_task_id=task_id,
+                )
+            await review_repo.insert_findings(task_id, result.findings, skip_fingerprints=skip)
+            # 本轮覆盖集（new_path→sha1(new)）落 diff_snapshot：供下轮未变更文件复用
+            # 与 /compare 的 not_reviewed 判定。
+            await review_repo.set_coverage(task_id, covered_file_map(diffs))
+
+        # ── 回写 forge：失败不重算，落 writeback_failed 供前端重发 ───────────
+        writeback_failed = False
+        fingerprint = review_fingerprint(
+            provider=pr.provider, repo_id=pr.repo_id,
+            pr_number=pr.pr_number, head_sha=refreshed.head_sha,
+        )
+        try:
+            await ResultWriter(forge).write(
+                refreshed, diffs, result, fingerprint=fingerprint,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # 回写失败：成果已落库，不重算；打标供前端「重新发送」补齐，任务保持
+            # completed 展示、不触发粒度重试（避免整套 agentic 审查被重做）。
+            logger.warning(
+                "回写失败（%s pr#%s，成果已落库）：%s",
+                pr.repo_full_name, pr.pr_number, exc,
+            )
+            writeback_failed = True
+            if review_repo is not None and task_id is not None:
+                try:
+                    await review_repo.mark_writeback(task_id, True)
+                    await review_repo.mark_state(
+                        task_id, state="completed", summary_md=result.summary,
+                        score_total=result.scores.total,
+                        error="回写失败，可点任务行「重新发送」补齐评论",
                     )
-                await review_repo.insert_findings(task_id, result.findings, skip_fingerprints=skip)
-                # 本轮覆盖集（new_path→sha1(new)）落 diff_snapshot：供下轮未变更文件复用
-                # 与 /compare 的 not_reviewed 判定。
-                await review_repo.set_coverage(task_id, covered_file_map(diffs))
+                except Exception:
+                    pass  # 打标失败不遮蔽原始回写异常
+            # 人工兜底（方案 7）：IM 显式补发提示，fire-and-forget 失败不炸主链
+            if notifier is not None:
+                asyncio.create_task(
+                    notifier.send_markdown(
+                        "⚠️ 审查完成但回写失败",
+                        "AI 审查已完成并落库，但评论回写 GitHub/GitLab 失败。\n"
+                        "请到任务列表对该任务点「重新发送」补齐评论。",
+                    )
+                )
+        else:
+            if review_repo is not None and task_id is not None:
+                # 回写成功才标 completed（保持「completed 只由成功达成」语义）
                 await review_repo.mark_state(
                     task_id, state="completed", summary_md=result.summary,
                     score_total=result.scores.total,
                 )
 
-        if cfg and cfg.enforce_score_threshold and refreshed.head_sha:
+        if (not writeback_failed and cfg
+                and cfg.enforce_score_threshold and refreshed.head_sha):
             # F3.7：评分卡 CI status——低于阈值发 failed（阻塞合并），达标发 success。
             # 与 notifier 同哲学：网络失败仅告警、不标 failed、不影响审查本身。
+            # 回写失败时跳过：评论未发出，CI 状态无意义，随下次重发一并补齐。
             passed = result.scores.total >= cfg.score_threshold
             try:
                 await forge.post_commit_status(

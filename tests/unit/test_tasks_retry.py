@@ -12,8 +12,13 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from codereview_ai.api.admin.tasks import retry_task
-from codereview_ai.domain.models import PullRequest
+from codereview_ai.api.admin.tasks import (
+    TaskRedelivered,
+    _background_redeliver,
+    redeliver_task,
+    retry_task,
+)
+from codereview_ai.domain.models import Finding, PullRequest
 from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.models import ReviewTask
 
@@ -113,3 +118,107 @@ async def test_push_retry_without_payload_not_replayable(engine):
         out = await retry_task(row.id, _request(enq), s)
         assert out.state == "queued"
     assert not enq.enqueued and not enq.enqueued_pr
+
+
+# ── 重新发送（POST /tasks/{id}/redeliver）───────────────────────────────
+
+
+def _request_with_forge(forge=None, engine=None) -> SimpleNamespace:
+    state = SimpleNamespace(forge_registry=SimpleNamespace(get=lambda _p: forge))
+    if engine is not None:
+        state.engine = engine
+    return SimpleNamespace(app=SimpleNamespace(state=state))
+
+
+async def _seed_completed_writeback_failed(engine: AsyncEngine, *, writeback_failed=True) -> int:
+    """播种一条 completed + writeback_failed 的 mr 审计行，供重发测试。"""
+    return (await _seed(engine, state="completed", writeback_failed=writeback_failed,
+                        summary_md="已持久化总结"))[0]
+
+
+async def test_redeliver_409_when_not_writeback_failed(engine):
+    """writeback_failed 未置位 → 409（该任务无需重发），不触发重发。"""
+    task_id = await _seed_completed_writeback_failed(engine, writeback_failed=False)
+    session = session_factory(engine)
+    async with session() as s:
+        row = (await s.execute(select(ReviewTask)
+                               .where(ReviewTask.id == task_id))).scalars().first()
+        with pytest.raises(Exception) as exc:
+            await redeliver_task(row.id, _request_with_forge(object()), s)
+        assert exc.value.status_code == 409  # type: ignore[attr-defined]
+
+
+async def test_redeliver_409_when_forge_missing(engine):
+    """writeback_failed=True 但平台适配器缺失 → 409，且不落后台任务。"""
+    task_id = await _seed_completed_writeback_failed(engine)
+    session = session_factory(engine)
+    async with session() as s:
+        row = (await s.execute(select(ReviewTask)
+                               .where(ReviewTask.id == task_id))).scalars().first()
+        with pytest.raises(Exception) as exc:
+            await redeliver_task(row.id, _request_with_forge(None), s)
+        assert exc.value.status_code == 409  # type: ignore[attr-defined]
+
+
+async def test_redeliver_success_initiates(engine):
+    """writeback_failed=True + forge 就绪 → 返回「已发起」，后台重发成功翻 writeback_failed=False。"""
+    task_id = await _seed_completed_writeback_failed(engine)
+
+    class _FakeForge:
+        async def fetch_pull_request(self, pr):
+            return pr
+
+        async def fetch_files(self, pr):
+            return []
+
+        async def list_comments(self, pr):
+            return []
+
+        async def post_inline(self, pr, comments):
+            pass
+
+        async def post_summary(self, pr, body):
+            pass
+
+    session = session_factory(engine)
+    async with session() as s:
+        row = (await s.execute(select(ReviewTask)
+                               .where(ReviewTask.id == task_id))).scalars().first()
+        out = await redeliver_task(row.id, _request_with_forge(_FakeForge(), engine), s)
+        assert isinstance(out, TaskRedelivered)
+        assert out.status == "redelivering"
+        assert row.writeback_failed is True  # 未同步翻转（后台异步完成）
+    # 直接驱动后台协程（等价于端点里的 create_task）：成功 → 翻 False
+    session = session_factory(engine)
+    async with session() as s:
+        row = (await s.execute(select(ReviewTask)
+                               .where(ReviewTask.id == task_id))).scalars().first()
+        from codereview_ai.storage.review_repo import ReviewRepository
+
+        await _background_redeliver(row, _FakeForge(), ReviewRepository(engine))  # type: ignore[arg-type]
+    async with session() as s:
+        row = (await s.execute(select(ReviewTask)
+                               .where(ReviewTask.id == task_id))).scalars().first()
+        assert row.writeback_failed is False  # 重发成功 → 归零
+
+
+async def test_background_redeliver_failure_keeps_flag(engine):
+    """后台重发失败 → 不抛、不翻 writeback_failed（保留标记，前端按钮仍在）。"""
+    task_id = await _seed_completed_writeback_failed(engine)
+
+    class _BoomForge:
+        async def fetch_pull_request(self, pr):
+            raise RuntimeError("boom")
+
+        async def fetch_files(self, pr):
+            raise RuntimeError("boom")
+
+    session = session_factory(engine)
+    async with session() as s:
+        row = (await s.execute(select(ReviewTask)
+                               .where(ReviewTask.id == task_id))).scalars().first()
+        from codereview_ai.storage.review_repo import ReviewRepository
+
+        await _background_redeliver(row, _BoomForge(), ReviewRepository(engine))  # type: ignore[arg-type]
+        await s.refresh(row)
+        assert row.writeback_failed is True  # 失败保留标记

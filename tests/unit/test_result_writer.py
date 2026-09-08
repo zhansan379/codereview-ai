@@ -25,6 +25,8 @@ from codereview_ai.review.result_writer import (
     build_summary_markdown,
     finding_to_comment,
     partition_findings,
+    redeliver,
+    review_fingerprint,
 )
 
 
@@ -201,3 +203,113 @@ def test_writer_does_not_retry_http_status_error():
             summary="s", scores=ReviewScores(correctness=1, security=1, practices=1, performance=1, commit_quality=1),
         )))
     assert forge.summary_attempts == 1
+
+
+# ── 评论指纹幂等兜底（方案 3）─────────────────────────────────────────────
+
+
+def test_writer_skips_when_fingerprint_already_delivered():
+    """平台已含指纹 → 整体跳过，不再发行级/总结评论（幂等，重发不双发）。"""
+    class FakeForge:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def list_comments(self, pr) -> list[str]:
+            return ["已有评论", "<!-- fp123 -->"]
+
+        async def post_inline(self, pr, comments: list[dict]) -> None:
+            self.calls += 1
+
+        async def post_summary(self, pr, body: str) -> None:
+            self.calls += 1
+
+    forge = FakeForge()
+    writer = ResultWriter(forge)  # type: ignore[arg-type]
+    asyncio.run(writer.write(_pr(), [_diff("a.py", DIFF)],
+                             ReviewResult(summary="s", findings=[_finding(line=2)]),
+                             fingerprint="fp123"))
+    assert forge.calls == 0  # 幂等命中，零回写
+
+
+def test_writer_appends_fingerprint_when_not_delivered():
+    """平台未含指纹 → 照常回写，且总结末尾带上指纹哨兵。"""
+    class FakeForge:
+        def __init__(self) -> None:
+            self.summary_bodies: list[str] = []
+
+        async def list_comments(self, pr) -> list[str]:
+            return ["无关评论"]
+
+        async def post_inline(self, pr, comments: list[dict]) -> None:
+            pass
+
+        async def post_summary(self, pr, body: str) -> None:
+            self.summary_bodies.append(body)
+
+    forge = FakeForge()
+    writer = ResultWriter(forge)  # type: ignore[arg-type]
+    asyncio.run(writer.write(_pr(), [], ReviewResult(summary="s"), fingerprint="fp456"))
+    assert forge.summary_bodies[0].endswith("<!-- fp456 -->")
+
+
+def test_writer_degrades_when_forge_lacks_list_comments():
+    """无 list_comments 的极简/测试桩 forge → 无法幂等去重，照发（不崩）。"""
+    class FakeForge:
+        async def post_inline(self, pr, comments: list[dict]) -> None:
+            pass
+
+        async def post_summary(self, pr, body: str) -> None:
+            pass
+
+    writer = ResultWriter(FakeForge())  # type: ignore[arg-type]
+    # 不应抛（list_comments 缺失被守卫），照常写完
+    asyncio.run(writer.write(_pr(), [], ReviewResult(summary="s"), fingerprint="fp789"))
+
+
+def test_review_fingerprint_is_stable_across_calls():
+    """同 (provider, repo_id, pr, head_sha) 指纹稳定，重发幂等去重依赖它。"""
+    a = review_fingerprint(provider="github", repo_id="o/r", pr_number=1, head_sha="h")
+    b = review_fingerprint(provider="github", repo_id="o/r", pr_number=1, head_sha="h")
+    c = review_fingerprint(provider="github", repo_id="o/r", pr_number=1, head_sha="other")
+    assert a == b and len(a) == 16
+    assert a != c  # head 变化 → 指纹不同
+
+
+# ── redeliver：从持久化成果补发，不重算 ──────────────────────────────────
+
+
+def test_redeliver_uses_persisted_findings_and_summary():
+    """重发走 fetch + ResultWriter：带持久化 summary 覆盖、指纹幂等，不调 LLM。"""
+    class FakeForge:
+        def __init__(self) -> None:
+            self.inline_bodies: list[str] = []
+            self.summary_bodies: list[str] = []
+            self.fetched = 0
+
+        async def fetch_pull_request(self, pr) -> PullRequest:
+            self.fetched += 1
+            return pr
+
+        async def fetch_files(self, pr) -> list[FileDiff]:
+            return [_diff("a.py", DIFF)]
+
+        async def list_comments(self, pr) -> list[str]:
+            return []  # 未投递 → 会发
+
+        async def post_inline(self, pr, comments: list[dict]) -> None:
+            self.inline_bodies.extend(c["body"] for c in comments)
+
+        async def post_summary(self, pr, body: str) -> None:
+            self.summary_bodies.append(body)
+
+    old = _finding(line=2, content="持久化的问题")
+    forge = FakeForge()
+    asyncio.run(redeliver(
+        forge,  # type: ignore[arg-type]
+        pr=_pr(), findings=[old], summary_md="已持久化总结", fingerprint="fp000",
+    ))
+
+    assert forge.fetched == 1  # 重取了一次 diff
+    assert any("持久化的问题" in b for b in forge.inline_bodies)  # findings 从 DB 取回
+    assert "已持久化总结" in forge.summary_bodies[0]  # summary 用持久化值覆盖，不重算
+    assert forge.summary_bodies[0].endswith("<!-- fp000 -->")

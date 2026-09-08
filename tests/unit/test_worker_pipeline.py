@@ -179,6 +179,84 @@ async def test_process_marks_running_then_completed():
     assert repo.states[-1] == "completed"
 
 
+async def test_process_persists_then_marks_writeback_failed_on_post_error():
+    """回写失败（兜底方案 1+6+7）：成果先落库，回写失败打 writeback_failed=True、
+    任务保持 completed + 可读 error、发 IM 提示，且**不向外抛**（不触发昂贵重算）。"""
+    class _FailWriteForge(_FakeForge):
+        async def post_inline(self, pr, comments):
+            raise RuntimeError("network boom")
+
+        async def post_summary(self, pr, body):
+            raise RuntimeError("network boom")
+
+    class _Repo:
+        def __init__(self) -> None:
+            self.states: list[tuple[str, dict]] = []
+            self.writeback: list[bool] = []
+
+        async def last_ok_review(self, *a, **k):
+            return None
+
+        async def ensure_task(self, *a, **k):
+            return 1
+
+        async def mark_state(self, task_id, *, state, **k):
+            self.states.append((state, k))
+
+        async def insert_findings(self, *a, **k):
+            pass
+
+        async def reconcile_findings(self, **k):
+            return frozenset()
+
+        async def set_coverage(self, *a, **k):
+            pass
+
+        async def last_covered(self, *a, **k):
+            return None
+
+        async def mark_writeback(self, task_id, failed):
+            self.writeback.append(failed)
+
+    class _Notifier:
+        def __init__(self) -> None:
+            self.send_markdown_titles: list[str] = []
+
+        def launch(self, pr, result, *, project_id=None):
+            return asyncio.create_task(asyncio.sleep(0))
+
+        async def send_markdown(self, title, markdown, *, project_id=None):
+            self.send_markdown_titles.append(title)
+            return 0
+
+    forge = _FailWriteForge()
+    reviewer = _FakeReviewer(forge)
+    repo = _Repo()
+    notifier = _Notifier()
+    # 回写失败被兜住，不向外抛（避免 worker 把整轮标 failed 触发重算）
+    await process_raw_event(  # type: ignore[arg-type]
+        forge, reviewer, _mr_payload(), review_repo=repo, notifier=notifier,
+    )
+    assert repo.writeback == [True]  # 打标：回写失败，前端展示「重新发送」
+    assert repo.states[-1][0] == "completed"  # 保持 completed，不标 failed 不重算
+    assert "回写失败" in repo.states[-1][1].get("error", "")  # 可读提示
+    # 人工兜底（fire-and-forget）：让后台 create_task 跑一拍再断言已发出 IM 提示
+    await asyncio.sleep(0)
+    assert notifier.send_markdown_titles
+
+
+async def test_process_clears_error_when_writeback_succeeds():
+    """回写成功 → 不落 writeback_failed（正常路径无人标记、不丢 completed 文案）。"""
+    repo = _RecordingReviewRepo()
+    forge = _FakeForge()
+    await process_raw_event(  # type: ignore[arg-type]
+        forge, _FakeReviewer(forge), _mr_payload(), review_repo=repo,
+    )
+    assert repo.states[-1] == "completed"
+    # _RecordingReviewRepo 不实现 mark_writeback → 说明正常路径根本不调用它
+    assert not hasattr(repo, "writeback") or repo.writeback == []
+
+
 async def test_concurrent_same_head_reviews_only_once(tmp_path):
     """并发同 head 两拨审查 → per-head 锁串行：只有一次 reviewed，另一拨等锁后见
     已完成锚点 → already；评论/总结只写一次（防删记录后重拉的重复审查/重复 IM）。"""

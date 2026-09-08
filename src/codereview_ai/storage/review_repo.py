@@ -33,6 +33,16 @@ def _finding_title(f: Finding) -> str:
     return c if len(c) <= _MAX_TITLE else c[:_MAX_TITLE - 1] + "…"
 
 
+def _cast(value: str | None, enum_type: type, fallback):
+    """把入库的中立字符串安全转回 StrEnum；异常值回落 fallback，绝不因脏数据崩重发。"""
+    if not value:
+        return fallback
+    try:
+        return enum_type(value)
+    except ValueError:
+        return fallback
+
+
 class ReviewRepository:
     """读写 `review_task`/`review_finding` 的仓储：增量决策读路径 + 结果持久化写路径。"""
 
@@ -330,6 +340,49 @@ class ReviewRepository:
             if row is None:
                 return
             row.diff_snapshot = json.dumps(covered, ensure_ascii=False, sort_keys=True)
+            await s.commit()
+
+    async def findings_for_task(self, task_id: int) -> list[Finding]:
+        """把该任务已落库的 `review_finding` 行反映射回 `Finding`（重发评论用）。
+
+        与 `insert_findings` 的字段映射成逆运算：LEFT 存 `old_line`、RIGHT 存 `new_line`。
+        """
+        from codereview_ai.domain.models import Category, Severity
+
+        session = session_factory(self._engine)
+        async with session() as s:
+            rows = (await s.execute(
+                select(ReviewFinding).where(ReviewFinding.task_id == task_id)
+                .order_by(ReviewFinding.id)
+            )).scalars().all()
+        out: list[Finding] = []
+        for r in rows:
+            side = "RIGHT" if r.new_line is not None else "LEFT"
+            out.append(Finding(
+                content=r.detail or "",
+                category=_cast(r.category, Category, Category.OTHER),
+                severity=_cast(r.severity, Severity, Severity.MEDIUM),
+                existing_code=r.existing_code or "",
+                file=r.file or "",
+                title=r.title or "",
+                suggestion_code=r.suggestion or None,
+                line=r.new_line if side == "RIGHT" else None,
+                old_line=r.old_line if side == "LEFT" else None,
+                side=side,
+                source=r.source or "llm",
+            ))
+        return out
+
+    async def mark_writeback(self, task_id: int, failed: bool) -> None:
+        """翻转任务的 `writeback_failed`（回写失败置 True 供前端展示「重新发送」；重发成功归位）。"""
+        session = session_factory(self._engine)
+        async with session() as s:
+            row = (await s.execute(
+                select(ReviewTask).where(ReviewTask.id == task_id)
+            )).scalar_one_or_none()
+            if row is None:
+                return
+            row.writeback_failed = failed
             await s.commit()
 
     async def last_covered(
