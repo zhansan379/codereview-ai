@@ -61,6 +61,9 @@ class ToolCall:
 class AgentTurn:
     content: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
+    #: DeepSeek thinking 模式下的思考链。API 要求后续轮次重发 assistant 消息时**原样带回**
+    #: 本回合的 reasoning_content，否则抛校验错；非 thinking 模型为空（循环据此省略 key）。
+    reasoning_content: str = ""
 
 
 class AgentLLM(Protocol):
@@ -224,6 +227,9 @@ async def run_agent_session(
             # 工具结果消息用 `tool_call_id` 指回它配对（真实 LLM 靠此还原引用的参数）。
             # 带 tool_calls 且无正文时 content 置 null（OpenAI/DeepSeek 契约，空串或会触发校验）。
             assistant: dict[str, Any] = {"role": "assistant", "content": turn.content or None}
+            if turn.reasoning_content:
+                # DeepSeek thinking 契约：assistant 带思考链时必须原样带回，否则重发历史被拒
+                assistant["reasoning_content"] = turn.reasoning_content
             if turn.tool_calls:
                 assistant["tool_calls"] = [
                     {

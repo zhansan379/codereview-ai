@@ -107,6 +107,10 @@ class ToolCallingLLM:
             raise LLMError(f"agent chat failed: {exc}") from exc
         message = resp.choices[0].message
         content = getattr(message, "content", None) or ""
+        # DeepSeek thinking 模式：assistant 还会带 `reasoning_content`（思考链）。API 契约
+        # 要求后续轮次重发时**原样带回**本回合的 reasoning_content，否则抛校验错。若非
+        # thinking 模型，该字段为空，循环据此省略 key（不影响非 thinking 模型）。
+        reasoning_content = str(getattr(message, "reasoning_content", None) or "")
         calls = [] if not getattr(message, "tool_calls", None) else message.tool_calls
         tool_calls: list[ToolCall] = []
         for call in calls:
@@ -132,11 +136,13 @@ class ToolCallingLLM:
         await self._capture(
             messages, tools,
             {"content": content,
+             "reasoning_content": reasoning_content,
              "tool_calls": [{"name": t.name, "args": t.args, "id": t.id,
                              "raw_arguments": t.raw_arguments} for t in tool_calls],
              "usage": _usage(resp)},
         )
-        return AgentTurn(content=str(content), tool_calls=tool_calls)
+        return AgentTurn(content=str(content), tool_calls=tool_calls,
+                         reasoning_content=reasoning_content)
 
     async def summarize(self, system_prompt: str, compress_messages: list[dict[str, Any]]) -> str:
         """对压缩区做一次无工具摘要调用；失败抛 `LLMError`（调用方「压缩失败不截断」）。
