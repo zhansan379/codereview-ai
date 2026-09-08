@@ -63,7 +63,11 @@ class DingTalkNotifier:
         payload: dict[str, object] = {
             "msgtype": "markdown",
             "markdown": {"title": "代码审查报告", "text": self._render_text(msg)},
-            "at": {"atMobiles": msg.at_users, "isAtAll": False},
+            "at": {
+                # atMobiles 要手机号：从 at_targets 取 mobile（不接裸露用户名）
+                "atMobiles": [t["mobile"] for t in msg.at_targets if t.get("mobile")],
+                "isAtAll": msg.at_all,
+            },
         }
         resp = await self._http.post(url, json=payload)
         if resp.status_code >= 300:

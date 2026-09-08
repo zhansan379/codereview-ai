@@ -58,6 +58,8 @@ async def test_schema_backfill_adds_new_columns_idempotently(tmp_path):
             "repo_id VARCHAR(255) NOT NULL, file_extensions VARCHAR(255) DEFAULT '')"))
         await conn.execute(text(
             "CREATE TABLE review_task (id INTEGER PRIMARY KEY, state VARCHAR(16) DEFAULT 'queued')"))
+        await conn.execute(text(
+            "CREATE TABLE notifier_config (id INTEGER PRIMARY KEY, channel VARCHAR(32) DEFAULT '')"))
 
     async def _cols(table: str) -> set[str]:
         async with engine.connect() as conn:
@@ -65,11 +67,13 @@ async def test_schema_backfill_adds_new_columns_idempotently(tmp_path):
 
     assert not ({"push_enabled", "push_branch_globs"} & await _cols("project"))
     assert not ({"skip_reason", "force_rerun", "pr_title", "push_commits"} & await _cols("review_task"))
+    assert not ({"at_all", "at_targets"} & await _cols("notifier_config"))
 
     await _ensure_latest_schema(engine)
     await _ensure_latest_schema(engine)  # 幂等：再跑一次不炸、不加重复列
     assert {"push_enabled", "push_branch_globs"} <= await _cols("project")
     assert {"skip_reason", "force_rerun", "pr_title", "push_commits"} <= await _cols("review_task")
+    assert {"at_all", "at_targets"} <= await _cols("notifier_config")
     await engine.dispose()
 
 

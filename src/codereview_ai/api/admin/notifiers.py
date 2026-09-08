@@ -27,6 +27,8 @@ class NotifierOut(BaseModel):
     secret: str
     project_id: int | None
     at_threshold: int
+    at_all: bool = False
+    at_targets: list = []
 
 
 class NotifierWrite(BaseModel):
@@ -36,6 +38,8 @@ class NotifierWrite(BaseModel):
     secret: str = ""
     project_id: int | None = None
     at_threshold: int = 60
+    at_all: bool = False
+    at_targets: list = []
 
 
 def _to_out(row: NotifierConfig, enc_key: str) -> NotifierOut:
@@ -47,6 +51,8 @@ def _to_out(row: NotifierConfig, enc_key: str) -> NotifierOut:
         secret=MASK if row.secret_encrypted else "",
         project_id=row.project_id,
         at_threshold=row.at_threshold,
+        at_all=row.at_all,
+        at_targets=row.at_targets or [],
     )
 
 
@@ -80,6 +86,8 @@ async def create_notifier(
         secret_encrypted=encrypt(body.secret, enc_key),
         project_id=body.project_id,
         at_threshold=body.at_threshold,
+        at_all=body.at_all,
+        at_targets=body.at_targets,
     )
     session.add(row)
     await session.commit()
@@ -102,7 +110,7 @@ async def update_notifier(
 ) -> NotifierOut:
     enc_key = getattr(getattr(request.app.state, "settings", None), "encryption_key", "") or ""
     row = await _get_or_404(session, notifier_id)
-    for field in ("channel", "enabled", "project_id", "at_threshold"):
+    for field in ("channel", "enabled", "project_id", "at_threshold", "at_all", "at_targets"):
         setattr(row, field, getattr(body, field))
     if not is_masked(body.webhook):
         row.webhook_encrypted = encrypt(body.webhook, enc_key)

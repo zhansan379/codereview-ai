@@ -55,6 +55,13 @@ export interface Notifier {
   secret: string
   project_id: number | null
   at_threshold: number | null
+  at_all: boolean
+  at_targets: Array<{
+    author: string
+    mobile?: string
+    wecom_userid?: string
+    feishu_open_id?: string
+  }>
 }
 
 export interface ForgeConfig {

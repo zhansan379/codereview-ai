@@ -63,11 +63,16 @@ class NotifierDispatcher:
     def _apply_at_threshold(
         self, msg: ReviewNotification, route: NotifierRoute
     ) -> ReviewNotification:
-        """F4.3：评分低于 at_threshold 才 @提交者，否则清空 at 列表。"""
-        at = msg.at_users
-        if not (route.at_threshold and msg.score is not None and msg.score < route.at_threshold):
-            at = []
-        return dataclasses.replace(msg, at_users=at)
+        """F4.3：评分低于 at_threshold 才带 @（所有人+指定成员），否则清空 all/targets。
+
+        @ 的具体对象来自路由配置（`at_all` / `at_targets`），sink 按平台方言渲染。
+        """
+        shall = route.at_threshold and msg.score is not None and msg.score < route.at_threshold
+        if not shall:
+            return dataclasses.replace(msg, at_all=False, at_targets=[])
+        return dataclasses.replace(
+            msg, at_all=route.at_all, at_targets=route.at_targets or []
+        )
 
     async def _send_with_retry(self, sink: Notifier, msg: ReviewNotification) -> None:
         """指数退避重试：1s/2s/4s…（DESIGN F4.4，asyncio.sleep，不阻塞事件循环）。"""
@@ -87,7 +92,7 @@ class NotifierDispatcher:
     ) -> int:
         """推送一次审查结果到所有启用路由，返回成功渠道数；失败不抛出。"""
         routes = await self._routes(project_id)
-        base = build_review_notification(pr, result, at_users=[pr.author] if pr.author else [])
+        base = build_review_notification(pr, result)
         sent = 0
         for route in routes:
             sink = build_notifier(route, http=self._http)

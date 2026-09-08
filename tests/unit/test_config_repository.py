@@ -96,7 +96,8 @@ async def test_notifier_routes_filter_by_project_and_decrypt(engine, monkeypatch
         s.add(NotifierConfig(channel="dingtalk", enabled=True,
                              webhook_encrypted=encrypt("https://w-global", key),
                              secret_encrypted=encrypt("SEC-1", key),
-                             project_id=None, at_threshold=60))
+                             project_id=None, at_threshold=60, at_all=True,
+                             at_targets=[{"author": "alice", "mobile": "13800000000"}]))
         s.add(NotifierConfig(channel="feishu", enabled=True,
                              webhook_encrypted=encrypt("https://w-proj", key),
                              secret_encrypted="", project_id=7, at_threshold=90))
@@ -112,6 +113,10 @@ async def test_notifier_routes_filter_by_project_and_decrypt(engine, monkeypatch
     assert {r.channel for r in proj} == {"dingtalk", "feishu"}
     ding = next(r for r in proj if r.channel == "dingtalk")
     assert ding.webhook == "https://w-global" and ding.secret == "SEC-1"
+    # @ 新字段透传：at_all / at_targets 原样进入路由
+    assert ding.at_all is True and ding.at_targets == [{"author": "alice", "mobile": "13800000000"}]
+    feishu = next(r for r in proj if r.channel == "feishu")
+    assert feishu.at_all is False and feishu.at_targets == []
 
 
 

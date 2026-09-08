@@ -58,6 +58,13 @@ class FeishuNotifier:
             content_lines.append(f"**发现**：{parts}")
         content_lines.append("")
         content_lines.append(truncate_utf8(msg.summary_md, self.max_text_bytes))
+        # @ 人：卡片 lark_md 支持 <at user_id>；open_id/全部 需管理员预填
+        if msg.at_all:
+            content_lines.append('<at user_id="all">全体成员</at>')
+        for t in msg.at_targets:
+            oid = t.get("feishu_open_id")
+            if oid:
+                content_lines.append(f'<at user_id="{oid}">{t.get("author")}</at>')
         body = "\n".join(content_lines)
         return {
             "config": {"wide_screen_mode": True},
