@@ -100,6 +100,15 @@ def _loads(s: str) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return obj if isinstance(obj, dict) else None
+
+
+def _loads_list(s: str) -> list[Any] | None:
+    """json.loads 但类型安全：成功返回 list，失败返回 None（绝不抛）。"""
+    try:
+        obj = json.loads(s)
+    except json.JSONDecodeError:
+        return None
+    return obj if isinstance(obj, list) else None
 # "key: 值" 改写成引号键（针对 LLM 爱输出无引号键的坏 JSON）。
 # 负向断言确保 key 前不是引号/字母/数字/下划线——即必须是 {  ,  : 空白或行首，
 # 且不会误改已带引号的键或标识符尾部。
@@ -117,6 +126,12 @@ def _scrub_control_chars(text: str) -> str:
 def _truncate_to_last_object(text: str) -> str:
     """截到最后一个 `}`（含），用于模型未闭合 / 提前截断的场景。"""
     close = text.rfind("}")
+    return text[: close + 1] if close >= 0 else text
+
+
+def _truncate_to_last_array(text: str) -> str:
+    """截到最后一个 `]`（含），用于模型未闭合 / 顶层数组的场景。"""
+    close = text.rfind("]")
     return text[: close + 1] if close >= 0 else text
 
 
@@ -147,6 +162,33 @@ def repair_json(raw: str) -> dict[str, Any] | None:
                 return obj
             # 4) 截到末个 `}`（对象已闭合但尾部残留文本 / 多输出）
             if (obj := _loads(_truncate_to_last_object(stripped))) is not None:
+                return obj
+    return None
+
+
+def repair_json_array(raw: str) -> list[Any] | None:
+    """照 `repair_json` 的分层修复链，但目标是**顶层 JSON 数组**（OCR grouping 输出 `[{...}]`）。
+
+    顺序（同 F2.19）：剥代码围栏 → 去控制符 → 去尾逗号 → 修未加引号键 → 截到末个 `]`。
+    某层没帮上忙就继续下一层；全部失败返回 None（触发上层 per-file 降级）。
+    """
+    candidates = [raw]
+    fence = _strip_fences(raw)
+    if fence != raw:
+        candidates.append(fence)
+
+    for base in list(candidates):
+        for variant in (base, _scrub_control_chars(base)):
+            stripped = variant.strip()
+            if not stripped:
+                continue
+            if (obj := _loads_list(stripped)) is not None:
+                return obj
+            if (obj := _loads_list(_TRAILING_COMMA_RE.sub(r"\1", stripped))) is not None:
+                return obj
+            if (obj := _loads_list(_KEY_RE.sub(lambda m: f'"{m.group(1)}":', stripped))) is not None:
+                return obj
+            if (obj := _loads_list(_truncate_to_last_array(stripped))) is not None:
                 return obj
     return None
 

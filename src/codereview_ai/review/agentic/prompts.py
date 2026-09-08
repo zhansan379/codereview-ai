@@ -1,9 +1,10 @@
-"""OCR（open-code-review-main）agentic 阶段机的 8 个 prompt 模板原文（照搬）。
+"""OCR（open-code-review-main）agentic 阶段机的 10 个 prompt 模板原文（照搬）。
 
 来源：`internal/config/template/prompts/*.md`（go:embed 加载，strings.ReplaceAll 填参）。
 我们沿用**原文英文**——它就为 DeepSeek/工具型设计，质量足够；category/severity 枚举
 本就是英文，无冲突。占位符：
-- 主任务/计划/过滤用双花括号 `{{diffs}}`/`{{plan_guidance}}`/`{{comments}}` …；
+- 主任务/计划/过滤/分组/压缩用双花括号 `{{diffs}}`/`{{plan_guidance}}`/`{{comments}}`/
+  `{{file_list}}`/`{{context}}` …；
 - re_location 用**单花括号** `{diff}`/`{existing_code}`/`{suggestion_content}`（OCR 亦是）。
 
 调用方一律用 `str.replace("{{key}}", value)` 填参（等价 OCR strings.ReplaceAll），
@@ -294,3 +295,60 @@ SCORING_TASK_USER = """### Reviewed changes
 
 ### Output
 Return a single JSON object with keys correctness (0-40), security (0-30), practices (0-20), performance (0-5), commit_quality (0-5)."""
+
+# ── memory_compression_task（内存压缩，OCR 同款）─────────────────────────
+# 五维契约：已确认问题(带 file+severity) / 工具调用结论 / 已完成 / 待办 / 当前焦点。
+# user 侧 OCR 就是 `{{context}}`；由调用方把待压缩的对话历史原样追加在后（见 llm_adapter.summarize）。
+MEMORY_COMPRESSION_SYSTEM = """## Goal
+You are a professional code review conversation summarization assistant. You will receive a conversation history between a code review assistant and an LLM model (including tool calls and their results). Compress this conversation into a structured summary so that the code review assistant can continue from the current state without restarting.
+
+## Output Format Requirements
+Organize the summary using the following five dimensions, separated by explicit headings:
+
+### Identified Code Issues
+List all confirmed issues sorted by severity (HIGH / MEDIUM / LOW). Each entry should include: file path, issue type, severity, brief description. Example:
+- [HIGH] `UserService.go:45` — map concurrent read-write access without lock, suggest adding sync.RWMutex
+- [MEDIUM] `config_loader.go:12` — error handling is incomplete, may swallow critical information
+
+### Tool Call Conclusions
+Summarize key findings and conclusions from each tool invocation. Example:
+- get_function_info(UserService): confirmed concurrent write-to-map logic within this function
+- search_file("database"): no other related configuration issues found
+
+### Completed Tasks
+List items that have been completed and require no further follow-up.
+
+### Pending Tasks
+List items that have been started but not yet completed and still need attention.
+
+### Current Focus
+Summarize in one sentence the core matter currently being investigated or handled.
+
+## Rules
+1. Do not include specific code details; only reference file paths and issue types
+2. Avoid repetitive or redundant information
+3. Omit any dimension that has no relevant content
+4. Completed/pending task list items should be described as complete sentences
+5. current_focus should be concise, no more than one sentence"""
+
+# ── grouping_task（LLM 语义分组，OCR 同款）───────────────────────────────
+GROUPING_TASK_SYSTEM = """You are a file grouping assistant for code review. Group changed files into semantically related clusters that should be reviewed together.
+
+Files in the same group typically:
+- Belong to the same module/feature
+- Have producer/consumer relationships (e.g. interface and implementation)
+- Are i18n/config variants of the same resource (e.g. message_en.properties and message_zh.properties)
+- Share the same directory and work together on a single concern
+
+Rules:
+- Every file must appear in exactly one group.
+- A group may contain 1 file if it is unrelated to others.
+- Maximum 10 files per group.
+- Output ONLY a JSON array, no other text."""
+
+GROUPING_TASK_USER = """Group the following changed files:
+
+{{file_list}}
+
+Respond with a JSON array:
+[{"label": "short theme description", "files": ["path1", "path2"]}]"""
