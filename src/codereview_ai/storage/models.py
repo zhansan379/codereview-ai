@@ -198,6 +198,8 @@ class NotifierConfig(Base):
     secret_encrypted: Mapped[str] = mapped_column(Text, default="")  # Fernet 密文（签名密钥）
     project_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     at_threshold: Mapped[int] = mapped_column(Integer, default=60)
+    # @所有人：评分低于 at_threshold 时，该渠道是否额外 @群内全员（各平台原生 @all）
+    at_all: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

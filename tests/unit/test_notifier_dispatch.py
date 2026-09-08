@@ -43,9 +43,9 @@ def _req_json(req: httpx.Request) -> dict:
     return json.loads(req.content)
 
 
-def _route(channel: str = "dingtalk", at_threshold: int = 60) -> NotifierRoute:
+def _route(channel: str = "dingtalk", at_threshold: int = 60, at_all: bool = False) -> NotifierRoute:
     return NotifierRoute(channel=channel, webhook="https://oapi.dingtalk.com/robot/send?access_token=x",
-                         secret="s", project_id=None, at_threshold=at_threshold)
+                         secret="s", project_id=None, at_threshold=at_threshold, at_all=at_all)
 
 
 async def _capture_collector(captured: list, *, status=200, fail_first=0):
@@ -166,6 +166,42 @@ async def test_route_at_members_resolved_per_channel():
         disp = NotifierDispatcher(routes, http=client)
         await disp.dispatch(_pr(), _result(85))  # 85 < 100 → 门控放行
         assert _req_json(captured[0])["at"]["atMobiles"] == ["13800138000"]
+
+
+async def test_at_all_gated_by_threshold():
+    """@所有人：路由开 at_all 后，评分低于阈值才置位；达标清掉（与具体成员同门控）。"""
+    captured: list[httpx.Request] = []
+    alice = _member(git_username="alice", dingtalk_mobile="13900001111")
+
+    async def routes(project_id: int | None):
+        return [_route(at_threshold=60, at_all=True)]
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(await _capture_collector(captured))
+    ) as client:
+        disp = NotifierDispatcher(routes, http=client, resolve_member=await _resolver(alice))
+        await disp.dispatch(_pr(author="alice"), _result(50))  # 低于 60
+        at = _req_json(captured[0])["at"]
+        assert at["isAtAll"] is True and at["atMobiles"] == ["13900001111"]
+        captured.clear()
+        await disp.dispatch(_pr(author="alice"), _result(85))  # 高于 60 → @所有人与具体 @ 一起清空
+        at = _req_json(captured[0])["at"]
+        assert at["isAtAll"] is False and at["atMobiles"] == []
+
+
+async def test_at_all_default_off_when_route_not_set():
+    """未开 at_all 的路由：isAtAll 恒 False（默认）。"""
+    captured: list[httpx.Request] = []
+
+    async def routes(project_id: int | None):
+        return [_route(at_threshold=60, at_all=False)]
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(await _capture_collector(captured))
+    ) as client:
+        disp = NotifierDispatcher(routes, http=client)
+        await disp.dispatch(_pr(), _result(40))
+    assert _req_json(captured[0])["at"]["isAtAll"] is False
 
 
 async def test_send_markdown_never_applies_at_gate():

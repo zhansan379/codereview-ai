@@ -101,11 +101,13 @@ class NotifierDispatcher:
     def _apply_at_threshold(
         self, msg: ReviewNotification, route: NotifierRoute
     ) -> ReviewNotification:
-        """F4.3 门控：评分低于 at_threshold 才保留 @（静态成员 + 解析出的作者），否则清空。"""
+        """F4.3 门控：评分低于 at_threshold 才保留 @（静态成员 + 解析出的作者 + @全员），否则清空。"""
         at = msg.at_users
+        at_all = msg.at_all
         if not (route.at_threshold and msg.score is not None and msg.score < route.at_threshold):
             at = []
-        return dataclasses.replace(msg, at_users=at)
+            at_all = False
+        return dataclasses.replace(msg, at_users=at, at_all=at_all)
 
     async def _send_with_retry(self, sink: Notifier, msg: ReviewNotification) -> None:
         """指数退避重试：1s/2s/4s…（DESIGN F4.4，asyncio.sleep，不阻塞事件循环）。"""
@@ -131,10 +133,13 @@ class NotifierDispatcher:
             sink = build_notifier(route, http=self._http)
             if sink is None:
                 continue
-            # @ID 每条路由单独组装（静态成员 + 作者解析），再统一过 @ 阈值门控
-            msg = self._apply_at_threshold(
-                dataclasses.replace(base, at_users=await self._compose_at(pr, route)), route
+            # @ID 每条路由单独组装（静态成员 + 作者解析 + @全员开关），再统一过 @ 阈值门控
+            msg = dataclasses.replace(
+                base,
+                at_users=await self._compose_at(pr, route),
+                at_all=route.at_all,
             )
+            msg = self._apply_at_threshold(msg, route)
             try:
                 await self._send_with_retry(sink, msg)
                 sent += 1

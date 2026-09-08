@@ -23,6 +23,7 @@ from codereview_ai.domain.models import (
 )
 from codereview_ai.notifiers.base import build_review_notification, truncate_utf8
 from codereview_ai.notifiers.dingtalk import DingTalkNotifier
+from codereview_ai.notifiers.feishu import FeishuNotifier
 from codereview_ai.notifiers.wecom import WeComNotifier
 
 DINGTALK_WEBHOOK = "https://oapi.dingtalk.com/robot/send?access_token=abc"
@@ -175,6 +176,61 @@ async def test_wecom_renders_real_at_via_userid_marks():
     assert "<@zhangsan>" in content and "<@lisi>" in content
     assert "fork_user" in content  # 点名的 fork 用户名仍显示，但只用 text、不产生 <@>
     assert "相关" in content
+    await client.aclose()
+
+
+async def test_dingtalk_at_all_sets_is_at_all():
+    """@所有人：at_all=True → at.isAtAll=True（评分低于阈值时由 dispatch 置位）。"""
+    captured: list[httpx.Request] = []
+    client = _make_client(captured)
+    notifier = DingTalkNotifier(DINGTALK_WEBHOOK, http=client)
+    msg = build_review_notification(_pr(), _result(50, []))
+    msg.at_all = True
+    await notifier.send(msg)
+    assert _req_json(captured[0])["at"] == {"atMobiles": [], "isAtAll": True}
+    # 不 @ 所有人时保持 False，避免默认干扰具体成员 @
+    await notifier.send(dataclasses.replace(msg, at_all=False))
+    assert _req_json(captured[1])["at"]["isAtAll"] is False
+    await client.aclose()
+
+
+async def test_wecom_at_all_uses_mentioned_list():
+    """@所有人：企微 markdown 加 mentioned_list=["@all"]（官方 path/91770）。"""
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"errcode": 0})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        notifier = WeComNotifier(
+            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=x", http=client
+        )
+        msg = build_review_notification(_pr(), _result(50, []))
+        msg.at_all = True
+        msg.at_users = ["zhangsan"]  # 具体 @ 与 @全部可并存
+        await notifier.send(msg)
+    markdown = _req_json(captured[0])["markdown"]
+    assert markdown["mentioned_list"] == ["@all"]
+    assert "<@zhangsan>" in markdown["content"]
+    await client.aclose()
+
+
+async def test_feishu_at_all_renders_all_tag():
+    """@所有人：飞书卡片 lark_md 加 <at user_id="all">（官方 bot 文档）。"""
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"code": 0})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        notifier = FeishuNotifier("https://open.feishu.cn/open-apis/bot/v2/hook/x", http=client)
+        msg = build_review_notification(_pr(), _result(50, []))
+        msg.at_all = True
+        await notifier.send(msg)
+    content = _req_json(captured[0])["card"]["elements"][0]["text"]["content"]
+    assert '<at user_id="all">所有人</at>' in content
     await client.aclose()
 
 

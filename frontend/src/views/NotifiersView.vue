@@ -18,6 +18,13 @@
           </template>
         </el-table-column>
         <el-table-column prop="at_threshold" label="@阈值" width="90" />
+        <el-table-column label="@所有人" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.at_all ? 'warning' : 'info'">
+              {{ row.at_all ? '是' : '否' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="启用" width="80">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'">
@@ -90,6 +97,10 @@
         <el-form-item label="@阈值">
           <el-input-number v-model="form.at_threshold" :min="0" />
           <div class="form-tip">评分低于此阈值才触发 @；达标则不 @，避免打扰。</div>
+        </el-form-item>
+        <el-form-item label="@所有人">
+          <el-switch v-model="form.at_all" />
+          <div class="form-tip">评分低于阈值时额外 @群内全员（各平台原生 @all）。会打扰每个人，慎开。</div>
         </el-form-item>
         <el-form-item label="指定成员">
           <el-select v-model="form.at_member_ids" multiple filterable style="width: 100%"
@@ -184,6 +195,7 @@ const emptyForm = () => ({
   secret: '',
   project_id: null as number | null,
   at_threshold: 60,
+  at_all: false,
   enabled: true,
   at_member_ids: [] as number[],
 })
@@ -281,6 +293,7 @@ function openEdit(row: Notifier) {
     secret: row.channel === 'wecom' ? '' : (row.secret || REDACTED),
     project_id: row.project_id ?? null,
     at_threshold: row.at_threshold ?? 60,
+    at_all: !!row.at_all,
     enabled: row.enabled,
     at_member_ids: row.at_member_ids || [],
   })

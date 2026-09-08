@@ -40,6 +40,7 @@ class ReviewNotification:
     findings_count: dict[str, int] = field(default_factory=dict)
     at_users: list[str] = field(default_factory=list)  # 该渠道可用的 @ID
     mention_names: list[str] = field(default_factory=list)  # 文案点名（非门控）
+    at_all: bool = False  # 评分低于阈值时是否 @全员（各渠道原生 @all）
 
 
 class Notifier(Protocol):
