@@ -26,6 +26,8 @@ class ProjectConfig:
     file_extensions: str = ""
     push_enabled: bool | None = None
     push_branch_globs: str = ""
+    # MR 轨审查覆盖：None=继承全局默认；True/False=显式覆盖（与 push 对称）
+    mr_enabled: bool | None = None
     # 项目仓库主页 URL：push 轨据此拼「{web_url}/commit/{head_sha}」直达链接
     web_url: str = ""
     # F3.7 评分阈值：enforce 开通时，总分低于 score_threshold 发 failed 阻塞合并
@@ -65,6 +67,7 @@ class ProjectRepository:
             file_extensions=row.file_extensions or "",
             push_enabled=row.push_enabled,
             push_branch_globs=row.push_branch_globs or "",
+            mr_enabled=row.mr_enabled,
             web_url=row.web_url or "",
             score_threshold=row.score_threshold,
             enforce_score_threshold=row.enforce_score_threshold,

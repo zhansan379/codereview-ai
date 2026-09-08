@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     push_review_enabled: bool = False
     push_branch_globs: str = ""  # 逗号分隔 glob，命中才审；空 = enable 时全放行
 
+    # —— MR 轨审查（与 push 对称：默认关；worker 按事件热读全局默认 → 项目覆盖）——
+    mr_review_enabled: bool = False
+
     # —— 静态分析融合（§11：默认开，缺工具自动降级）——
     review_static_enabled: bool = True
     static_workspace_dir: str = ""  # 临时工作区目录；空 = 系统临时目录

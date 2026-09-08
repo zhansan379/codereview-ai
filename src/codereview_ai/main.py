@@ -205,6 +205,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 agent_conversation_enabled=settings.agent_conversation_enabled,
                 agent_reuse_enabled=settings.agent_reuse_enabled,
                 project_config_factory=project_repo.config_for,
+                mr_default_enabled=settings.mr_review_enabled,
             )
             # 并发审查：固定数量 worker 循环 + 并发闸（上限可热更、落 DB 保留，
             # 见 /settings/concurrency）

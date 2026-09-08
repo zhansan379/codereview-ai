@@ -77,8 +77,10 @@ async def list_tasks(
     return [TaskOut.model_validate(r) for r in rows]
 
 
-#: 只要「门控/配置类」跳过的可补审；删分支（branch_deleted）无 head 可审，禁止
-_RETRYABLE_SKIPPED_REASONS = {"push_disabled", "branch_mismatch"}
+#: 只要「门控/配置类」跳过的可补审；删分支（branch_deleted）无 head 可审，禁止。
+#: 两轨各自放行：push 轨 push_disabled/branch_mismatch；mr 轨 mr_disabled（MR 无分支规则）。
+_RETRYABLE_PUSH_REASONS = {"push_disabled", "branch_mismatch"}
+_RETRYABLE_MR_REASONS = {"mr_disabled"}
 
 
 def _pr_from_task(row: ReviewTask) -> PullRequest:
@@ -106,16 +108,19 @@ def _retryable(row: ReviewTask) -> bool:
     """该行是否允许手动重试/补审。
 
     - `failed` → 照旧可重试；
-    - `skipped` + push 轨 + 门控/配置类原因 → 可补审（前端「补审」，绕过门控强审）；
-    - 其余（queued/running/completed、branch_deleted、mr 轨 skipped）→ 不可。
+    - `skipped` + 门控/配置类原因 → 可补审（前端「补审」，绕过门控强审）。两轨各自放行：
+      push 轨 `push_disabled`/`branch_mismatch`，mr 轨 `mr_disabled`；
+    - 其余（queued/running/completed、branch_deleted）→ 不可。
     """
     if row.state == "failed":
         return True
-    return bool(
-        row.state == "skipped"
-        and row.event_type == "push"
-        and row.skip_reason in _RETRYABLE_SKIPPED_REASONS
+    if row.state != "skipped":
+        return False
+    reasons = (
+        _RETRYABLE_PUSH_REASONS if row.event_type == "push"
+        else (_RETRYABLE_MR_REASONS if row.event_type == "mr" else frozenset())
     )
+    return row.skip_reason in reasons
 
 
 @router.post("/{task_id}/retry", response_model=TaskRetried)
@@ -143,16 +148,18 @@ async def retry_task(
     re_enqueued = False
     if enqueuer is not None:
         if row.payload:
-            # push 轨重跑会被幂等预检/门控短路；置 force_rerun 由 worker 强制补审（DESIGN §7.7）。
-            # 仅 push 任务设，避免在 mr 行遗留无意义标记。
-            if row.event_type == "push":
-                row.force_rerun = True
-                await session.commit()
+            # push/mr 轨重跑都会被门控短路；置 force_rerun 由 worker 强制补审并消费清除
+            #（DESIGN §7.7，mr 轨同为补审语义）
+            row.force_rerun = True
+            await session.commit()
             await enqueuer.enqueue(row.provider, row.payload.encode())
             re_enqueued = True
         elif row.event_type == "mr" and row.pr_number is not None:
-            # 无原始 body（补拉/补审入队，payload 为空）：重建 PR 走补拉 fetch 路径再审。
-            # 否则任务只翻 queued、内存队列里没有它，会永卡「排队中」。
+            # 无原始 body（补拉/补审入队，payload 为空）：重建 PR 走补拉 fetch 路径再审；
+            # 同样置 force_rerun，使 worker 的 mr 门控放行这次手动补审。否则任务只翻 queued、
+            # 内存队列里没有它，会永卡「排队中」。
+            row.force_rerun = True
+            await session.commit()
             await enqueuer.enqueue_pr(row.provider, _pr_from_task(row))
             re_enqueued = True
         else:

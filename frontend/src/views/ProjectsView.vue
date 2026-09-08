@@ -104,6 +104,16 @@
             </el-form-item>
           </el-col>
           <el-col :span="24">
+            <el-form-item label="MR 审查">
+              <el-radio-group v-model="form.mr_mode">
+                <el-radio label="on">开启</el-radio>
+                <el-radio label="off">关闭</el-radio>
+                <el-radio label="inherit">跟随全局</el-radio>
+              </el-radio-group>
+              <div class="field-hint">MR 到达是否自动审；跟随全局 = 交全局默认层裁决：「设置」页「自动审查触发」MR 轨开关落库值优先，无落库行才回落到环境变量 CR_MR_REVIEW_ENABLED。</div>
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
             <el-form-item label="文件扩展名">
               <el-select
                 v-model="form.file_extensions"
@@ -190,6 +200,8 @@ const emptyForm = () => ({
   // push 审查（三态）：on=开启 / off=关闭 / inherit=跟随全局默认（DB 落库值优先，env 兜底）
   push_mode: 'inherit' as 'on' | 'off' | 'inherit',
   push_branch_globs: '',
+  // MR 审查（三态，与 push 对称）：on/off/inherit=跟随全局默认
+  mr_mode: 'inherit' as 'on' | 'off' | 'inherit',
 })
 const form = reactive(emptyForm())
 
@@ -225,6 +237,7 @@ function openEdit(row: Project) {
     enabled: row.enabled,
     push_mode: row.push_enabled === true ? 'on' : row.push_enabled === false ? 'off' : 'inherit',
     push_branch_globs: row.push_branch_globs || '',
+    mr_mode: row.mr_enabled === true ? 'on' : row.mr_enabled === false ? 'off' : 'inherit',
   })
   dialogVisible.value = true
 }
@@ -235,8 +248,10 @@ async function onSave() {
     const payload = {
       ...form,
       push_mode: undefined,
+      mr_mode: undefined,
       file_extensions: form.file_extensions.join(',').replace(/,\s*/g, ','),
       push_enabled: form.push_mode === 'inherit' ? null : form.push_mode === 'on',
+      mr_enabled: form.mr_mode === 'inherit' ? null : form.mr_mode === 'on',
     // push_branch_globs 已含在展开的 form 里
     }
     if (isEdit.value && editingId.value != null) {
