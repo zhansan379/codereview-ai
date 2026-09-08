@@ -67,13 +67,24 @@
           <div class="form-tip" v-if="isEdit">读回为 ****** 表示保留原值。</div>
           <div class="form-tip" v-else>钉钉/飞书可用加签；企业微信无签名机制，不填。</div>
         </el-form-item>
-        <el-form-item label="项目(ID)">
-          <el-input-number
+        <el-form-item label="项目">
+          <el-select
             v-model="form.project_id"
-            :min="1"
-            placeholder="留空为全局"
-          />
-          <div class="form-tip">留空表示应用到全部项目（全局）。</div>
+            clearable
+            value-on-clear="null"
+            :placeholder="projects.length ? '请选择项目' : '暂无项目'"
+            :loading="projectsLoading"
+            style="width: 100%"
+          >
+            <el-option label="全局（应用到全部项目）" :value="null" />
+            <el-option
+              v-for="p in projects"
+              :key="p.id"
+              :label="p.repo_full_name"
+              :value="p.id"
+            />
+          </el-select>
+          <div class="form-tip">不选则应用到全部项目（全局）。</div>
         </el-form-item>
         <el-form-item label="@阈值">
           <el-input-number v-model="form.at_threshold" :min="0" />
@@ -93,9 +104,11 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listNotifiers, createNotifier, updateNotifier, deleteNotifier, type Notifier } from '../api'
+import { listNotifiers, createNotifier, updateNotifier, deleteNotifier, listProjects, type Notifier, type Project } from '../api'
 
 const items = ref<Notifier[]>([])
+const projects = ref<Project[]>([])
+const projectsLoading = ref(false)
 const loading = ref(false)
 const saving = ref(false)
 const dialogVisible = ref(false)
@@ -123,15 +136,26 @@ async function load() {
   }
 }
 
+async function loadProjects() {
+  projectsLoading.value = true
+  try {
+    projects.value = await listProjects()
+  } finally {
+    projectsLoading.value = false
+  }
+}
+
 function openCreate() {
   isEdit.value = false
   editingId.value = null
   Object.assign(form, emptyForm())
+  loadProjects()
   dialogVisible.value = true
 }
 function openEdit(row: Notifier) {
   isEdit.value = true
   editingId.value = row.id
+  loadProjects()
   Object.assign(form, {
     channel: row.channel,
     webhook: row.webhook || REDACTED,
