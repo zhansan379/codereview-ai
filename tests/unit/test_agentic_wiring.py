@@ -115,6 +115,41 @@ def test_cloner_recovers_corrupt_repo(tmp_path):
     assert (cache_dir / ".git" / "HEAD").exists()
 
 
+@pytest.mark.skipif(not RepoCloner.available(), reason="本地无 git")
+def test_cloner_occupied_invalid_dir_raises_clear(tmp_path, monkeypatch):
+    """删不净的残留(被占用、非 git)目录→抛清晰「占用」错误，而非误导性的"目录已存在"。"""
+    uri, head = _seed_remote(tmp_path)
+    cloner = RepoCloner(tmp_path / "cache")
+    cache_dir = tmp_path / "cache" / "owner_repo"
+    # 制造无效且非空的残留目标（残缺 .git）
+    (cache_dir / ".git" / "hooks").mkdir(parents=True)
+    # 模拟 Windows 上被占用删不掉：force_remove 成了空操作
+    monkeypatch.setattr(cloner, "_force_remove", lambda _t: None)
+    with pytest.raises(RuntimeError) as exc:
+        cloner.sync_to(url=uri, key="owner/repo", ref=head, token="")
+    assert "占用" in str(exc.value)
+    assert "already exists" not in str(exc.value)
+
+
+@pytest.mark.skipif(not RepoCloner.available(), reason="本地无 git")
+def test_cloner_clears_readonly_junk_before_reclone(tmp_path):
+    """目标里有只读文件也被清掉重建，而非报"目录已存在"。"""
+    uri, head = _seed_remote(tmp_path)
+    cloner = RepoCloner(tmp_path / "cache")
+    cache_dir = tmp_path / "cache" / "owner_repo"
+    stale = cache_dir / "stale"
+    stale.mkdir(parents=True)
+    junk = stale / "junk.bin"
+    junk.write_bytes(b"\x00")
+    try:
+        junk.chmod(0o444)  # 只读
+    except OSError:  # Windows 无 POSIX 权限语义时忽略
+        pass
+    assert junk.exists()
+    ws = cloner.sync_to(url=uri, key="owner/repo", ref=head, token="")
+    assert (ws / "a.txt").read_text("utf-8") == "hi\n"
+
+
 # ── llm_adapter（fake backend）────────────────────────────────────────
 
 
