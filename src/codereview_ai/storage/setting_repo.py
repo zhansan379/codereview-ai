@@ -16,6 +16,10 @@ from codereview_ai.storage.models import AppSetting
 #: `CR_PUSH_REVIEW_ENABLED`；项目级 `push_enabled` 仍可覆盖（follow/enforce 双态）。
 PUSH_REVIEW_DEFAULT_KEY = "push_review_default"
 
+#: MR 轨全局默认开关的键（值 "1"/"0"）。worker 按 MR 事件热读，缺行则回落到 env
+#: `CR_MR_REVIEW_ENABLED`；项目级 `mr_enabled` 仍可覆盖（与 push 轨道同法，DESIGN 双轨对称）。
+MR_REVIEW_DEFAULT_KEY = "mr_review_default"
+
 
 class SettingRepository:
     """`app_setting` 表读取/写入；值一律存字符串，调用方按需转换。"""

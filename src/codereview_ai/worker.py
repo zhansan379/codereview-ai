@@ -33,7 +33,11 @@ from codereview_ai.review.agentic.llmloop import AgentConfig, AgentLLM
 from codereview_ai.review.agentic.sandbox import SandboxDisabled, SandboxRuntime, run_agentic_review
 from codereview_ai.review.group_review import review_in_groups
 from codereview_ai.review.grouping import SemanticGrouper
-from codereview_ai.storage.setting_repo import PUSH_REVIEW_DEFAULT_KEY, SettingRepository
+from codereview_ai.storage.setting_repo import (
+    MR_REVIEW_DEFAULT_KEY,
+    PUSH_REVIEW_DEFAULT_KEY,
+    SettingRepository,
+)
 from codereview_ai.review.increments import (
     REASON_ALREADY,
     IncrementReference,
@@ -417,6 +421,7 @@ async def _do_review_pull_request(
     agent_reuse_enabled: bool = True,
     project_config_factory: ProjectConfigFactory | None = None,
     raw_payload: str = "",
+    mr_default_enabled: bool | None = None,
 ) -> str:
     """审查一条**已解析**的 PR（mr 轨核心，webhook 与主动补拉共用，DESIGN §7.3/§9）。
 
@@ -468,10 +473,38 @@ async def _do_review_pull_request(
         recorder = ConversationRecorder(engine, task_id=task_id, trace_id=TRACE_ID.get())
 
     try:
+        # 项目配置提前取：MR 门控与扩展名过滤共用一次查询（配置改动实时生效）
+        cfg = await _project_cfg(project_config_factory, pr.provider, pr.repo_id)
+        # —— MR 轨自动审查门控（与 push 对称：全局默认 → 项目覆盖；手动补审 force_rerun 绕过）——
+        # mr_default_enabled 在 main 生产总传 settings.mr_review_enabled（默认关）；未接线
+        # （None，存量调用/测试）不门控，保持原自动审语义。
+        if mr_default_enabled is not None:
+            enabled = mr_default_enabled
+            if engine is not None:
+                db_default = await SettingRepository(engine) \
+                    .get_bool_optional(MR_REVIEW_DEFAULT_KEY)
+                if db_default is not None:
+                    enabled = db_default
+            if cfg is not None and cfg.mr_enabled is not None:
+                enabled = cfg.mr_enabled
+            force = False
+            if review_repo is not None and task_id is not None:
+                force = await review_repo.force_rerun_flag(task_id)
+                if force:
+                    await review_repo.clear_force_rerun(task_id)
+            if force:
+                enabled = True
+            if not enabled:
+                # 未开启：审计行标 skipped，带原因；门控/配置类跳过可由前端「重试」补审
+                if review_repo is not None and task_id is not None:
+                    await review_repo.mark_state(
+                        task_id, state="skipped", skip_reason="mr_disabled",
+                        error="MR 自动审查未开启（默认关闭），仅记录未审查",
+                    )
+                return "skipped"
         refreshed = await forge.fetch_pull_request(pr)  # 补 diff_refs（行级评论 position 必填）
         diffs = await forge.fetch_files(refreshed)
         # 项目级文件扩展名过滤：只审命中的文件（DESIGN 文件扩展名过滤）
-        cfg = await _project_cfg(project_config_factory, refreshed.provider, refreshed.repo_id)
         if cfg and cfg.file_extensions:
             diffs = apply_extension_filter(diffs, cfg.file_extensions)
         # 未变更文件复用：增量轮里内容哈希未变的文件不再喂 agent，直接复用上次
@@ -629,8 +662,11 @@ async def process_raw_event(
     agent_conversation_enabled: bool = True,
     agent_reuse_enabled: bool = True,
     project_config_factory: ProjectConfigFactory | None = None,
+    mr_default_enabled: bool | None = None,
 ) -> None:
     """原始 webhook payload → 审查 + 回写。各阶段失败在此抛出，由 worker 标 failed。
+    `mr_default_enabled`：MR 轨自动审查全局默认（main 总传 settings.mr_review_enabled）；
+    None（未接线）则 MR 不门控、保持自动审（存量调用/测试）。
 
     事件解析分双轨：mr（`parse_merge_request`）、push（`parse_push_event`，DESIGN §7.7）。
     增量（DESIGN §7.3）落点可来自 `review_repo`（DB 持久，M4 起主用）或进程内
@@ -678,6 +714,7 @@ async def process_raw_event(
         agent_reuse_enabled=agent_reuse_enabled,
         project_config_factory=project_config_factory,
         raw_payload=raw.decode("utf-8", "replace"),
+        mr_default_enabled=mr_default_enabled,
     )
 
 
@@ -835,8 +872,10 @@ def make_processor(
     agent_conversation_enabled: bool = True,
     agent_reuse_enabled: bool = True,
     project_config_factory: ProjectConfigFactory | None = None,
+    mr_default_enabled: bool | None = None,
 ) -> Callable[[TaskMeta], Awaitable[None]]:
     """由 worker 主循环调用的处理函数：根据 task 取 payload 后走完整管线。
+    `mr_default_enabled` 透传给 MR 轨（webhook 与补拉直通都过 `_do_review_pull_request` 门控）。
 
     `increments`/`review_repo`/`grouper`/`chain_valid`/`notifier`/`push_gate`/
     `static_analyzer`/`review_strategy`/`agent_runtime`/`agent_llm_factory`/
@@ -876,6 +915,7 @@ def make_processor(
                 agent_reuse_enabled=agent_reuse_enabled,
                 project_config_factory=project_config_factory,
                 raw_payload="",
+                mr_default_enabled=mr_default_enabled,
             )
             return
         await process_raw_event(
@@ -897,6 +937,7 @@ def make_processor(
             agent_conversation_enabled=agent_conversation_enabled,
             agent_reuse_enabled=agent_reuse_enabled,
             project_config_factory=project_config_factory,
+            mr_default_enabled=mr_default_enabled,
         )
 
     return process

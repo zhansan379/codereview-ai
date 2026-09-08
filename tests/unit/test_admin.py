@@ -37,6 +37,7 @@ async def app(tmp_path) -> AsyncIterator[tuple[FastAPI, str]]:
     settings = type("S", (), {
         "secret_key": "s", "encryption_key": _fernet_key(),
         "push_review_enabled": False,  # §7.7 全局默认 env；无落库行时回落此值
+        "mr_review_enabled": False,    # §7.7 MR 轨全局默认 env（与 push 对称）
     })()
 
     fast = FastAPI()
@@ -93,16 +94,18 @@ def test_projects_crud_roundtrip(app):
             "provider": "gitlab", "repo_id": "123", "branch_rule": "dev",
             "score_threshold": 60, "enforce_score_threshold": True,
             "push_enabled": True, "push_branch_globs": "main,release/*",
+            "mr_enabled": False,
         }).json()
         assert upd["branch_rule"] == "dev" and upd["score_threshold"] == 60
         assert upd["enforce_score_threshold"] is True
         assert upd["push_enabled"] is True and upd["push_branch_globs"] == "main,release/*"
+        assert upd["mr_enabled"] is False
 
-        # push_enabled 可回写为 null → 继承全局默认
+        # push_enabled / mr_enabled 可回写为 null → 继承全局默认
         upd2 = c.put(f"/api/projects/{pid}", json={
-            "provider": "gitlab", "repo_id": "123", "push_enabled": None,
+            "provider": "gitlab", "repo_id": "123", "push_enabled": None, "mr_enabled": None,
         }).json()
-        assert upd2["push_enabled"] is None
+        assert upd2["push_enabled"] is None and upd2["mr_enabled"] is None
 
         assert c.get("/api/projects/9999").status_code == 404
         assert c.delete(f"/api/projects/{pid}").status_code == 204
@@ -229,6 +232,24 @@ def test_push_review_default_api_roundtrip(app):
 
         # 关闭 → 库值覆盖，不回落 env
         r = c.post("/api/settings/push-review-default", json={"enabled": False}).json()
+        assert r == {"enabled": False, "source": "db"}
+
+
+def test_mr_review_default_api_roundtrip(app):
+    """§7.7 MR 轨全局自动审查默认开关 API（与 push 对称）：初始回落 env、POST 落库、GET 读回。"""
+    fast, token = app
+    with _client(fast, token) as c:
+        # 无落库行 → 回落 env 默认（settings.mr_review_enabled=False），source=env
+        g = c.get("/api/settings/mr-review-default").json()
+        assert g == {"enabled": False, "source": "env"}
+
+        # 开启并落库 → source=db，后续 GET 读回库值
+        r = c.post("/api/settings/mr-review-default", json={"enabled": True}).json()
+        assert r == {"enabled": True, "source": "db"}
+        assert c.get("/api/settings/mr-review-default").json()["enabled"] is True
+
+        # 关闭 → 库值覆盖，不回落 env
+        r = c.post("/api/settings/mr-review-default", json={"enabled": False}).json()
         assert r == {"enabled": False, "source": "db"}
 
 
@@ -477,17 +498,26 @@ def test_tasks_retry_skipped_recoverable_only(app):
         assert r.status_code == 200, r.text
         assert r.json()["state"] == "queued"
         assert c.post(f"/api/tasks/{deleted['id']}/retry").status_code == 409
-        # mr 轨 skipped（不应出现，防御态）也不可重试
+        # mr 轨：mr_disabled 门控类 skipped 可补审；非门控的 branch_mismatch 仍 409
         async def _mr() -> None:
             session = session_factory(fast.state.engine)
             async with session() as s:
                 s.add(ReviewTask(provider="gitlab", repo_id="1", pr_number=5, event_type="mr",
                                  branch="main", head_sha="m1", state="skipped",
+                                 skip_reason="mr_disabled", error="MR 自动审查未开启...",
+                                 payload='{"x":1}'))
+                s.add(ReviewTask(provider="gitlab", repo_id="1", pr_number=6, event_type="mr",
+                                 branch="main", head_sha="m2", state="skipped",
                                  skip_reason="branch_mismatch"))
                 await s.commit()
         asyncio.get_event_loop().run_until_complete(_mr())
-        m = next(t for t in c.get("/api/tasks").json() if t["event_type"] == "mr")
-        assert c.post(f"/api/tasks/{m['id']}/retry").status_code == 409
+        mrs = c.get("/api/tasks").json()
+        disabled_mr = next(t for t in mrs if t["event_type"] == "mr" and t["skip_reason"] == "mr_disabled")
+        other_mr = next(t for t in mrs if t["event_type"] == "mr" and t["skip_reason"] == "branch_mismatch")
+        r = c.post(f"/api/tasks/{disabled_mr['id']}/retry")
+        assert r.status_code == 200, r.text
+        assert r.json()["state"] == "queued"
+        assert c.post(f"/api/tasks/{other_mr['id']}/retry").status_code == 409
 
 
 def test_retry_push_failed_sets_force_rerun(app):

@@ -31,6 +31,7 @@ export interface Project {
   enabled: boolean
   push_enabled: boolean | null
   push_branch_globs: string | null
+  mr_enabled: boolean | null
 }
 
 export interface ModelItem {
@@ -260,6 +261,18 @@ export function getPushReviewDefault(): Promise<PushReviewDefaultSetting> {
 }
 export function setPushReviewDefault(data: { enabled: boolean }): Promise<PushReviewDefaultSetting> {
   return client.post('/settings/push-review-default', data).then((r) => r.data)
+}
+
+// ===== MR 自动审查默认开关（与 push 对称，全局默认）=====
+export interface MrReviewDefaultSetting {
+  enabled: boolean
+  source: 'db' | 'env'
+}
+export function getMrReviewDefault(): Promise<MrReviewDefaultSetting> {
+  return client.get('/settings/mr-review-default').then((r) => r.data)
+}
+export function setMrReviewDefault(data: { enabled: boolean }): Promise<MrReviewDefaultSetting> {
+  return client.post('/settings/mr-review-default', data).then((r) => r.data)
 }
 
 // ===== 主动补拉 PR/MR =====

@@ -38,6 +38,7 @@ class ProjectOut(BaseModel):
     enabled: bool
     push_enabled: bool | None = None
     push_branch_globs: str = ""
+    mr_enabled: bool | None = None
 
 
 class ProjectWrite(BaseModel):
@@ -56,6 +57,8 @@ class ProjectWrite(BaseModel):
     # push 审查（DESIGN §7.7）：None=继承全局 env 默认；True/False=显式覆盖；glob 非空则覆盖全局分支规则
     push_enabled: bool | None = None
     push_branch_globs: str = ""
+    # MR 审查（与 push 对称）：None=继承全局默认；True/False=显式覆盖
+    mr_enabled: bool | None = None
 
 
 async def _get_or_404(session: AsyncSession, project_id: int) -> Project:

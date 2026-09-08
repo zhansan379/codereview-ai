@@ -83,6 +83,7 @@ _COLUMN_FALLBACKS: dict[str, list[tuple[str, str, str]]] = {
         ("push_enabled", "BOOLEAN", ""),          # 存量行 NULL=继承全局
         ("push_branch_globs", "VARCHAR(255)", "DEFAULT ''"),
         ("enforce_score_threshold", "BOOLEAN", "DEFAULT 0"),  # F3.7 评分阻塞开关
+        ("mr_enabled", "BOOLEAN", ""),            # MR 轨：存量行 NULL=继承全局
     ],
     "review_task": [
         ("skip_reason", "VARCHAR(32)", "DEFAULT ''"),

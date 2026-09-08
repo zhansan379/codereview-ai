@@ -22,7 +22,11 @@ from pydantic import BaseModel, Field
 
 from codereview_ai.api.deps import get_current_user
 from codereview_ai.queue.concurrency import WORKER_LOOP_CAP
-from codereview_ai.storage.setting_repo import PUSH_REVIEW_DEFAULT_KEY, SettingRepository
+from codereview_ai.storage.setting_repo import (
+    MR_REVIEW_DEFAULT_KEY,
+    PUSH_REVIEW_DEFAULT_KEY,
+    SettingRepository,
+)
 
 router = APIRouter(prefix="/settings", dependencies=[Depends(get_current_user)])
 
@@ -101,3 +105,33 @@ async def set_push_review_default(
     await _repo(request).set(PUSH_REVIEW_DEFAULT_KEY, "1" if body.enabled else "0")
     # worker 每次 push 事件热读本键即生效，无需重启后端
     return PushReviewDefaultOut(enabled=body.enabled, source="db")
+
+
+# —— MR 轨自动审查默认开关（与 push 对称；项目级 mr_enabled 仍可单独覆盖）——
+
+class MrReviewDefaultOut(BaseModel):
+    enabled: bool
+    source: str  # "db"（落库生效）| "env"（无落库行，跟随 CR_MR_REVIEW_ENABLED）
+
+
+class MrReviewDefaultWrite(BaseModel):
+    enabled: bool
+
+
+@router.get("/mr-review-default", response_model=MrReviewDefaultOut)
+async def get_mr_review_default(request: Request) -> MrReviewDefaultOut:
+    repo = _repo(request)
+    env_default = request.app.state.settings.mr_review_enabled
+    db_value = await repo.get_bool_optional(MR_REVIEW_DEFAULT_KEY)
+    if db_value is not None:
+        return MrReviewDefaultOut(enabled=db_value, source="db")
+    return MrReviewDefaultOut(enabled=env_default, source="env")
+
+
+@router.post("/mr-review-default", response_model=MrReviewDefaultOut)
+async def set_mr_review_default(
+    body: MrReviewDefaultWrite, request: Request
+) -> MrReviewDefaultOut:
+    await _repo(request).set(MR_REVIEW_DEFAULT_KEY, "1" if body.enabled else "0")
+    # worker 每次 MR 事件热读本键即生效，无需重启后端
+    return MrReviewDefaultOut(enabled=body.enabled, source="db")

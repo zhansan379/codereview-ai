@@ -85,21 +85,32 @@
       <template #header>自动审查触发</template>
       <p class="intro">
         有 push / MR 进来时是否自动执行代码审查。保存后即时生效，无需重启后端。
-        覆盖优先级：<strong>项目页面 Push审查开关 > 设置页开关 >  env CR_PUSH_REVIEW_ENABLED</strong>。
+        push 与 MR <strong>各自独立开关</strong>；覆盖优先级：<strong>项目页该轨开关 > 设置页开关 > 环境变量</strong>。
       </p>
       <el-form label-width="110px">
-        <el-form-item label="自动审查">
+        <el-form-item label="Push 轨">
           <el-switch v-model="pushEnabled" />
           <span class="form-tip" style="margin-left: 8px">
-            开 = 推送/MR 到达即自动审；关 = 仅记录、不自动审（可用「补审」手动触发）。
+            push 到达即自动审；默认关避免刷屏。项目「Push 审查」可单独覆盖。
           </span>
         </el-form-item>
-        <el-form-item v-if="pushSource === 'env'" label="当前来源">
-          <span class="hint">未落库，由环境变量 <code>CR_PUSH_REVIEW_ENABLED</code> 决定；保存后以这里为准。</span>
+        <el-form-item v-if="pushSource === 'env'" label="Push 来源">
+          <span class="hint">未落库，由 <code>CR_PUSH_REVIEW_ENABLED</code> 决定；保存后以这里为准。</span>
+        </el-form-item>
+        <el-divider class="track-divider" />
+        <el-form-item label="MR 轨">
+          <el-switch v-model="mrEnabled" />
+          <span class="form-tip" style="margin-left: 8px">
+            MR 到达即自动审；默认关。项目「MR 审查」可单独覆盖。
+          </span>
+        </el-form-item>
+        <el-form-item v-if="mrSource === 'env'" label="MR 来源">
+          <span class="hint">未落库，由 <code>CR_MR_REVIEW_ENABLED</code> 决定；保存后以这里为准。</span>
         </el-form-item>
       </el-form>
       <div class="save-bar">
-        <el-button type="primary" :loading="pushSaving" @click="onSavePushDefault">保存</el-button>
+        <el-button :loading="pushSaving" @click="onSavePushDefault">保存 Push 轨</el-button>
+        <el-button :loading="mrSaving" @click="onSaveMrDefault">保存 MR 轨</el-button>
       </div>
     </el-card>
 
@@ -123,7 +134,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { listForges, updateForge, testForge, getConcurrency, setConcurrency, getPushReviewDefault, setPushReviewDefault } from '../api'
+import { listForges, updateForge, testForge, getConcurrency, setConcurrency, getPushReviewDefault, setPushReviewDefault, getMrReviewDefault, setMrReviewDefault } from '../api'
 import type { ForgeCapability } from '../api'
 
 const MASK = '******'
@@ -154,10 +165,39 @@ const concurrency = ref(4)
 const ccActive = ref(true)
 const ccSaving = ref(false)
 
-// —— push 自动审查默认开关（§7.7 全局默认）——
+// —— push / MR 自动审查默认开关（§7.7 双轨各独立全局默认）——
 const pushEnabled = ref(false)
 const pushSource = ref<'db' | 'env'>('db')
 const pushSaving = ref(false)
+
+// —— MR 轨（与 push 对称）——
+const mrEnabled = ref(false)
+const mrSource = ref<'db' | 'env'>('db')
+const mrSaving = ref(false)
+
+async function loadMrDefault() {
+  try {
+    const s = await getMrReviewDefault()
+    mrEnabled.value = s.enabled
+    mrSource.value = s.source
+  } catch {
+    /* 后端未暴露该接口时（旧版）静默跳过，不阻塞平台页加载 */
+  }
+}
+
+async function onSaveMrDefault() {
+  mrSaving.value = true
+  try {
+    const s = await setMrReviewDefault({ enabled: mrEnabled.value })
+    mrEnabled.value = s.enabled
+    mrSource.value = s.source
+    ElMessage.success(s.enabled ? '已开启 MR 自动审查（即时生效）' : '已关闭 MR 自动审查（即时生效）')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '保存失败')
+  } finally {
+    mrSaving.value = false
+  }
+}
 
 async function loadPushDefault() {
   try {
@@ -252,6 +292,7 @@ onMounted(() => {
   load()
   loadConcurrency()
   loadPushDefault()
+  loadMrDefault()
 })
 </script>
 

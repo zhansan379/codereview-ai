@@ -49,6 +49,8 @@ class Project(Base):
     # push 轨审查（DESIGN §7.7）：None=继承全局 env 默认；True/False=显式覆盖；glob 非空则覆盖全局分支规则
     push_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
     push_branch_globs: Mapped[str] = mapped_column(String(255), default="")
+    # MR 轨审查（与 push 对称）：None=继承全局默认；True/False=显式覆盖
+    mr_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
     review_strategy: Mapped[str] = mapped_column(String(32), default="diff")
     prompt_suffix: Mapped[str] = mapped_column(Text, default="")
     score_threshold: Mapped[int] = mapped_column(Integer, default=80)

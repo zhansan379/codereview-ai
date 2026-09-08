@@ -134,6 +134,19 @@ class ReviewRepository:
             row.force_rerun = False
             await s.commit()
 
+    async def force_rerun_flag(self, task_id: int) -> bool:
+        """读行的 `force_rerun`（手动重试意图标记）；行不存在 → False。
+
+        供 mr 轨 `_do_review_pull_request` 在门控前判断是否为手动补审：True 则绕过
+        门控强审（与 push 轨读 `push_existing_audit.force_rerun` 同义）。
+        """
+        session = session_factory(self._engine)
+        async with session() as s:
+            row = (await s.execute(
+                select(ReviewTask).where(ReviewTask.id == task_id)
+            )).scalar_one_or_none()
+        return bool(row and row.force_rerun)
+
     async def ensure_task(
         self,
         *,
