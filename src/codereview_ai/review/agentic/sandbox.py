@@ -172,7 +172,12 @@ class LocalCloneRuntime:
         )
         self._workspace = workspace
         diff_map = _materialize(diffs, workspace)  # 兜底：确保变更文件也存在
-        return RepoContext(workspace=workspace, diff_map=diff_map)
+        # repo_dir+pinned_sha：使三个读文件工具走不可变 git 对象（按 head_sha 寻址），
+        # 免疫并发审查下工作树被其它 PR reset 覆盖的竞态。
+        return RepoContext(
+            workspace=workspace, diff_map=diff_map,
+            repo_dir=workspace, pinned_sha=pr.head_sha,
+        )
 
     async def stop(self) -> None:
         self._workspace = None  # 保留 cache 供下次复用，不删除

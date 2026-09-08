@@ -5,7 +5,8 @@
 - `task_done`：终止循环（FAILED → 置 failed 标志）。
 
 安全护栏（§12.2）：拒绝对 `..` 的路径穿越（可能逃出只读仓库根）；read_file 每文件 ≤500 行；
-grep/file_find 命中超限则截断并提示。全部在 `RepoContext` 的 workspace 内执行。
+grep/file_find 命中超限则截断并提示。真实运行（有 `repo_dir`+`pinned_sha`）改读**不可变
+git 对象**，免疫并发审查下工作树被其它 PR `reset` 覆盖的竞态；离线/测试回退工作区路径读。
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import fnmatch
 import json
 import logging
 import re
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -34,13 +36,40 @@ _CATEGORY_ENUM = [c.value for c in Category]
 _SEVERITY_ENUM = [s.value for s in Severity]
 
 
+def _safe_rel(rel: str) -> str | None:
+    """把相对路径归一成 git 对象地址用的安全 key；穿越/绝对/杂项返回 None。"""
+    if not rel or rel.startswith(("..", "/", "\\")):
+        return None
+    if "\\" in rel or any(p == ".." for p in rel.split("/")):
+        return None
+    return rel
+
+
+def _git(repo_dir: Path, args: list[str], timeout: int = 60) -> subprocess.CompletedProcess | None:
+    """在 `repo_dir`(git 仓库根) 跑只读 git 子命令，失败返回 None（工具层不抛）。"""
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo_dir), *args], check=False, capture_output=True, timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+
+
 @dataclass
 class RepoContext:
-    """工具执行所在的只读上下文：工作区根 + 已解析 diff + code_comment 的 path 回退键。"""
+    """工具执行所在的只读上下文：工作区根 + 已解析 diff + code_comment 的 path 回退键。
+
+    真实运行（`LocalCloneRuntime`）会注入 `repo_dir` + `pinned_sha`，三个读工作区的工具
+    （read_file/grep_repo/file_find）改走**不可变 git 对象**（按 `pinned_sha` 寻址），
+    从而免疫并发审查下工作树被其它 PR `reset` 覆盖的竞态——git 对象按 sha 只读不变，
+    而工作树可变。离线/测试（`FakeRuntime`）不给 sha，自然回退到 `workspace` 路径读。
+    """
 
     workspace: Path  # 仓库只读根（真实=挂载容器 /repo，离线=临时物化目录）
     diff_map: dict[str, str] = field(default_factory=dict)  # path -> unified diff 文本
     group_key: str = ""  # code_comment 缺 path 时的回退 path
+    repo_dir: Path | None = None  # git 仓库根（含 .git）
+    pinned_sha: str | None = None  # 不可变读源：读取一律按此 sha 寻址 git 对象
 
     def resolve(self, rel: str) -> Path | None:
         """把相对路径安全解析到工作区内；路径穿越/越界返回 None。"""
@@ -53,6 +82,55 @@ class RepoContext:
         except ValueError:
             return None
         return target
+
+    # ── 不可变 git 对象只读源（有 repo_dir+pinned_sha 时启用）────────────
+    def repo_git(self) -> bool:
+        """是否走 git 对象只读（而非可变工作树路径）。"""
+        return bool(self.repo_dir and self.pinned_sha)
+
+    def git_blob(self, rel: str) -> bytes | None:
+        """按 `pinned_sha` 读不可变 blob；路径非法/不存在/读取失败返回 None。"""
+        key = _safe_rel(rel)
+        if key is None:
+            return None
+        proc = _git(self.repo_dir, ["cat-file", "blob", f"{self.pinned_sha}:{key}"])
+        if proc is None or proc.returncode != 0:
+            return None
+        return proc.stdout
+
+    def git_paths(self) -> list[str]:
+        """`pinned_sha` 树上全部文件路径（git 恒用 `/` 分隔）。"""
+        proc = _git(self.repo_dir, ["ls-tree", "-r", "--name-only", str(self.pinned_sha)])
+        if proc is None or proc.returncode != 0:
+            return []
+        return [ln for ln in proc.stdout.decode("utf-8", "replace").splitlines() if ln]
+
+    def git_grep(self, needle: str, *, case_sensitive: bool) -> list[tuple[str, int, str]]:
+        """`git grep` 在 `pinned_sha` 树上搜固定子串，返回 (path, lineno, content)。"""
+        args = ["grep", "-F", "-n"]
+        if not case_sensitive:
+            args.append("-i")
+        args += ["-e", needle, str(self.pinned_sha)]
+        proc = _git(self.repo_dir, args)
+        if proc is None or proc.returncode not in (0, 1):  # 1 = 无命中（git 约定）
+            return []
+        hits: list[tuple[str, int, str]] = []
+        # 在树上 grep（给定了 rev）时每行带 `<rev>:<path>:<line>:<content>` 前缀；剥掉 rev 段。
+        prefix = f"{self.pinned_sha}:"
+        for line in proc.stdout.decode("utf-8", "replace").splitlines():
+            line = line[len(prefix):] if line.startswith(prefix) else line
+            path, sep, rest = line.partition(":")
+            if not sep:
+                continue
+            ln_s, sep2, content = rest.partition(":")
+            if not sep2:
+                continue
+            try:
+                ln = int(ln_s)
+            except (TypeError, ValueError):
+                continue
+            hits.append((path, ln, content))
+        return hits
 
 
 @dataclass
@@ -81,16 +159,19 @@ def _is_binary(data: bytes) -> bool:
 
 def _t_read_file(ctx: RepoContext, _state: ToolState, args: dict[str, Any]) -> str:
     rel = str(args.get("file_path") or "")
-    path = ctx.resolve(rel)
-    if path is None or not path.is_file():
+    if ctx.repo_git():
+        data = ctx.git_blob(rel)  # 不可变对象读，工作树被并发 reset 不受影响
+    else:
+        path = ctx.resolve(rel)
+        try:
+            data = path.read_bytes() if (path is not None and path.is_file()) else None
+        except OSError:
+            data = None
+    if data is None:
         return json.dumps({"ok": False, "error": f"文件不存在或越界: {rel}"}, ensure_ascii=False)
-    try:
-        data = path.read_bytes()
-        if _is_binary(data):
-            return json.dumps({"ok": False, "error": "二进制文件，跳过"}, ensure_ascii=False)
-        text = data.decode("utf-8", errors="replace").splitlines()
-    except OSError as exc:
-        return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+    if _is_binary(data):
+        return json.dumps({"ok": False, "error": "二进制文件，跳过"}, ensure_ascii=False)
+    text = data.decode("utf-8", errors="replace").splitlines()
 
     start = max(1, int(args.get("start_line") or 1))
     end = int(args.get("end_line") or start + MAX_READ_LINES - 1)
@@ -113,6 +194,21 @@ def _t_grep_repo(ctx: RepoContext, _state: ToolState, args: dict[str, Any]) -> s
     if not needle:
         return json.dumps({"ok": False, "error": "缺少 search_text"}, ensure_ascii=False)
     hits: list[str] = []
+    if ctx.repo_git():
+        # 不可变对象读：git grep 在 pinned_sha 树上搜，主体跨文件刷新安全
+        for path, ln, content in ctx.git_grep(needle, case_sensitive=case_sensitive):
+            if patterns and not any(fnmatch.fnmatch(path, p) for p in patterns):
+                continue
+            hits.append(f"{path}:{ln}: {content}")
+            if len(hits) >= MAX_GREP_HITS:
+                return json.dumps(
+                    {"ok": True, "truncated": True,
+                     "hits": hits, "note": f"命中超 {MAX_GREP_HITS}，已截断"},
+                    ensure_ascii=False,
+                )
+        return json.dumps({"ok": True, "truncated": False, "hits": hits}, ensure_ascii=False)
+
+    # 路径模式（离线/测试）：直接遍历工作区
     if not case_sensitive:
         needle = needle.lower()
     for fp in ctx.workspace.rglob("*"):
@@ -141,12 +237,14 @@ def _t_file_find(ctx: RepoContext, _state: ToolState, args: dict[str, Any]) -> s
         return json.dumps({"ok": False, "error": "缺少 query_name"}, ensure_ascii=False)
     q = query if case_sensitive else query.lower()
     found: list[str] = []
-    for fp in ctx.workspace.rglob("*"):
-        if not fp.is_file():
-            continue
-        name = fp.name
+    paths = ctx.git_paths() if ctx.repo_git() else [
+        str(p.relative_to(ctx.workspace)).replace("\\", "/")
+        for p in ctx.workspace.rglob("*") if p.is_file()
+    ]
+    for path in paths:
+        name = Path(path).name
         if (name if case_sensitive else name.lower()).find(q) != -1:
-            found.append(str(fp.relative_to(ctx.workspace)).replace("\\", "/"))
+            found.append(path)
             if len(found) >= MAX_FIND_RESULTS:
                 return json.dumps(
                     {"ok": True, "truncated": True, "paths": found,

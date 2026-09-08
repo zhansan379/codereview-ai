@@ -103,6 +103,48 @@ def test_path_traversal_rejected(tmp_path):
     assert ctx.resolve("a.py") is not None
 
 
+# ── 不可变 git 对象读（repo_dir + pinned_sha，免疫并发工作树 reset）──────────
+
+
+_HAVE_GIT = __import__("shutil").which("git") is not None
+
+
+def _seed_git(tmp_path):
+    import subprocess
+
+    src = tmp_path / "src"
+    src.mkdir()
+    for c in (["init"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+        subprocess.run(["git", *c], cwd=src, check=True, capture_output=True)
+    (src / "a.txt").write_text("hi\n", "utf-8")
+    (src / "sub").mkdir()
+    (src / "sub" / "backend.py").write_text("import os\nos.system('x')\n", "utf-8")
+    subprocess.run(["git", "add", "."], cwd=src, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=src, check=True, capture_output=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=src, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    return src, head
+
+
+@pytest.mark.skipif(not _HAVE_GIT, reason="本地无 git")
+def test_git_context_reads_immutable(tmp_path):
+    """repo_dir+pinned_sha 时三只读工具走 git 对象，工作树被覆盖也不影响读取。"""
+    src, head = _seed_git(tmp_path)
+    ctx = RepoContext(workspace=src, diff_map={}, repo_dir=src, pinned_sha=head)
+    assert ctx.repo_git()
+    runner = ToolRunner(ctx, ToolState())
+    # 读、搜、找均基于 git 对象
+    assert "hi" in runner.run_one("read_file", {"file_path": "a.txt"})
+    assert "backend.py:2" in runner.run_one("grep_repo", {"search_text": "os.system"})
+    assert "sub/backend.py" in runner.run_one("file_find", {"query_name": "backend"})
+    # 核心断言：模拟并发 PR 把工作树覆盖成别的代码，读取仍返回 head sha 的原始内容
+    (src / "a.txt").write_text("CLOBBERED\n", "utf-8")
+    (src / "sub" / "backend.py").write_text("pass\n", "utf-8")
+    out = runner.run_one("read_file", {"file_path": "a.txt"})
+    assert "hi" in out and "CLOBBERED" not in out
+
+
 def test_code_comment_fallback_group_key(tmp_path):
     ctx = RepoContext(workspace=tmp_path, group_key="fallback.py")
     state = ToolState()
