@@ -22,6 +22,7 @@ from codereview_ai.notifiers.base import Notifier, ReviewNotification, build_rev
 from codereview_ai.notifiers.dingtalk import DingTalkNotifier
 from codereview_ai.notifiers.feishu import FeishuNotifier
 from codereview_ai.notifiers.wecom import WeComNotifier
+from codereview_ai.storage.models import NotifierMember
 
 logger = logging.getLogger("codereview_ai.notifiers.dispatch")
 
@@ -33,6 +34,23 @@ _SINKS: dict[str, Callable[..., Notifier]] = {
 }
 
 RoutesProvider = Callable[[int | None], Awaitable[list[NotifierRoute]]]
+MemberResolver = Callable[[str], Awaitable[NotifierMember | None]]
+
+
+def member_to_platform_id(member: NotifierMember, channel: str) -> str | None:
+    """把系统级成员映射成某渠道的认识的 @ID；该平台没有标识返回 None（跳过不 @）。
+
+    dingtalk→手机号 / feishu→open_id / wecom→userid。fork username 本身任何平台
+    都不认识，绝不落回来——它只走 `mention_names`（文案点名）。
+    """
+    match channel:
+        case "dingtalk":
+            return member.dingtalk_mobile or None
+        case "feishu":
+            return member.feishu_open_id or None
+        case "wecom":
+            return member.wecom_userid or None
+    return None
 
 
 def build_notifier(route: NotifierRoute, *, http: httpx.AsyncClient) -> Notifier | None:
@@ -52,27 +70,42 @@ class NotifierDispatcher:
         routes: RoutesProvider,
         *,
         http: httpx.AsyncClient | None = None,
+        resolve_member: MemberResolver | None = None,
         attempts: int = 3,
         backoff_base: float = 1.0,
     ) -> None:
         self._routes = routes
         self._http = http or httpx.AsyncClient(timeout=10.0)
+        self._resolve_member = resolve_member  # 作者 git_username → 系统级成员
         self._attempts = max(1, attempts)
         self._backoff_base = backoff_base
+
+    async def _compose_at(
+        self, pr: PullRequest, route: NotifierRoute
+    ) -> list[str]:
+        """按渠道解析一条路由的 @ID：静态勾选成员 + 动态作者（git_username 命中）。
+
+        两者都经 `member_to_platform_id` 转成平台认识的 ID；解析不到（作者非成员表
+        用户、或该平台无标识）就自然丢出列表——fork username 永不进 at。
+        """
+        at: list[str] = []
+        for m in route.at_members:
+            if (mid := member_to_platform_id(m, route.channel)) and mid not in at:
+                at.append(mid)
+        if pr.author and self._resolve_member is not None:
+            author = await self._resolve_member(pr.author)
+            if author and (aid := member_to_platform_id(author, route.channel)) and aid not in at:
+                at.append(aid)
+        return at
 
     def _apply_at_threshold(
         self, msg: ReviewNotification, route: NotifierRoute
     ) -> ReviewNotification:
-        """F4.3：评分低于 at_threshold 才带 @（所有人+指定成员），否则清空 all/targets。
-
-        @ 的具体对象来自路由配置（`at_all` / `at_targets`），sink 按平台方言渲染。
-        """
-        shall = route.at_threshold and msg.score is not None and msg.score < route.at_threshold
-        if not shall:
-            return dataclasses.replace(msg, at_all=False, at_targets=[])
-        return dataclasses.replace(
-            msg, at_all=route.at_all, at_targets=route.at_targets or []
-        )
+        """F4.3 门控：评分低于 at_threshold 才保留 @（静态成员 + 解析出的作者），否则清空。"""
+        at = msg.at_users
+        if not (route.at_threshold and msg.score is not None and msg.score < route.at_threshold):
+            at = []
+        return dataclasses.replace(msg, at_users=at)
 
     async def _send_with_retry(self, sink: Notifier, msg: ReviewNotification) -> None:
         """指数退避重试：1s/2s/4s…（DESIGN F4.4，asyncio.sleep，不阻塞事件循环）。"""
@@ -98,8 +131,12 @@ class NotifierDispatcher:
             sink = build_notifier(route, http=self._http)
             if sink is None:
                 continue
+            # @ID 每条路由单独组装（静态成员 + 作者解析），再统一过 @ 阈值门控
+            msg = self._apply_at_threshold(
+                dataclasses.replace(base, at_users=await self._compose_at(pr, route)), route
+            )
             try:
-                await self._send_with_retry(sink, self._apply_at_threshold(base, route))
+                await self._send_with_retry(sink, msg)
                 sent += 1
             except Exception as exc:  # noqa: BLE001  单渠道失败不炸主流程
                 logger.error("渠道 %s 推送失败: %s", route.channel, exc, exc_info=True)

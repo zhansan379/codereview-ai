@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from codereview_ai.config.repository import (
@@ -20,7 +21,13 @@ from codereview_ai.config.repository import (
 from codereview_ai.crypto import encrypt
 from codereview_ai.review.reviewer import Reviewer
 from codereview_ai.storage.db import create_engine, init_db, session_factory
-from codereview_ai.storage.models import ForgeConfig, ModelConfig, NotifierConfig
+from codereview_ai.storage.models import (
+    ForgeConfig,
+    ModelConfig,
+    NotifierConfig,
+    NotifierMember,
+    NotifierRouteMember,
+)
 
 
 def _fernet_key() -> str:
@@ -93,14 +100,22 @@ async def test_notifier_routes_filter_by_project_and_decrypt(engine, monkeypatch
         s.add(NotifierConfig(channel="dingtalk", enabled=True,
                              webhook_encrypted=encrypt("https://w-global", key),
                              secret_encrypted=encrypt("SEC-1", key),
-                             project_id=None, at_threshold=60, at_all=True,
-                             at_targets=[{"author": "alice", "mobile": "13800000000"}]))
+                             project_id=None, at_threshold=60))
         s.add(NotifierConfig(channel="feishu", enabled=True,
                              webhook_encrypted=encrypt("https://w-proj", key),
                              secret_encrypted="", project_id=7, at_threshold=90))
         s.add(NotifierConfig(channel="wecom", enabled=False,
                              webhook_encrypted=encrypt("https://w-off", key),
                              secret_encrypted="", project_id=None, at_threshold=60))
+        await s.flush()
+        # 系统级成员 + 渠道绑定（@指定成员）
+        alice = NotifierMember(name="Alice", git_username="alice", dingtalk_mobile="13800000000")
+        bob = NotifierMember(name="Bob", git_username="bob", wecom_userid="wbob")
+        s.add_all([alice, bob])
+        await s.flush()
+        ding = (await s.scalars(select(NotifierConfig).where(NotifierConfig.channel == "dingtalk"))).one()
+        s.add(NotifierRouteMember(notifier_id=ding.id, member_id=alice.id))
+        s.add(NotifierRouteMember(notifier_id=ding.id, member_id=bob.id))
         await s.commit()
 
     repo = ConfigRepository(engine, encryption_key=key)
@@ -110,10 +125,15 @@ async def test_notifier_routes_filter_by_project_and_decrypt(engine, monkeypatch
     assert {r.channel for r in proj} == {"dingtalk", "feishu"}
     ding = next(r for r in proj if r.channel == "dingtalk")
     assert ding.webhook == "https://w-global" and ding.secret == "SEC-1"
-    # @ 新字段透传：at_all / at_targets 原样进入路由
-    assert ding.at_all is True and ding.at_targets == [{"author": "alice", "mobile": "13800000000"}]
+    # @ 指定成员装载：渠道绑定的系统级成员进入路由（git_username 作解析键）
+    assert [m.name for m in ding.at_members] == ["Alice", "Bob"]
     feishu = next(r for r in proj if r.channel == "feishu")
-    assert feishu.at_all is False and feishu.at_targets == []
+    assert feishu.at_members == []
+
+    # 提交者按 git_username 命中成员
+    resolved = await repo.resolve_member_by_git_username("bob")
+    assert resolved is not None and resolved.wecom_userid == "wbob"
+    assert await repo.resolve_member_by_git_username("nobody") is None
 
 
 

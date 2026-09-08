@@ -67,13 +67,14 @@ async def test_schema_backfill_adds_new_columns_idempotently(tmp_path):
 
     assert not ({"push_enabled", "push_branch_globs", "mr_enabled"} & await _cols("project"))
     assert not ({"skip_reason", "force_rerun", "pr_title", "push_commits"} & await _cols("review_task"))
+    # 系统级 @ 方案用关联表 notifier_route_member，notifier_config 无 at_all/at_targets 列
     assert not ({"at_all", "at_targets"} & await _cols("notifier_config"))
 
     await _ensure_latest_schema(engine)
     await _ensure_latest_schema(engine)  # 幂等：再跑一次不炸、不加重复列
     assert {"push_enabled", "push_branch_globs", "mr_enabled"} <= await _cols("project")
     assert {"skip_reason", "force_rerun", "pr_title", "push_commits"} <= await _cols("review_task")
-    assert {"at_all", "at_targets"} <= await _cols("notifier_config")
+    assert not ({"at_all", "at_targets"} & await _cols("notifier_config"))
     await engine.dispose()
 
 

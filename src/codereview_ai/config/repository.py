@@ -27,7 +27,13 @@ from codereview_ai.crypto import decrypt
 from codereview_ai.review.fallback import wrap_fallback
 from codereview_ai.review.reviewer import Reviewer
 from codereview_ai.storage.db import session_factory
-from codereview_ai.storage.models import ForgeConfig, ModelConfig, NotifierConfig
+from codereview_ai.storage.models import (
+    ForgeConfig,
+    ModelConfig,
+    NotifierConfig,
+    NotifierMember,
+    NotifierRouteMember,
+)
 
 logger = logging.getLogger("codereview_ai.config_repository")
 
@@ -116,15 +122,18 @@ class ResolvedLLM:
 
 @dataclass
 class NotifierRoute:
-    """一条通知路由（channel + 解密后的 webhook/secret，及 @ 阈值 / @目标）。"""
+    """一条通知路由（channel + 解密后的 webhook/secret，及 @ 阈值 + 勾选成员）。
+
+    `at_members` 是该渠道勾选的系统级成员（去重后）；推送时由 dispatch 按
+    `channel` 取对应平台 ID，与「提交者主动解析」合并后再过 @ 阈值门控。
+    """
 
     channel: str
     webhook: str
     secret: str
     project_id: int | None
     at_threshold: int
-    at_all: bool = False  # 命中阈值时 @所有人
-    at_targets: list = field(default_factory=list)  # 命中阈值时 @的成员映射
+    at_members: list[NotifierMember] = field(default_factory=list)
 
 
 @dataclass
@@ -146,6 +155,8 @@ class ConfigRepository:
         self._models: list[ModelConfig] = []
         self._notifiers: list[NotifierConfig] = []
         self._forges: list[ForgeConfig] = []
+        self._members: dict[int, NotifierMember] = {}  # 系统级成员名单
+        self._route_members: dict[int, list[int]] = {}  # notifier_id → member_ids
 
     # —— 拉取 ——
 
@@ -166,9 +177,15 @@ class ConfigRepository:
                 .where(ForgeConfig.enabled.is_(True))
                 .order_by(ForgeConfig.provider)
             )).scalars().all()
+            members = (await s.execute(select(NotifierMember))).scalars().all()
+            links = (await s.execute(select(NotifierRouteMember))).scalars().all()
         self._models = list(models)
         self._notifiers = list(notifiers)
         self._forges = list(forges)
+        self._members = {m.id: m for m in members}
+        self._route_members = {}
+        for link in links:
+            self._route_members.setdefault(link.notifier_id, []).append(link.member_id)
 
     # —— 解析 ——
 
@@ -231,10 +248,26 @@ class ConfigRepository:
                 secret=decrypt(n.secret_encrypted, self._enc) if n.secret_encrypted else "",
                 project_id=n.project_id,
                 at_threshold=n.at_threshold,
-                at_all=n.at_all,
-                at_targets=n.at_targets or [],
+                at_members=[self._members[mid] for mid in self._route_members.get(n.id, [])
+                            if mid in self._members],
             ))
         return routes
+
+    async def resolve_member_by_git_username(
+        self, git_username: str
+    ) -> NotifierMember | None:
+        """按 forge 提交用户名命中系统级成员（`pr.author` 的解析键）。
+
+        供 dispatch 把「提交者 @」从裸 username 转成该平台认识的 ID；命中不到返回
+        None——此时作者只进文案点名、不在该渠道 @。每次调用随 `_fetch` 实时刷新。
+        """
+        if not git_username:
+            return None
+        await self._fetch()
+        for m in self._members.values():
+            if m.git_username == git_username:
+                return m
+        return None
 
     async def resolve_forge(self, provider: str) -> ResolvedForge | None:
         """返回一个平台的接入凭据；**env 优先、DB 兜底**（host env 压不住）。
