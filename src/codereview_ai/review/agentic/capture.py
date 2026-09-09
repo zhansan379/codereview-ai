@@ -82,6 +82,11 @@ ACTIVE_RECORDER: contextvars.ContextVar[ConversationRecorder | None] = contextva
 ACTIVE_PHASE: contextvars.ContextVar[str] = contextvars.ContextVar(
     "active_conversation_phase", default="loop"
 )
+#: 当前文件组标记（`review_in_groups` 组并发时每组分发前 set，随任务隔离）。
+#: 空 = 未分组/整组一次。展示据此把同一文件组的轮次归到一组（对齐上游按文件组回放）。
+ACTIVE_GROUP: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "active_conversation_group", default=""
+)
 
 
 def diff_usage_sink(engine: AsyncEngine, task_id: int) -> Callable[[dict[str, Any]], Awaitable[None]]:
@@ -134,6 +139,12 @@ def set_phase(phase: str):
     return lambda: ACTIVE_PHASE.reset(token)
 
 
+def set_group(group_key: str):
+    """设置当前文件组标记；返回还原回调（组审查进出成对使用）。"""
+    token = ACTIVE_GROUP.set(group_key or "")
+    return lambda: ACTIVE_GROUP.reset(token)
+
+
 def _dumps(value: Any) -> str:
     """宽松序列化 request/response；失败返回空串（不阻断采集）。"""
     try:
@@ -184,6 +195,7 @@ class ConversationRecorder:
                     phase=(phase or "loop")[:32],
                     model=(model or "")[:64],
                     trace_id=(self._trace_id or "")[:64],
+                    file_group=ACTIVE_GROUP.get() or "",
                     request_json=_dumps(request),
                     response_json=_dumps(response),
                 ))

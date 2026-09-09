@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from codereview_ai.domain.models import FileDiff, Finding, PullRequest, ReviewResult
+from codereview_ai.review.agentic.capture import set_group
 from codereview_ai.review.grouping import SemanticGrouper
 from codereview_ai.review.reviewer import Reviewer
 from codereview_ai.review.static_analysis import render_static_findings
@@ -87,23 +88,50 @@ async def review_in_groups(
     sink_kwargs = {"usage_sink": usage_sink} if usage_sink is not None else {}
     if grouper is None or len(diffs) < GROUPING_MIN_FILES:
         static_text = render_static_findings(static, {d.new_path for d in diffs})
-        result = await reviewer.review(
-            pr=pr, commits_text=commits_text, diffs=diffs,
-            **_static_kwargs(static_text), **sink_kwargs,
+        result = await _review_one(
+            reviewer, pr, commits_text, diffs,
+            _static_kwargs(static_text), sink_kwargs,
         )
         return _attach_static(result, static)
 
     groups = await grouper.group(diffs)
     results = await asyncio.gather(*(
-        reviewer.review(
-            pr=pr, commits_text=commits_text, diffs=g,
-            **_static_kwargs(render_static_findings(static, {d.new_path for d in g})),
-            **sink_kwargs,
+        _review_one(
+            reviewer, pr, commits_text, g,
+            _static_kwargs(render_static_findings(static, {d.new_path for d in g})),
+            sink_kwargs,
         )
         for g in groups
     ))
     merged = merge_results(list(results), groups)
     return _attach_static(merged, static)
+
+
+async def _review_one(
+    reviewer: Reviewer,
+    pr: PullRequest,
+    commits_text: str,
+    group: list[FileDiff],
+    static_kwargs: dict[str, Any],
+    sink_kwargs: dict[str, Any],
+) -> ReviewResult:
+    """单组审查：先把该组文件标记写入对话采集上下文，使本组所有轮次带 `file_group`。
+
+    组审查经 `asyncio.gather` 并发，每个 coroutine 是独立 Task（独立 context 拷贝），
+    这里 `set_group` 只影响本组，不会串到其他并行组（与 `ACTIVE_PHASE` 同隔离语义）。
+    """
+    reset = set_group(_group_key(group))
+    try:
+        return await reviewer.review(
+            pr=pr, commits_text=commits_text, diffs=group, **static_kwargs, **sink_kwargs,
+        )
+    finally:
+        reset()
+
+
+def _group_key(group: list[FileDiff]) -> str:
+    """组的展示 key：排序后 new_path 逗号连接（同 `merge_results` 的组前缀约定）。"""
+    return ",".join(sorted({d.new_path for d in group}))
 
 
 def _static_kwargs(static_text: str) -> dict[str, str]:

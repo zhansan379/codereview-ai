@@ -675,7 +675,7 @@ async def _do_review_pull_request(
         logger.warning("mr 轨审查失败（%s pr#%s）：%s", pr.repo_full_name, pr.pr_number, exc)
         if task_id is not None:
             try:
-                await review_repo.mark_state(task_id, state="failed", error=str(exc)[:2000])
+                await review_repo.mark_state(task_id, state="failed", error=str(exc))
             except Exception:
                 pass  # 落库失败不遮蔽原始异常
         raise
@@ -895,7 +895,7 @@ async def _review_push_event(
     except Exception as exc:
         logger.warning("push 轨审查失败（%s@%s）：%s", ev.repo_full_name, ev.after, exc)
         if review_repo is not None:
-            await review_repo.mark_state(audit_id, state="failed", error=str(exc)[:2000])
+            await review_repo.mark_state(audit_id, state="failed", error=str(exc))
         raise
 
 

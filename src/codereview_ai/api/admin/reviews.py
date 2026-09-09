@@ -403,6 +403,7 @@ async def get_conversation(
             resp_obj = resp
         items.append({
             "seq": r.seq, "phase": r.phase, "model": r.model, "trace_id": r.trace_id,
+            "file_group": r.file_group or "",
             "request": _truncate_inplace(req_obj),
             "response": _truncate_inplace(resp_obj),
             "ts": r.ts.isoformat(),

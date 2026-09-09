@@ -100,6 +100,10 @@ _COLUMN_FALLBACKS: dict[str, list[tuple[str, str, str]]] = {
     "notifier_config": [
         ("at_all", "BOOLEAN", "DEFAULT 0"),     # 评分低于阈值时是否 @全员
     ],
+    "review_conversation": [
+        # 文件组标记（组审查并行时逐卡区分所属组）；TEXT 不切片，存全量组 key。
+        ("file_group", "TEXT", "DEFAULT ''"),
+    ],
 }
 
 
