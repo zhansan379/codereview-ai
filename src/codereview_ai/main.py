@@ -32,10 +32,10 @@ from codereview_ai.api.admin import (
     stats,
     tasks,
 )
-from codereview_ai.api.admin.notifier_members import router as members  # 系统级 @成员名单
 from codereview_ai.api.admin import (
     settings as admin_settings,  # 全局运行时设置（并发数）
 )
+from codereview_ai.api.admin.notifier_members import router as members  # 系统级 @成员名单
 from codereview_ai.api.admin_ui import mount_admin
 from codereview_ai.api.auth import router as auth_router
 from codereview_ai.api.webhook import router as webhook_router
@@ -158,16 +158,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 enabled=settings.push_review_enabled,
                 branch_match=_branch_glob_match(settings.push_branch_globs),
             )
-            # §11 静态分析：默认开，缺工具自动降级，不影响主链
+            # §11 静态分析：默认开，缺工具自动降级，不影响主链。semgrep 默认 registry-first、
+            # 失败内置离线包兜底；显式配 CR_SEMGREP_RULES 则完全离线走本地目录
             ws = Path(settings.static_workspace_dir) if settings.static_workspace_dir else None
-            static_analyzer = StaticAnalyzer(enabled=settings.review_static_enabled, workspace=ws)
+            rules = Path(settings.semgrep_rules_dir) if settings.semgrep_rules_dir else None
+            static_analyzer = StaticAnalyzer(
+                enabled=settings.review_static_enabled, workspace=ws, semgrep_rules=rules,
+            )
             # 项目级配置（文件扩展名过滤）：按 (provider, repo_id) 实时读 project 启用行
             project_repo = ProjectRepository(engine)
             # §12 agentic 审查：全局开 + 有可用 LLM 才接线运行时与工具工厂；否则留 None
             # （worker 三条件不满足自动走 diff，不在这里抛错）。async token 回调按 provider
             # 实时取平台 token 供 clone，DB/env 热更即时生效。
             agent_runtime = agent_llm_factory = agent_config = None
-            grouper = None  # §7.2 LLM 语义分组；agentic 未启用或无 LLM 时留 None（worker 走整组/diff）
+            grouper = None  # §7.2 LLM 语义分组；agentic 未启用或无 LLM 时留 None
             if settings.agent_review_enabled:
                 async def _agent_token_for(provider: str) -> str | None:
                     try:

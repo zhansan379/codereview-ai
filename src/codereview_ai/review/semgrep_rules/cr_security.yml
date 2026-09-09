@@ -1,0 +1,56 @@
+# Bundled local semgrep rules (used when CR_SEMGREP_RULES is empty).
+#
+# Goal: make the static-analysis tier work fully OFFLINE, with no dependency on
+# fetching rules from the Semgrep registry (`p/ci` requires network).
+# This is a minimal high-signal security set covering the most common findings on
+# reviewed MRs. To broaden coverage, point CR_SEMGREP_RULES at your own rule dir
+# or an OSS rule pack (`--config` accepts a directory).
+#
+# IMPORTANT (Windows): this file MUST stay pure ASCII. semgrep reads rule files
+# with Path.read_text() (default locale encoding), which on Chinese-locale Windows
+# is GBK - any non-ASCII byte crashes rule loading. Keep `message`/comments in
+# English; the Finding.content flows to the LLM prompt and English is fine there.
+#
+# Maintenance notes:
+#   - ids use `cr.*` so `_semgrep_severity`/`_semgrep_category` keyword matching
+#     (security/injection/command/...) works and community rules stay distinct.
+#   - severity limited to ERROR / WARNING / INFO (ERROR=fatal, WARNING=suspicious,
+#     INFO=informational).
+#   - rules must load offline: `semgrep --config <dir> --json .`. After editing,
+#     run that once locally so a rule parse error does not silently degrade the tier.
+rules:
+  - id: cr.python.security.audit.eval
+    languages: [python]
+    severity: ERROR
+    message: Calling eval() on dynamic or untrusted input allows arbitrary code execution. Prefer a safe alternative such as ast.literal_eval.
+    pattern: eval(...)
+
+  - id: cr.python.security.audit.exec
+    languages: [python]
+    severity: ERROR
+    message: exec() executes arbitrary Python code; never call it on untrusted input.
+    pattern: exec(...)
+
+  - id: cr.python.security.audit.requests-verify-false
+    languages: [python]
+    severity: ERROR
+    message: requests called with verify=False disables TLS certificate validation, enabling man-in-the-middle attacks. Remove the flag or pin a trust store.
+    pattern: requests.$CALL(..., verify=False, ...)
+
+  - id: cr.python.security.audit.subprocess-shell
+    languages: [python]
+    severity: WARNING
+    message: subprocess called with shell=True introduces OS-level shell expansion and raises injection risk. Prefer a plain argument list without shell.
+    pattern: subprocess.$CALL(..., shell=True, ...)
+
+  - id: cr.python.security.audit.pickle-loads
+    languages: [python]
+    severity: WARNING
+    message: Deserializing untrusted data with pickle.loads can execute arbitrary code. Use JSON or verify authenticity of the input.
+    pattern: pickle.loads(...)
+
+  - id: cr.python.security.audit.yaml-load
+    languages: [python]
+    severity: WARNING
+    message: yaml.load() with the default Loader can deserialize arbitrary objects. Use yaml.safe_load() instead.
+    pattern: yaml.load(...)

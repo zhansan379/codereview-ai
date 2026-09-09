@@ -3,9 +3,18 @@
 - 只对**变更涉及的文件**跑（design 决定：全仓跑太慢），用 `FileDiff.new_file_content`
   物化一个临时工作区即可，无需 checkout。
 - 按扩展名分发：`.py` → `ruff check --output-format json`；`js/ts` → eslint
-  （未装则 warning 降级）；全部语言 → `semgrep --config p/ci --json`。
+  （未装则 warning 降级）；全部语言 → `semgrep --json`。
+- semgrep 规则源分两档：
+  - **默认 registry-first**：`--config p/ci`（云规则集，覆盖最广，联网**拉取一次**）。
+    失败（无网/内网/规则损坏）→ 自动**降级到内置本地规则包**
+    （`review/semgrep_rules/`，随 wheel 打包，离线可用）。
+  - **显式** `CR_SEMGREP_RULES=本地目录`：直接用它，**完全离线**、不碰 registry。
+  - `SubprocessRunner` 子进程 env 置 `SEMGREP_SEND_METRICS=off`，命令带
+    `--disable-version-check`——默认位只保留「拉规则」这一次必要网络请求。
 - 归一化：`(severity, file, line, title)` → `Finding(source='static:ruff'|'static:semgrep')`。
 - 顺序与降级：静态分析**先跑**；任何一步失败只 warning 降级（返回空），绝不阻断审查主流程。
+  其中 ruff 非零退出是「有 finding」的常态（不 warning）；semgrep 非零退出代表**装载失败**
+  （含联网拉规则失败）→ 记 warning，但仍尽力解析已有结果，并按需降级内置本地包。
 - 工具执行器 `runner` 以参数注入：离线测试传 fake runner 返回罐头 JSON，线上默认
   `SubprocessRunner` 用 asyncio subprocess 调用真实二进制；二进制缺失也降级为空。
 """
@@ -25,18 +34,42 @@ from codereview_ai.domain.models import Category, FileDiff, Finding, Severity
 
 logger = logging.getLogger("codereview_ai.static_analysis")
 
+
+def _snippet(text: str, limit: int = 400) -> str:
+    """日志用：截断长输出，避免一屏刷爆（只作降级提示，不承载逻辑）。"""
+    text = (text or "").strip()
+    return text if len(text) <= limit else text[:limit] + f"…(+{len(text) - limit} chars)"
+
 #: 参与 ruff 分析的扩展名；其余交给 semgrep 兜底。
 _RUFF_EXTS = frozenset({"py", "pyi"})
 #: eslint 目标扩展名（本轮未装 node 链路，装没装都降级处理）。
 _ESLINT_EXTS = frozenset({"js", "jsx", "ts", "tsx"})
+#: 内置本地 semgrep 规则目录（离线，无需拉云仓库）。随 wheel 打包（pyproject force-include）。
+_BUNDLED_RULES_DIR = Path(__file__).resolve().parent / "semgrep_rules"
 
 
 @dataclass
 class RunResult:
-    """一次工具调用的产物：退出码 + stdout 文本（ruff 有 finding 时退出码为 1 但 stdout 仍合法 JSON）。"""  # noqa: E501
+    """一次工具调用的产物：退出码 + stdout 文本（ruff 有 finding 时退出码为 1 但 stdout 仍合法 JSON）。
+
+    `stderr` 供失败排查（如 semgrep 规则读取错误会写到 stderr），默认空串，不影响既有调用方。
+    """  # noqa: E501
 
     stdout: str
     exit_code: int
+    stderr: str = ""
+
+
+@dataclass
+class _SemgrepRun:
+    """一次 semgrep 调用结果：findings + exit_ok（exit=0 视为装载成功）。
+
+    exit_ok=False 表示该规则源没能成功装载（联网源=拉取失败），供上层决定兜底；
+    但 findings 仍可能非空——semgrep 出错时往往也把已解析的结果打在 stdout 上。
+    """
+
+    findings: list[Finding]
+    exit_ok: bool
 
 
 class StaticRunner(Protocol):
@@ -50,16 +83,25 @@ class StaticRunner(Protocol):
 
 
 class SubprocessRunner:
-    """默认实现：用 asyncio.create_subprocess_exec 调用系统里的 ruff/semgrep。"""
+    """默认实现：用 asyncio.create_subprocess_exec 调用系统里的 ruff/semgrep。
+
+    semgrep 默认上报匿名用量（`SEMGREP_SEND_METRICS`）。审查 worker 应把这类心跳关掉，
+    让默认 registry-first 只产生「拉规则」这一次必要请求；这里在子进程 env 里显式关掉。
+    """
 
     async def run(self, tool: str, args: list[str], cwd: Path) -> RunResult:
-        proc = await asyncio_create_subprocess(tool, args, cwd)
-        stdout, _stderr = await proc.communicate()
-        return RunResult(stdout.decode("utf-8", errors="replace"), proc.returncode or 0)
+        env = {**os.environ, "SEMGREP_SEND_METRICS": "off"}
+        proc = await asyncio_create_subprocess(tool, args, cwd, env=env)
+        stdout, stderr = await proc.communicate()
+        return RunResult(
+            stdout.decode("utf-8", errors="replace"),
+            proc.returncode or 0,
+            stderr=stderr.decode("utf-8", errors="replace"),
+        )
 
 
 async def asyncio_create_subprocess(
-    tool: str, args: list[str], cwd: Path
+    tool: str, args: list[str], cwd: Path, env: dict[str, str] | None = None
 ) -> asyncio.subprocess.Process:
     """subprocess 封装：独立函数便于离线测试替换（避免直接 import asyncio.subprocess）。"""
     return await asyncio.create_subprocess_exec(
@@ -67,6 +109,7 @@ async def asyncio_create_subprocess(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
+        env=env,
     )
 
 
@@ -261,11 +304,19 @@ class StaticAnalyzer:
         runner: StaticRunner | None = None,
         workspace: Path | None = None,
         enabled: bool = True,
+        semgrep_rules: Path | None = None,
     ) -> None:
         self.runner = runner or SubprocessRunner()
         self._workspace = workspace
         self._own_workspace = workspace is None
         self.enabled = enabled
+        # 规则源语义：
+        #   - semgrep_rules 为 None（CR_SEMGREP_RULES 未配）→ **默认 registry-first**：
+        #     先试 `p/ci`（云规则集，覆盖广，联网拉取一次），失败自动降级内置离线包
+        #     （`_BUNDLED_RULES_DIR`），保证无网/内网照常出结果。
+        #   - 显式传入本地目录 → 直接用它（完全离线，不碰 registry；用户自决）。
+        # 保留原始值（不 resolve 成 bundled），靠 `is None` 区分两条路径。
+        self._semgrep_rules = semgrep_rules
 
     async def analyze(self, diffs: list[FileDiff]) -> list[Finding]:
         """对变更文件跑静态分析，返回归一化 findings；任何失败降级为空。"""
@@ -306,13 +357,45 @@ class StaticAnalyzer:
         return findings
 
     async def _run_semgrep(self, root: Path) -> list[Finding]:
+        """semgrep：默认 registry-first，失败降级内置本地包；显式本地目录则直接用它。"""
+        # 未显式配规则目录 → 先试 `p/ci`（云集，联网拉一次，覆盖最广）；失败再兜底内置离线包。
+        primary = (
+            str(self._semgrep_rules.resolve())
+            if self._semgrep_rules is not None else "p/ci"
+        )
+        first = await self._run_semgrep_once(primary, root)
+        if first.exit_ok:
+            logger.info("静态分析 semgrep：%d 条", len(first.findings))
+            return first.findings
+
+        bundled = str(_BUNDLED_RULES_DIR.resolve())
+        if primary != bundled:  # 主源（registry 或用户目录）失败 → 内置本地包兜底，保证离线可用
+            logger.warning("静态分析：semgrep 主规则源(%s)失败，降级为内置本地规则", primary)
+            fallback = await self._run_semgrep_once(bundled, root)
+            logger.info("静态分析 semgrep（本地兜底）：%d 条", len(fallback.findings))
+            return fallback.findings
+        return first.findings  # 主源本就是内置且失败（未装/损坏）→ 直接返回
+
+    async def _run_semgrep_once(self, config: str, root: Path) -> _SemgrepRun:
+        """按给定 `--config` 跑一次 semgrep；返回 findings + exit_ok（装载是否成功）。
+
+        semgrep 命中规则时正常返回 0；非零退出只代表**套路失败**（规则读取失败、规则自身
+        语法错误、联网源则是**拉取失败**）。记 warning 但**不阻断**，仍尽力解析 stdout 里
+        已有的结果。二进制缺失（OSError）等同失败，由调用方决定兜底。
+        """
         try:
             res = await self.runner.run(
-                "semgrep", ["--config", "p/ci", "--json", "--strict", "."], cwd=root
+                "semgrep",
+                ["--config", config, "--json", "--disable-version-check", "."],
+                cwd=root,
             )
         except OSError:
             logger.warning("静态分析：semgrep 未安装，跳过（降级）")
-            return []
-        findings = _parse_semgrep(res.stdout)
-        logger.info("静态分析 semgrep：%d 条", len(findings))
-        return findings
+            return _SemgrepRun([], exit_ok=False)
+        if res.exit_code != 0:
+            detail = res.stderr.strip() or res.stdout.strip()
+            logger.warning(
+                "静态分析：semgrep 规则源 %s 装载失败（exit=%s，按降级处理）：%s",
+                config, res.exit_code, _snippet(detail),
+            )
+        return _SemgrepRun(_parse_semgrep(res.stdout), exit_ok=res.exit_code == 0)
