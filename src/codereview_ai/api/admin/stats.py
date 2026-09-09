@@ -17,7 +17,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from codereview_ai.api.deps import get_current_user, get_db
-from codereview_ai.storage.models import ModelUsage, ReviewFinding, ReviewTask
+from codereview_ai.storage.models import (
+    ModelUsage,
+    ReviewConversation,
+    ReviewFinding,
+    ReviewTask,
+)
 
 router = APIRouter(prefix="/stats", dependencies=[Depends(get_current_user)])
 
@@ -38,6 +43,20 @@ class ModelUsageItem(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    cost: float  # 该模型累计成本（ModelUsage.cost 求和）
+
+
+class DailyCostItem(BaseModel):
+    """近 14 天每日成本（服务端补零，缺成本日填 0.0）。"""
+    day: str  # YYYY-MM-DD
+    cost: float
+
+
+class DailyDurationItem(BaseModel):
+    """近 14 天单任务平均耗时（按完成日分桶；无任务日 avg_seconds=0 且 count=0）。"""
+    day: str  # YYYY-MM-DD
+    count: int  # 该日完成、时间戳齐全的任务数
+    avg_seconds: float  # started→finished 平均运行秒（不含排队）
 
 
 class AgentScatterItem(BaseModel):
@@ -62,6 +81,9 @@ class StatsOut(BaseModel):
     findings_by_category: list[CountItem]
     reviews_by_day: list[ReviewsByDay]
     model_usage: list[ModelUsageItem]
+    cost_by_day: list[DailyCostItem]  # 近 14 天每日成本趋势
+    duration_by_day: list[DailyDurationItem]  # 近 14 天单任务平均耗时
+    phase_dist: list[CountItem]  # agent 阶段管线调用次数分布
     provider_split: list[CountItem]
     tasks_by_mode: list[CountItem]  # exec_mode 分布（agent / diff）
     agent_task_count: int  # agent 实际执行的任务数
@@ -69,41 +91,73 @@ class StatsOut(BaseModel):
     agent_scatter: list[AgentScatterItem]
 
 
-async def _counts(session: AsyncSession, col: Any) -> list[CountItem]:
-    """`GROUP BY col` → 归一化的 (key, count) 列表，计数为 0 的组不出现。"""
-    rows = (await session.execute(
-        select(col, func.count().label("n")).group_by(col)
-    )).all()
+async def _counts(session: AsyncSession, col: Any, *wheres: Any) -> list[CountItem]:
+    """`GROUP BY col` → 归一化的 (key, count) 列表，计数为 0 的组不出现。
+
+    `wheres` 为可选过滤条件（None 项忽略），供 mode 分组复用。
+    """
+    stmt = select(col, func.count().label("n"))
+    for w in wheres:
+        if w is not None:
+            stmt = stmt.where(w)
+    rows = (await session.execute(stmt.group_by(col))).all()
     return [CountItem(key=str(row[0] or "未知"), count=int(row[1])) for row in rows]
 
 
-async def aggregate_stats(session: AsyncSession) -> StatsOut:
-    """在给定会话上聚合全部看板指标（路由与日报共用，M5.7 复用）。"""
-    total_tasks = int((await session.execute(
-        select(func.count()).select_from(ReviewTask)
-    )).scalar_one() or 0)
+def _mode_clause(mode: str) -> tuple[Any | None, Any | None]:
+    """返回（ReviewTask.exec_mode 过滤, ReviewTask.id 子查询）以按模式分组通用图。
+
+    `mode='all'` 时两者皆 None（不追加过滤，保持全量）；`agentic`/`diff` 时分别覆盖
+    ReviewTask 上直接可过滤的聚合，以及需经 task 关联的 ReviewFinding / ModelUsage。
+    """
+    if mode not in ("agentic", "diff"):
+        return None, None
+    clause = ReviewTask.exec_mode == mode
+    return clause, select(ReviewTask.id).where(clause)
+
+
+async def aggregate_stats(session: AsyncSession, mode: str = "all") -> StatsOut:
+    """聚合全部看板指标；`mode` 按 exec_mode 过滤通用图（all/agentic/diff）。
+
+    agent 专属度量（散点/平均轮数/阶段管线/模式饼）不受 `mode` 影响：散点与管线
+    本就只含 agent，模式饼是拆分本身；`mode` 只作用于其余通用图+KPI 计数。
+    """
+    task_clause, task_subq = _mode_clause(mode)
+
+    def finding_where(*cond: Any) -> tuple[Any, ...]:
+        """组装 ReviewFinding 过滤：恒追加 exec_mode（经 task 子查询）。"""
+        return cond + ((ReviewFinding.task_id.in_(task_subq),) if task_subq is not None else ())
+
+    base_task = select(func.count()).select_from(ReviewTask)
+    if task_clause is not None:
+        base_task = base_task.where(task_clause)
+    total_tasks = int((await session.execute(base_task)).scalar_one() or 0)
+
     total_findings = int((await session.execute(
-        select(func.count()).select_from(ReviewFinding)
+        select(func.count()).select_from(ReviewFinding).where(*finding_where())
     )).scalar_one() or 0)
 
     open_critical = int((await session.execute(
         select(func.count()).select_from(ReviewFinding).where(
-            ReviewFinding.severity == "critical", ReviewFinding.status == "active"
+            *finding_where(ReviewFinding.severity == "critical", ReviewFinding.status == "active")
         )
     )).scalar_one() or 0)
     open_high = int((await session.execute(
         select(func.count()).select_from(ReviewFinding).where(
-            ReviewFinding.severity == "high", ReviewFinding.status == "active"
+            *finding_where(ReviewFinding.severity == "high", ReviewFinding.status == "active")
         )
     )).scalar_one() or 0)
 
-    tasks_by_state = await _counts(session, ReviewTask.state)
-    findings_by_severity = await _counts(session, ReviewFinding.severity)
-    findings_by_category = await _counts(session, ReviewFinding.category)
-    provider_split = await _counts(session, ReviewTask.provider)
-    tasks_by_mode = await _counts(session, ReviewTask.exec_mode)
+    tasks_by_state = await _counts(session, ReviewTask.state, task_clause)
+    findings_by_severity = await _counts(session, ReviewFinding.severity, *finding_where())
+    findings_by_category = await _counts(session, ReviewFinding.category, *finding_where())
+    provider_split = await _counts(session, ReviewTask.provider, task_clause)
+    tasks_by_mode = await _counts(session, ReviewTask.exec_mode)  # 拆分本身恒全量
 
-    # agent 实际执行任务数 + 平均对话轮数（KPI 用；exec_mode 由 worker 落真实路径）
+    # Agent 阶段管线分布：diff 无对话，天然只含 agent，不经 mode 开关过滤
+    phase_dist = await _counts(session, ReviewConversation.phase)
+
+    # agent 实际执行任务数 + 平均对话轮数（KPI 用；恒 agent）
     agent_row = (await session.execute(
         select(
             func.count(),
@@ -113,8 +167,7 @@ async def aggregate_stats(session: AsyncSession) -> StatsOut:
     agent_task_count = int(agent_row[0] or 0)
     avg_chat_rounds = round(float(agent_row[1] or 0), 2)
 
-    # 复杂度×成本散点：最近 200 条完成、时间戳齐全的 agent 审查
-    #（duration_s 取 started→finished 纯运行时长，不含排队；仅 agent 模式，diff 无工具轮数）。
+    # 复杂度×成本散点：恒 agent（完成、时间戳齐全；duration 不含排队）
     scatter_rows = (await session.execute(
         select(
             ReviewTask.diff_lines, ReviewTask.started_at, ReviewTask.finished_at,
@@ -140,12 +193,14 @@ async def aggregate_stats(session: AsyncSession) -> StatsOut:
         if r[1] is not None and r[2] is not None and (r[2] - r[1]).total_seconds() >= 0
     ]
 
-    # 近 14 天每日审查量（服务端补零，缺失日期填 0）
+    # 近 14 天每日审查量（服务端补零，缺失日期填 0；mode 可过滤）
     today = datetime.now(UTC).date()
     start_day = today - timedelta(days=13)
+    by_day_stmt = select(func.date(ReviewTask.queued_at), func.count().label("n"))
+    if task_clause is not None:
+        by_day_stmt = by_day_stmt.where(task_clause)
     by_day_rows = (await session.execute(
-        select(func.date(ReviewTask.queued_at), func.count().label("n"))
-        .where(ReviewTask.queued_at >= start_day)
+        by_day_stmt.where(ReviewTask.queued_at >= start_day)
         .group_by(func.date(ReviewTask.queued_at))
     )).all()
     by_day = {str(r[0]): int(r[1]) for r in by_day_rows if r[0] is not None}
@@ -155,20 +210,71 @@ async def aggregate_stats(session: AsyncSession) -> StatsOut:
         for i in range(14)
     ]
 
-    usage_rows = (await session.execute(
-        select(
-            ModelUsage.model,
-            func.count().label("reqs"),
-            func.coalesce(func.sum(ModelUsage.prompt_tokens), 0),
-            func.coalesce(func.sum(ModelUsage.completion_tokens), 0),
-            func.coalesce(func.sum(ModelUsage.total_tokens), 0),
-        ).group_by(ModelUsage.model)
+    # 近 14 天单任务平均耗时（按完成日分桶；mode 可过滤）
+    dur_stmt = select(ReviewTask.started_at, ReviewTask.finished_at)
+    if task_clause is not None:
+        dur_stmt = dur_stmt.where(task_clause)
+    dur_rows = (await session.execute(
+        dur_stmt.where(
+            ReviewTask.state == "completed",
+            ReviewTask.started_at.isnot(None),
+            ReviewTask.finished_at.isnot(None),
+            ReviewTask.finished_at >= start_day,
+        )
     )).all()
+    dur_by_day: dict[str, list[float]] = {}
+    for starts, fin in dur_rows:
+        if starts is None or fin is None:
+            continue
+        secs = (fin - starts).total_seconds()
+        if secs < 0:
+            continue
+        # DB 存 UTC、SQLite 读回是 naive（本地墙钟即 UTC）→ 按 UTC 取完成日分桶
+        finish = fin if fin.tzinfo is not None else fin.replace(tzinfo=UTC)
+        dur_by_day.setdefault(finish.date().isoformat(), []).append(secs)
+    duration_by_day: list[DailyDurationItem] = []
+    for i in range(14):
+        day = str(start_day + timedelta(days=i))
+        arr = dur_by_day.get(day, [])
+        duration_by_day.append(DailyDurationItem(
+            day=day, count=len(arr),
+            avg_seconds=round(sum(arr) / len(arr), 1) if arr else 0.0,
+        ))
+
+    # 模型 token 用量（mode 经 task 关联过滤）
+    usage_stmt = select(
+        ModelUsage.model,
+        func.count().label("reqs"),
+        func.coalesce(func.sum(ModelUsage.prompt_tokens), 0),
+        func.coalesce(func.sum(ModelUsage.completion_tokens), 0),
+        func.coalesce(func.sum(ModelUsage.total_tokens), 0),
+        func.coalesce(func.sum(ModelUsage.cost), 0),
+    )
+    if task_subq is not None:
+        usage_stmt = usage_stmt.where(ModelUsage.task_id.in_(task_subq))
+    usage_rows = (await session.execute(usage_stmt.group_by(ModelUsage.model))).all()
     model_usage = [
         ModelUsageItem(model=str(r[0] or "未知"), requests=int(r[1]),
                        prompt_tokens=int(r[2]), completion_tokens=int(r[3]),
-                       total_tokens=int(r[4]))
+                       total_tokens=int(r[4]), cost=round(float(r[5] or 0), 4))
         for r in usage_rows
+    ]
+
+    # 近 14 天每日成本趋势（服务端补零；mode 经 task 关联过滤）
+    cost_stmt = select(
+        func.date(ModelUsage.ts),
+        func.coalesce(func.sum(ModelUsage.cost), 0),
+    )
+    if task_subq is not None:
+        cost_stmt = cost_stmt.where(ModelUsage.task_id.in_(task_subq))
+    cost_rows = (await session.execute(
+        cost_stmt.where(ModelUsage.ts >= start_day).group_by(func.date(ModelUsage.ts))
+    )).all()
+    cost_by_day_map = {str(r[0]): float(r[1]) for r in cost_rows if r[0] is not None}
+    cost_by_day = [
+        DailyCostItem(day=str(start_day + timedelta(days=i)),
+                      cost=round(cost_by_day_map.get(str(start_day + timedelta(days=i)), 0.0), 4))
+        for i in range(14)
     ]
 
     return StatsOut(
@@ -176,13 +282,16 @@ async def aggregate_stats(session: AsyncSession) -> StatsOut:
         open_critical=open_critical, open_high=open_high,
         tasks_by_state=tasks_by_state, findings_by_severity=findings_by_severity,
         findings_by_category=findings_by_category, reviews_by_day=reviews_by_day,
-        model_usage=model_usage, provider_split=provider_split,
+        model_usage=model_usage, cost_by_day=cost_by_day, duration_by_day=duration_by_day,
+        phase_dist=phase_dist, provider_split=provider_split,
         tasks_by_mode=tasks_by_mode, agent_task_count=agent_task_count,
         avg_chat_rounds=avg_chat_rounds, agent_scatter=agent_scatter,
     )
 
 
 @router.get("", response_model=StatsOut)
-async def get_stats(session: AsyncSession = Depends(get_db)) -> StatsOut:
-    """聚合全部看板指标，一次调用出全量（前端只发一次请求）。"""
-    return await aggregate_stats(session)
+async def get_stats(mode: str = "all", session: AsyncSession = Depends(get_db)) -> StatsOut:
+    """聚合全部看板指标；`mode` 按 exec_mode 过滤通用图（all/agentic/diff，非法归 all）。"""
+    if mode not in ("all", "agentic", "diff"):
+        mode = "all"
+    return await aggregate_stats(session, mode=mode)
