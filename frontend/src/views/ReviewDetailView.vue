@@ -22,6 +22,7 @@
           <el-tag :type="stateTagType(detail.state)">{{ stateLabel(detail.state) }}</el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="评分">{{ detail.score_total }}</el-descriptions-item>
+        <el-descriptions-item label="变更行数">{{ detail.diff_lines }} 行</el-descriptions-item>
         <el-descriptions-item label="提交 SHA">
           <code class="sha">{{ detail.head_sha }}</code>
         </el-descriptions-item>
@@ -213,6 +214,7 @@ function buildMarkdown(d: ReviewDetail): string {
   if (d.head_sha) L.push(`- 提交 SHA：${d.head_sha}`)
   if (d.base_sha) L.push(`- 比对基线：${d.base_sha}`)
   L.push(`- 评分：${d.score_total ?? '—'}`)
+  if (d.diff_lines != null) L.push(`- 变更行数：${d.diff_lines} 行`)
   if (d.web_url) L.push(`- 直达链接：${d.web_url}`)
   L.push('')
 

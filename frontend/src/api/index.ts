@@ -129,6 +129,7 @@ export interface ReviewItem {
   queued_at: string | null
   finished_at: string | null
   writeback_failed: boolean | null
+  diff_lines: number
 }
 
 export interface ReviewDetail extends ReviewItem {
