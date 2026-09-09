@@ -83,14 +83,21 @@ defineEmits<{
 
 const timeLabel = computed(() => (props.timeField === 'finished_at' ? '完成时间' : '排队时间'))
 
-// 该行是否可重试/补审：failed 可重试；push 轨门控/配置类 skipped 可补审。
-// 删分支（无 head 可审）禁止。旧数据 skip_reason 为空时保守依赖 error 文本。
+// 该行是否可重试/补审：failed 可重试；skipped 门控/配置类可补审（绕过门控）。
+// 与后端 _retryable()（api/admin/tasks.py）完全一致：push 轨 push_disabled/branch_mismatch；
+// mr 轨 mr_disabled（MR 无分支规则）；branch_deleted 无 head 可审禁止。
+const RETRYABLE_PUSH_REASONS = ['push_disabled', 'branch_mismatch']
+const RETRYABLE_MR_REASONS = ['mr_disabled']
+
 function isRetryable(row: ReviewItem): boolean {
   if (row.state === 'failed') return true
   if (row.state !== 'skipped') return false
-  if (row.event_type !== 'push') return false
-  if (row.skip_reason === 'branch_deleted') return false
-  if (row.skip_reason) return true
-  return !(row.error || '').includes('删除分支')
+  const reasons =
+    row.event_type === 'push'
+      ? RETRYABLE_PUSH_REASONS
+      : row.event_type === 'mr'
+        ? RETRYABLE_MR_REASONS
+        : []
+  return reasons.includes(row.skip_reason || '')
 }
 </script>
