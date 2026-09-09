@@ -286,3 +286,39 @@ def test_wrap_fallback_multiple_wraps_in_fallback():
     fb = wrap_fallback([make("openai/a"), make("openai/b")])
     assert isinstance(fb, FallbackLLMGateway)
     assert fb.model == "openai/a"
+
+
+async def test_gateway_complete_routes_usage_to_sink():
+    """litellm 侧采集到 usage 时，经可选 `usage_sink` 回调出去（diff 落 ModelUsage 用）。"""
+    captured: list[dict] = []
+
+    async def backend(messages, usage_holder=None):
+        usage_holder["usage"] = {
+            "model": "deepseek/deepseek-v4-flash",
+            "prompt_tokens": 100,
+            "completion_tokens": 25,
+            "total_tokens": 125,
+        }
+        return "ok"
+
+    async def sink(usage):
+        captured.append(usage)
+
+    gw = LLMGateway(model="deepseek/deepseek-v4-flash", backend=backend)
+    text = await gw.complete([{"role": "user", "content": "hi"}], usage_sink=sink)
+    assert text == "ok"
+    assert captured == [{
+        "model": "deepseek/deepseek-v4-flash",
+        "prompt_tokens": 100,
+        "completion_tokens": 25,
+        "total_tokens": 125,
+    }]
+
+
+async def test_gateway_complete_without_usage_sink_still_ok():
+    """`(messages)`-only fake backend／不带 sink 时行为与原来一致：不报错。"""
+    async def backend(messages):
+        return "ok"
+
+    gw = LLMGateway(model="m", backend=backend)
+    assert await gw.complete([{"role": "user", "content": "hi"}]) == "ok"

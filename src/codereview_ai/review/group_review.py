@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from codereview_ai.domain.models import FileDiff, Finding, PullRequest, ReviewResult
 from codereview_ai.review.grouping import SemanticGrouper
@@ -71,18 +73,23 @@ async def review_in_groups(
     commits_text: str,
     diffs: list[FileDiff],
     static_findings: list[Finding] | None = None,
+    usage_sink: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> ReviewResult:
     """把 diff 分组后每组独立审查，合并为整体结果；小变更整组一次。
 
     `grouper` 已包装好降级（LLM 失败 → per-file，见 grouping.py），主链可放心使用。
     `static_findings`（DESIGN §11）：每个分组只把**本组文件**的静态提示注入该组 prompt；
     最终把全部静态 findings 硬写入合并结果。
+    `usage_sink`：透传给每组 `reviewer.review()`，diff 路径据此落 `ModelUsage`。
     """
     static = static_findings or []
+    # fake reviewer 未必收 usage_sink → 仅在显式给定时才转发
+    sink_kwargs = {"usage_sink": usage_sink} if usage_sink is not None else {}
     if grouper is None or len(diffs) < GROUPING_MIN_FILES:
         static_text = render_static_findings(static, {d.new_path for d in diffs})
         result = await reviewer.review(
-            pr=pr, commits_text=commits_text, diffs=diffs, **_static_kwargs(static_text)
+            pr=pr, commits_text=commits_text, diffs=diffs,
+            **_static_kwargs(static_text), **sink_kwargs,
         )
         return _attach_static(result, static)
 
@@ -91,6 +98,7 @@ async def review_in_groups(
         reviewer.review(
             pr=pr, commits_text=commits_text, diffs=g,
             **_static_kwargs(render_static_findings(static, {d.new_path for d in g})),
+            **sink_kwargs,
         )
         for g in groups
     ))

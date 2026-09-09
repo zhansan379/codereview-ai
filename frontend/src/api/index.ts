@@ -507,6 +507,17 @@ export interface AgentScatterItem {
   chat_rounds: number
   tool_calls: number
 }
+export interface PhaseBoxItem {
+  key: string
+  task_count: number
+  min: number
+  q1: number
+  median: number
+  q3: number
+  max: number
+  mean: number
+  mode: number
+}
 export interface DashboardStats {
   total_tasks: number
   total_findings: number
@@ -519,7 +530,7 @@ export interface DashboardStats {
   model_usage: ModelUsageItem[]
   cost_by_day: DailyCostItem[]
   duration_by_day: DailyDurationItem[]
-  phase_dist: CountItem[]
+  phase_box: PhaseBoxItem[]
   provider_split: CountItem[]
   tasks_by_mode: CountItem[]
   agent_task_count: number

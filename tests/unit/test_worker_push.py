@@ -93,7 +93,7 @@ class _FakeReviewer:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def review(self, *, pr, commits_text, diffs):
+    async def review(self, *, pr, commits_text, diffs, usage_sink=None):
         self.calls += 1
         result = ReviewResult(summary="push 审查完成", scores=ReviewScores(
             correctness=30, security=22, practices=10, performance=4, commit_quality=3))

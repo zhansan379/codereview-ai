@@ -79,7 +79,7 @@ class _FakeReviewer:
         self.forge = forge
         self.calls: list[dict] = []
 
-    async def review(self, *, pr, commits_text, diffs):
+    async def review(self, *, pr, commits_text, diffs, usage_sink=None):
         from codereview_ai.domain.models import (
             Category,
             Finding,
@@ -332,7 +332,7 @@ async def test_process_incremental_dedups_previous_finding():
 def _diff(old: str = "", new: str = ""):
     from codereview_ai.domain.models import ChangeType, FileDiff
 
-    return FileDiff(old_path=old, new_path=new or old, diff="---\n+++\n@@ -1 +1 @@\n",
+    return FileDiff(old_path=old, new_path=new or old, diff="---\n+++\n@@ -1 +1 @@\n+changed\n",
                     additions=1, deletions=0, change_type=ChangeType.MODIFIED)
 
 
@@ -414,7 +414,7 @@ class _RecordingReviewer:
     def __init__(self) -> None:
         self.received: list[list[str]] = []
 
-    async def review(self, *, pr, commits_text, diffs):
+    async def review(self, *, pr, commits_text, diffs, usage_sink=None):
         self.received.append([d.new_path or d.old_path for d in diffs])
         from codereview_ai.domain.models import ReviewResult, ReviewScores
 
@@ -452,6 +452,29 @@ async def test_process_all_filtered_skips_llm():
 
     await process_raw_event(forge, reviewer, _mr_payload(),  # type: ignore[arg-type]
                             project_config_factory=factory)
+    assert reviewer.received == []  # 不调 LLM
+    assert forge.posted_summary == []  # 不回写
+
+
+class _EmptyDiffForge(_MultiForge):
+    """返回 diff 列表非空、但实变行数为 0 的文件（只有 hunk 头，无 +/- 变更行）。"""
+
+    async def fetch_files(self, pr):
+        self.fetch_called += 1
+        from codereview_ai.domain.models import ChangeType, FileDiff
+        return [FileDiff(old_path="a.py", new_path="a.py",
+                         diff="---\n+++\n@@ -1 +1 @@\n",
+                         additions=0, deletions=0, change_type=ChangeType.MODIFIED)]
+
+
+async def test_process_zero_change_lines_skips_llm():
+    """diff 列表非空但实变行数为 0（空/重命名）→ 不调 LLM。
+
+    此前 `if not diffs` 放过此档，空输入把 LLM 逼出空返回落 failed（#23 即此因）。
+    """
+    forge = _EmptyDiffForge([("a.py", "a.py")])
+    reviewer = _RecordingReviewer()
+    await process_raw_event(forge, reviewer, _mr_payload())  # type: ignore[arg-type]
     assert reviewer.received == []  # 不调 LLM
     assert forge.posted_summary == []  # 不回写
 
@@ -551,7 +574,7 @@ class _TotalReviewer(_RecordingReviewer):
         super().__init__()
         self._total = total
 
-    async def review(self, *, pr, commits_text, diffs):
+    async def review(self, *, pr, commits_text, diffs, usage_sink=None):
         from codereview_ai.domain.models import ReviewResult, ReviewScores
 
         self.received.append([d.new_path or d.old_path for d in diffs])

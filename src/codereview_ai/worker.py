@@ -28,7 +28,7 @@ from codereview_ai.forges.base import ForgeAdapter
 from codereview_ai.logging import TRACE_ID
 from codereview_ai.notifiers.dispatch import NotifierDispatcher
 from codereview_ai.queue.base import TaskMeta, TaskQueue
-from codereview_ai.review.agentic.capture import ConversationRecorder, conversation_capture
+from codereview_ai.review.agentic.capture import ConversationRecorder, conversation_capture, diff_usage_sink
 from codereview_ai.review.agentic.llmloop import AgentConfig, AgentLLM
 from codereview_ai.review.agentic.sandbox import SandboxDisabled, SandboxRuntime, run_agentic_review
 from codereview_ai.review.group_review import review_in_groups
@@ -170,6 +170,7 @@ async def _review_agent_or_diff(
     agent_runtime: SandboxRuntime | None,
     agent_llm_factory: Callable[[], AgentLLM] | None,
     agent_config: AgentConfig | None = None,
+    usage_sink: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> tuple[ReviewResult, str]:
     """按 `strategy` 调度审查：`agentic` 走沙箱，否则普通 diff 分组审查。
 
@@ -197,7 +198,7 @@ async def _review_agent_or_diff(
                 return (
                     await review_in_groups(
                         reviewer, grouper, pr=pr, commits_text=commits_text, diffs=diffs,
-                        static_findings=static_findings,
+                        static_findings=static_findings, usage_sink=usage_sink,
                     ),
                     "diff",
                 )
@@ -206,7 +207,7 @@ async def _review_agent_or_diff(
             logger.warning("agentic 不可用，降级为普通 diff 审查：%s", exc)
     diff_result = await review_in_groups(
         reviewer, grouper, pr=pr, commits_text=commits_text, diffs=diffs,
-        static_findings=static_findings,
+        static_findings=static_findings, usage_sink=usage_sink,
     )
     return diff_result, "diff"
 
@@ -541,11 +542,12 @@ async def _do_review_pull_request(
             last_covered = await review_repo.last_covered(
                 pr.provider, pr.repo_id, pr.pr_number)
             diffs = prune_unchanged(diffs, last_covered)
-        if not diffs:
-            # 扩展名过滤/全部未变更 → 不调 LLM（省 token）；标 completed-empty
+        if not diffs or _count_diff_lines(diffs) == 0:
+            # 无待审文件 / 实变行数为 0（空 diff、重命名、无 +/- 变更）→ 不调 LLM
+            #（省 token、避免空输入把 LLM 逼出空返回再落 failed）；标 completed-empty
             if task_id is not None:
                 await review_repo.mark_state(task_id, state="completed",
-                                             summary_md="_无待审文件（扩展名过滤或全部未变更）_",
+                                             summary_md="_无待审文件（扩展名过滤、全部未变更或空 diff）_",
                                              score_total=0)
             return "empty"
         # 项目级 review_strategy 覆盖全局默认：页面/每个项目选的 agentic/diff 真正生效
@@ -555,11 +557,14 @@ async def _do_review_pull_request(
         static_findings = await _run_static(static_analyzer, diffs)
         # 审查的 LLM 调用经 contextvar 采集进 review_conversation（adapter 读到 recorder 即采）
         async with conversation_capture(recorder):
+            # diff 模式不走对话采集 → 通道 gateway 回调落 ModelUsage，看板 Token/成本能按模式拆分
+            usage_sink = diff_usage_sink(engine, task_id) \
+                if engine is not None and task_id is not None else None
             result, exec_mode = await _review_agent_or_diff(
                 reviewer, grouper, pr=refreshed, commits_text=refreshed.title, diffs=diffs,
                 static_findings=static_findings, strategy=review_strategy,
                 agent_runtime=agent_runtime, agent_llm_factory=agent_llm_factory,
-                agent_config=agent_config,
+                agent_config=agent_config, usage_sink=usage_sink,
             )
 
         if incremental:
@@ -730,7 +735,7 @@ async def process_raw_event(
             review_strategy=review_strategy, agent_runtime=agent_runtime,
             agent_llm_factory=agent_llm_factory, agent_config=agent_config,
             project_config_factory=project_config_factory, setting_repo=setting_repo,
-            raw_payload=raw.decode("utf-8", "replace"),
+            raw_payload=raw.decode("utf-8", "replace"), engine=engine,
         )
         return
     if not forge.should_review(_event_action(data)):
@@ -769,6 +774,7 @@ async def _review_push_event(
     project_config_factory: ProjectConfigFactory | None = None,
     setting_repo: SettingRepository | None = None,
     raw_payload: str = "",
+    engine: AsyncEngine | None = None,
 ) -> None:
     """push 轨审查（DESIGN §7.7）：幂等落审计行 → 门控 → 差量三分支 → 单条总结回写。
 
@@ -855,19 +861,21 @@ async def _review_push_event(
         # 项目级文件扩展名过滤（DESIGN 文件扩展名过滤），push 轨同样生效（cfg 已在开头取）
         if cfg and cfg.file_extensions:
             diffs = apply_extension_filter(diffs, cfg.file_extensions)
-        if not diffs:
-            # 全部被扩展名滤掉：不调 LLM，审计行标 completed-empty
+        if not diffs or _count_diff_lines(diffs) == 0:
+            # 无待审文件 / 实变行数为 0（空 diff/重命名）→ 不调 LLM，审计行标 completed-empty
             if review_repo is not None:
                 await review_repo.mark_state(audit_id, state="completed",
-                                             summary_md="_扩展名过滤后无待审文件_", score_total=0)
+                                             summary_md="_扩展名过滤或无待审变更_", score_total=0)
             return
         pr = _push_as_pr(ev)
         static_findings = await _run_static(static_analyzer, diffs)
+        usage_sink = diff_usage_sink(engine, audit_id) \
+            if engine is not None and audit_id else None
         result, exec_mode = await _review_agent_or_diff(
             reviewer, grouper, pr=pr, commits_text=_commits_text(ev), diffs=diffs,
             static_findings=static_findings, strategy=review_strategy,
             agent_runtime=agent_runtime, agent_llm_factory=agent_llm_factory,
-            agent_config=agent_config,
+            agent_config=agent_config, usage_sink=usage_sink,
         )
         summary = build_push_summary(ev, result)
         await forge.post_commit_summary(ev, summary)  # 只一条总结评论，无行级（§7.7）

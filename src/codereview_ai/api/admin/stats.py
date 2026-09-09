@@ -8,6 +8,8 @@ provider 分流、汇总计数。`reviews_by_day` 服务端补零，前端直接
 
 from __future__ import annotations
 
+import statistics
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -71,6 +73,23 @@ class AgentScatterItem(BaseModel):
     tool_calls: int
 
 
+class PhaseBoxItem(BaseModel):
+    """Agent 某阶段单次审查（task）调用 LLM 次数的分布统计（箱线图一个箱体）。
+
+    每条对应一个 phase；`task_count` 是该阶段有调用的 task 数；min/q1/median/q3/max
+    供画箱须；mean 平均值、mode 众数（并列取最小）供散点标注。
+    """
+    key: str
+    task_count: int
+    min: int
+    q1: float
+    median: float
+    q3: float
+    max: int
+    mean: float
+    mode: int
+
+
 class StatsOut(BaseModel):
     total_tasks: int
     total_findings: int
@@ -83,7 +102,7 @@ class StatsOut(BaseModel):
     model_usage: list[ModelUsageItem]
     cost_by_day: list[DailyCostItem]  # 近 14 天每日成本趋势
     duration_by_day: list[DailyDurationItem]  # 近 14 天单任务平均耗时
-    phase_dist: list[CountItem]  # agent 阶段管线调用次数分布
+    phase_box: list[PhaseBoxItem]  # agent 各阶段单次审查调用次数分布（箱线图）
     provider_split: list[CountItem]
     tasks_by_mode: list[CountItem]  # exec_mode 分布（agent / diff）
     agent_task_count: int  # agent 实际执行的任务数
@@ -114,6 +133,47 @@ def _mode_clause(mode: str) -> tuple[Any | None, Any | None]:
         return None, None
     clause = ReviewTask.exec_mode == mode
     return clause, select(ReviewTask.id).where(clause)
+
+
+def _mode(vals: list[int]) -> int:
+    """众数：出现频率最高者；并列取最小值（确定性）。"""
+    freq = Counter(vals)
+    top = max(freq.values())
+    return min(v for v, n in freq.items() if n == top)
+
+
+async def phase_box_stats(session: AsyncSession) -> list[PhaseBoxItem]:
+    """Agent 各阶段单次审查调用次数分布（diff 无对话，天然只含 agent）。
+
+    按 `(task_id, phase)` 分组数 conversation 行数固着（一条 conversation = 一次
+    `llm.chat()`），再在每个 phase 内聚合 min/q1/median/q3/max/mean/mode。
+    """
+    rows = (await session.execute(
+        select(ReviewConversation.task_id, ReviewConversation.phase, func.count())
+        .group_by(ReviewConversation.task_id, ReviewConversation.phase)
+    )).all()
+    by_phase: dict[str, list[int]] = {}
+    for _tid, phase, n in rows:
+        by_phase.setdefault(str(phase or "未知"), []).append(int(n))
+
+    out: list[PhaseBoxItem] = []
+    for key, vals in by_phase.items():
+        if len(vals) >= 2:
+            q1, median, q3 = statistics.quantiles(vals, n=4)
+        else:
+            q1 = median = q3 = float(vals[0])  # 单值：箱体收成一条线
+        out.append(PhaseBoxItem(
+            key=key,
+            task_count=len(vals),
+            min=min(vals),
+            q1=q1,
+            median=median,
+            q3=q3,
+            max=max(vals),
+            mean=round(sum(vals) / len(vals), 2),
+            mode=_mode(vals),
+        ))
+    return out
 
 
 async def aggregate_stats(session: AsyncSession, mode: str = "all") -> StatsOut:
@@ -157,7 +217,7 @@ async def aggregate_stats(session: AsyncSession, mode: str = "all") -> StatsOut:
     )  # 拆分本身恒全量；排除未执行审查（NULL）
 
     # Agent 阶段管线分布：diff 无对话，天然只含 agent，不经 mode 开关过滤
-    phase_dist = await _counts(session, ReviewConversation.phase)
+    phase_box = await phase_box_stats(session)
 
     # agent 实际执行任务数 + 平均对话轮数（KPI 用；恒 agent）
     agent_row = (await session.execute(
@@ -285,7 +345,7 @@ async def aggregate_stats(session: AsyncSession, mode: str = "all") -> StatsOut:
         tasks_by_state=tasks_by_state, findings_by_severity=findings_by_severity,
         findings_by_category=findings_by_category, reviews_by_day=reviews_by_day,
         model_usage=model_usage, cost_by_day=cost_by_day, duration_by_day=duration_by_day,
-        phase_dist=phase_dist, provider_split=provider_split,
+        phase_box=phase_box, provider_split=provider_split,
         tasks_by_mode=tasks_by_mode, agent_task_count=agent_task_count,
         avg_chat_rounds=avg_chat_rounds, agent_scatter=agent_scatter,
     )
