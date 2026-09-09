@@ -242,6 +242,49 @@ export function runSchedule(id: number): Promise<any> {
   return client.post(`/schedules/${id}/run`).then((r) => r.data)
 }
 
+// ===== agent 本地克隆缓存（拉取缓存）=====
+export interface CloneCacheItem {
+  id: number
+  repo_key: string
+  provider: string
+  repo_full_name: string
+  url: string
+  local_path: string
+  head_sha: string
+  last_error: string
+  created_at: string
+  last_fetched_at: string
+}
+export interface CloneCacheSettings {
+  enabled: boolean
+  days: number
+}
+export interface CloneCacheList {
+  cache_root: string
+  enabled: boolean
+  days: number
+  pruner_running: boolean
+  items: CloneCacheItem[]
+}
+export function listCloneCaches(): Promise<CloneCacheList> {
+  return client.get('/agent/caches').then((r) => r.data)
+}
+export function deleteCloneCache(id: number): Promise<any> {
+  return client.delete(`/agent/caches/${id}`).then((r) => r.data)
+}
+export function getCloneCacheSettings(): Promise<CloneCacheSettings> {
+  return client.get('/agent/caches/settings').then((r) => r.data)
+}
+export function updateCloneCacheSettings(data: CloneCacheSettings): Promise<CloneCacheSettings> {
+  return client.put('/agent/caches/settings', data).then((r) => r.data)
+}
+export function pruneCloneCaches(): Promise<{ deleted: string[]; count: number }> {
+  return client.post('/agent/caches/prune').then((r) => r.data)
+}
+export function rebuildCloneCaches(): Promise<{ added: number; cache_root: string }> {
+  return client.post('/agent/caches/rebuild').then((r) => r.data)
+}
+
 // ===== 全局运行时设置（审查并发）=====
 export interface ConcurrencySetting {
   concurrency: number

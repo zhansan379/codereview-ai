@@ -309,3 +309,29 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(String(255), default="")
+
+
+class CloneCacheRepo(Base):
+    """agentic 审查的本地 bare-clone 缓存注册表（每仓库一行，记录最近拉取信息）。
+
+    由 `create_all` 自动建表。每行 = 一个被同步到 `cache_root/<slug>/` 的缓存仓库，
+    供前端「拉取缓存」页列出 / 单删，并由 `CloneCachePruner` 按清除策略自动清理
+    超期未拉取的记录（连同其 `.git` 目录）。同步成功经 `LocalCloneRuntime` 埋点
+    upsert（更新 head_sha / last_fetched_at）。
+    """
+
+    __tablename__ = "clone_cache_repo"
+    __table_args__ = (Index("uq_clone_cache_key", "repo_key", unique=True),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    repo_key: Mapped[str] = mapped_column(String(128))  # slugify_key(owner/name)：唯一的缓存目录名
+    provider: Mapped[str] = mapped_column(String(32))
+    repo_full_name: Mapped[str] = mapped_column(String(255), default="")
+    url: Mapped[str] = mapped_column(String(1024), default="")
+    local_path: Mapped[str] = mapped_column(String(1024), default="")
+    head_sha: Mapped[str] = mapped_column(String(64), default="")  # 最近一次同步的目标 head
+    last_error: Mapped[str] = mapped_column(String(255), default="")  # 上次同步失败信息（预留）
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    last_fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow
+    )

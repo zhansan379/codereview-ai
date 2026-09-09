@@ -169,6 +169,24 @@ class RepoCloner:
             self._rebuild(target, url=auth_url, ref=ref)
         return target
 
+    def remove(self, key: str) -> None:
+        """删除 `key` 对应的缓存仓库目录（含 Windows 只读处理）。
+
+        复用 lock + `_force_remove` 语义；被并发 fetch 占用删不净则抛 `RuntimeError`
+        （调用方据此保留 DB 行、返回占用错误），不静默残留。
+        """
+        slug = slugify_key(key)
+        target = self.cache_root / slug
+        lock_path = self.cache_root / f"{slug}.lock"
+        with _FileLock(lock_path):
+            self._force_remove(target)
+        if _is_non_empty(target):
+            raise RuntimeError(f"缓存仓库 {slug} 正被占用，删除失败")
+        try:
+            lock_path.unlink(missing_ok=True)
+        except OSError:
+            pass  # 锁文件删不动无所谓，下次接管
+
     def _rebuild(self, target: Path, *, url: str, ref: str) -> None:
         """把残缺/无效的缓存工作树重建好：清掉重 clone，删不净则复用/明确报错。
 

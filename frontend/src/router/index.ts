@@ -61,6 +61,11 @@ const router = createRouter({
           component: () => import('../views/SchedulesView.vue'),
         },
         {
+          path: '/clone-caches',
+          name: 'CloneCaches',
+          component: () => import('../views/CloneCachesView.vue'),
+        },
+        {
           // 任务页已并入审查记录页，保留旧地址兜底跳转
           path: '/tasks',
           redirect: '/reviews',

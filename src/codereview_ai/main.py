@@ -21,6 +21,7 @@ import httpx
 from fastapi import FastAPI
 
 from codereview_ai.api.admin import (
+    clone_cache,
     forges,
     models,
     notifiers,
@@ -43,6 +44,7 @@ from codereview_ai.config.repository import ConfigRepository
 from codereview_ai.forges.registry import ForgeRegistry
 from codereview_ai.logging import setup_logging
 from codereview_ai.notifiers.dispatch import NotifierDispatcher
+from codereview_ai.ops.clone_cache import CloneCachePruner
 from codereview_ai.ops.health import router as health_router
 from codereview_ai.ops.periodic import DailyReporter
 from codereview_ai.ops.poller import PRPoller
@@ -51,7 +53,8 @@ from codereview_ai.ops.tracing import TraceMiddleware
 from codereview_ai.queue.asyncio import AsyncioTaskQueue
 from codereview_ai.queue.concurrency import WorkerPool
 from codereview_ai.review.static_analysis import StaticAnalyzer
-from codereview_ai.storage.db import create_engine, init_db
+from codereview_ai.storage.clone_cache_repo import CloneCacheRepoRepository
+from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.project_repo import ProjectRepository
 from codereview_ai.storage.review_repo import ReviewRepository
 from codereview_ai.storage.setting_repo import SettingRepository
@@ -89,6 +92,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await init_db(engine)
         app.state.engine = engine
         app.state.settings = settings
+
+        # —— agent 本地克隆缓存：注册表 + 清除策略后台（独立于 agentic 开关，列表/清理恒可用）——
+        cache_root = settings.agent_clone_cache_dir or str(
+            Path(tempfile.gettempdir()) / "codereview-agent-repos"
+        )
+        app.state.cache_root = cache_root
+
+        async def _record_cache_sync(
+            *, key: str, provider: str, repo_full_name: str,
+            url: str, local_path: str, head_sha: str,
+        ) -> None:
+            """每次 agent 克隆同步成功后登记/刷新一行「最近拉取」注册记录。"""
+            session = session_factory(engine)
+            async with session() as s:
+                await CloneCacheRepoRepository(s).upsert_fetched(
+                    key, provider=provider, repo_full_name=repo_full_name,
+                    url=url, local_path=local_path, head_sha=head_sha,
+                )
+
+        pruner = CloneCachePruner(engine, cache_root)
+        await pruner.start()
+        app.state.pruner = pruner
 
         # —— simple 档队列：webhook 入队即返回 202，worker 异步消费 ——
         store = EventStore()
@@ -157,11 +182,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     from codereview_ai.review.agentic.llmloop import AgentConfig
                     from codereview_ai.review.agentic.sandbox import LocalCloneRuntime
 
-                    cache_root = settings.agent_clone_cache_dir or str(
-                        Path(tempfile.gettempdir()) / "codereview-agent-repos"
-                    )
                     agent_runtime = LocalCloneRuntime(cache_root=cache_root, enabled=True,
-                                                      token_for=_agent_token_for)
+                                                      token_for=_agent_token_for,
+                                                      record_sync=_record_cache_sync)
                     # 会话上限（轮数/时长/预算）从 env（CR_AGENT_*）读取，单组独立会话生效
                     agent_config = AgentConfig(
                         max_iterations=settings.agent_max_iterations,
@@ -258,6 +281,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            local_pruner = getattr(app.state, "pruner", None)
+            if local_pruner is not None:
+                await local_pruner.stop()  # 停清除策略后台循环
             if scheduler is not None:
                 await scheduler.stop()  # 停定时任务（日报/补拉循环）并清理
             pool = getattr(app.state, "worker_pool", None)
@@ -295,6 +321,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(reviews.router, prefix="/api")
     app.include_router(pull.router, prefix="/api")
     app.include_router(schedules.router, prefix="/api")
+    app.include_router(clone_cache.router, prefix="/api")
     app.include_router(admin_settings.router, prefix="/api")
     app.include_router(tasks.router, prefix="/api")
     app.include_router(stats.router, prefix="/api")
