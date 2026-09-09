@@ -339,9 +339,9 @@ function drawDuration() {
         return `${p[0].name}<br/>平均耗时: ${p[0].value}s<br/>任务数: ${rec ? rec.count : 0}`
       },
     },
-    grid: { containLabel: true, left: 8, right: 16, top: 20, bottom: 8 },
+    grid: { containLabel: true, left: 8, right: 16, top: 36, bottom: 8 },
     xAxis: { type: 'category', data: items.map((d) => d.day.slice(5)) },
-    yAxis: { type: 'value', name: '耗时 (s)' },
+    yAxis: { type: 'value', name: '耗时 (s)', nameGap: 10 },
     series: [{ type: 'bar', data: items.map((d) => d.avg_seconds), barMaxWidth: 24 }],
   })
 }
@@ -354,7 +354,7 @@ function drawPhase() {
   const data = [...known, ...extra.map((p) => ({ name: p.key, count: p.count }))]
   ensure(phaseRef.value).setOption({
     tooltip: {},
-    grid: { containLabel: true, left: 8, right: 16, top: 20, bottom: 72 },
+    grid: { containLabel: true, left: 8, right: 16, top: 20, bottom: 8 },
     xAxis: {
       type: 'category',
       data: data.map((d) => d.name),

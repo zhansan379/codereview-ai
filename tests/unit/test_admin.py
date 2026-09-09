@@ -288,12 +288,14 @@ def test_reviews_list_pagination_and_detail(app):
         page = c.get("/api/reviews?state=completed&limit=10").json()
         assert page["total"] == 1 and len(page["items"]) == 1
         assert page["items"][0]["score_total"] == 80
+        assert page["items"][0]["exec_mode"] is None
 
         all_page = c.get("/api/reviews?limit=1").json()
         assert all_page["total"] == 2 and len(all_page["items"]) == 1
 
         detail = c.get("/api/reviews/1").json()
         assert detail["state"] == "completed"
+        assert detail["exec_mode"] is None
         assert len(detail["findings"]) == 1 and detail["findings"][0]["severity"] == "high"
 
         assert c.get("/api/reviews/999").status_code == 404
