@@ -90,7 +90,7 @@ async def test_trace_generates_when_empty():
         assert len(tid) == 2 + 12
 
 
-def test_setup_logging_emits_masked_json_to_stream():
+def test_setup_logging_emits_masked_standard_to_stream():
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
     crlog.setup_logging(log_level="INFO", handler=handler)
@@ -98,7 +98,21 @@ def test_setup_logging_emits_masked_json_to_stream():
     logger.info("deploying to webhook_secret=%s", "topsecret")
     stream.flush()
     line = stream.getvalue().strip().splitlines()[-1]
+    # 标准格式（与 uvicorn 一致），脱敏仍生效
+    assert line.startswith("INFO:")
+    assert "topsecret" not in line
+    assert "webhook_secret=[REDACTED]" in line
+
+
+def test_setup_logging_json_when_explicit():
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    crlog.setup_logging(log_level="INFO", handler=handler, fmt=crlog.JsonFormatter())
+    logger = crlog.get_logger()
+    logger.info("handling %s", "mr")
+    stream.flush()
+    line = stream.getvalue().strip().splitlines()[-1]
     data = json.loads(line)
     assert data["level"] == "INFO"
-    assert "topsecret" not in line
-    assert "codereview_ai" == data["logger"]
+    assert data["message"] == "handling mr"
+    assert data["logger"] == "codereview_ai"
