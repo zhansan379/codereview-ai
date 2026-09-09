@@ -13,14 +13,17 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from dataclasses import replace
 from typing import Any
 
 import httpx
 
 from codereview_ai.domain.models import ChangeType, CommitInfo, FileDiff, PullRequest, PushEvent
-from codereview_ai.forges.base import ForgeAdapter, repo_path_from_url
+from codereview_ai.forges.base import (
+    ForgeAdapter,
+    new_file_content_from_patch as _new_file_content_from_patch,
+    repo_path_from_url,
+)
 from codereview_ai.forges.signatures import GITHUB
 
 #: 空 files 数组时指数退避的初始/最大延时（秒）。
@@ -36,9 +39,6 @@ _STATUS_TO_CHANGE = {
     "changed": ChangeType.MODIFIED,
     "copied": ChangeType.MODIFIED,
 }
-
-#: unified diff hunk 头，取「新侧起始行号」（第二个 `+\d+`）。
-_HUNK_RE = re.compile(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 
 def parse_pull_request_payload(data: dict[str, Any]) -> PullRequest | None:
@@ -110,6 +110,10 @@ def parse_push_event_payload(data: dict[str, Any]) -> PushEvent | None:
 
 
 def _to_file_diff(item: dict[str, Any]) -> FileDiff:
+    """从 files API 项构造 FileDiff。新侧全文由公共 `base.new_file_content_from_patch`
+    （`_new_file_content_from_patch` 别名）按 unified patch 还原——新增/修改/重命名均可，
+    供覆盖集、未变更复用、静态分析等单位使用。
+    """
     new_path = str(item.get("filename") or "")
     change = _STATUS_TO_CHANGE.get(str(item.get("status") or ""), ChangeType.MODIFIED)
     old_path = str(item.get("previous_filename") or new_path)
@@ -125,42 +129,6 @@ def _to_file_diff(item: dict[str, Any]) -> FileDiff:
         change_type=change,
         new_file_content=_new_file_content_from_patch(item.get("patch") or "", change),
     )
-
-
-def _new_file_content_from_patch(patch: str, change: ChangeType) -> str:
-    """从该文件的完整 unified patch 还原**新侧**全文；删除文件/无可还原行 → ""。
-
-    GitHub files API 每项的 `patch` 是这一文件从头到尾的完整 diff：每一行要么在某个
-    `@@ ... @@` hunk 内、要么是 `--- / +++` 元头或 `\\ No newline` 标记。因此可以按 hunk
-    头携带的**新侧起始行号**，把 `+`（新增）与 ` `（上下文）行铺回对应行号、`-`（删除）
-    行剔除，即得该文件在新 head 的完整正文。对 NEW_FILE 退化为「剥 `+` 前缀」；对
-    MODIFIED/RENAMED 也是同一套 apply，因此覆盖集/复用不再因修改文件无正文而失效。
-    """
-    if change is ChangeType.DELETED_FILE:
-        return ""
-    modelines: dict[int, str] = {}
-    max_line = 0
-    new_no: int | None = None
-    for raw in patch.splitlines():
-        if raw.startswith("@@"):
-            m = _HUNK_RE.match(raw)
-            new_no = int(m.group(1)) if m else None
-            continue
-        if raw.startswith("\\"):  # “\ No newline at end of file”
-            continue
-        if raw.startswith("---") or raw.startswith("+++"):
-            continue
-        if raw.startswith("-"):
-            continue
-        if raw.startswith("+") or raw.startswith(" "):
-            if new_no is None:
-                continue
-            modelines[new_no] = raw[1:]
-            max_line = max(max_line, new_no)
-            new_no += 1
-    if not modelines:
-        return ""
-    return "\n".join(modelines.get(i, "") for i in range(1, max_line + 1))
 
 
 def pull_request_from_item(item: dict[str, Any], repo_id: str = "") -> PullRequest | None:

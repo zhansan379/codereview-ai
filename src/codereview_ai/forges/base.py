@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 import urllib.parse
 from abc import ABC, abstractmethod
 from typing import Any
@@ -20,6 +21,45 @@ _ACTION_SEGS = frozenset(
     {"-", "-/", "merge_requests", "issues", "commits", "tree", "blob",
      "pipeline", "pipelines", "wiki", "wikis", "releases", "settings", "forks"}
 )
+
+#: unified diff hunk 头，取「新侧起始行号」（第二个 `+\d+`）。
+_HUNK_RE = re.compile(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def new_file_content_from_patch(patch: str, change: ChangeType) -> str:
+    """从平台返回的单个文件 unified patch 还原**新侧**全文；删除文件 → ""。
+
+    每个文件的 patch 是从头到尾的完整 diff：每一行要么在某个 `@@ ... @@` hunk 内、
+    要么是 `--- / +++` 元头或 `\\ No newline` 标记。按 hunk 头携带的**新侧起始行号**，
+    把 `+`（新增）与 ` `（上下文）行铺回对应行号、`-`（删除）行剔除，即得该文件在新
+    head 的完整正文。对 NEW_FILE 退化为「剥 `+` 前缀」。供覆盖集、未变更复用、静态分析、
+    行号定位等需要新文件全文的场景使用。GitHub/GitLab 的 patch 同构，两平台共用一套。
+    """
+    if change is ChangeType.DELETED_FILE:
+        return ""
+    modelines: dict[int, str] = {}
+    max_line = 0
+    new_no: int | None = None
+    for raw in patch.splitlines():
+        if raw.startswith("@@"):
+            m = _HUNK_RE.match(raw)
+            new_no = int(m.group(1)) if m else None
+            continue
+        if raw.startswith("\\"):  # “\ No newline at end of file”
+            continue
+        if raw.startswith("---") or raw.startswith("+++"):
+            continue
+        if raw.startswith("-"):
+            continue
+        if raw.startswith("+") or raw.startswith(" "):
+            if new_no is None:
+                continue
+            modelines[new_no] = raw[1:]
+            max_line = max(max_line, new_no)
+            new_no += 1
+    if not modelines:
+        return ""
+    return "\n".join(modelines.get(i, "") for i in range(1, max_line + 1))
 
 
 def repo_path_from_url(url: str, provider: str = "") -> str:
