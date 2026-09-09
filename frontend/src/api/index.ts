@@ -451,10 +451,6 @@ export function fetchReviewConversation(
     .get(`/reviews/${id}/conversation`, { params: { offset, limit } })
     .then((r) => r.data)
 }
-export function fetchReviewCompare(id: number): Promise<CompareResult> {
-  return client.get(`/reviews/${id}/compare`).then((r) => r.data)
-}
-
 // ===== 按 MR 聚合的收敛视图（/reviews/prs）=====
 export interface PrRound {
   id: number

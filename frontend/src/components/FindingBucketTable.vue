@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 四桶共用的紧凑 finding 表（CompareView / ReviewPrsView 共用）。
+// 四桶共用的紧凑 finding 表（MR 汇总视图 ReviewPrsView 共用）。
 // 直接渲染后端 `bucket_compare` 平铺的 finding dict，不共享详情页扩展表头。
 import type { CompareBucketItem } from '../api'
 

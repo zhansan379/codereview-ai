@@ -66,7 +66,7 @@
           v-if="detail.prev_round_id != null"
           type="success"
           plain
-          @click="$router.push(`/reviews/${id}/compare`)"
+          @click="$router.push({ path: '/reviews', query: { tab: 'mr', pr_number: detail.pr_number } })"
         >
           <el-icon><DataAnalysis /></el-icon>&nbsp;对比上次
         </el-button>
