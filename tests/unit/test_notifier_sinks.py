@@ -194,8 +194,8 @@ async def test_dingtalk_at_all_sets_is_at_all():
     await client.aclose()
 
 
-async def test_wecom_at_all_uses_mentioned_list():
-    """@所有人：企微 markdown 加 mentioned_list=["@all"]（官方 path/91770）。"""
+async def test_wecom_at_all_embeds_all_marker_in_content():
+    """@所有人：企微 markdown 无 mentioned_list，@all 用 <@all> 嵌进 content（官方 path/91770）。"""
     captured: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -211,7 +211,8 @@ async def test_wecom_at_all_uses_mentioned_list():
         msg.at_users = ["zhangsan"]  # 具体 @ 与 @全部可并存
         await notifier.send(msg)
     markdown = _req_json(captured[0])["markdown"]
-    assert markdown["mentioned_list"] == ["@all"]
+    assert "mentioned_list" not in markdown  # markdown 类型没有该字段，塞了会被企微拒收
+    assert "<@all>" in markdown["content"]
     assert "<@zhangsan>" in markdown["content"]
     await client.aclose()
 
