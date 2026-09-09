@@ -13,7 +13,9 @@
 # ruff: noqa: E501  # 本文件 prompt 字面量有意的超长行
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 
 from codereview_ai.domain.models import FileDiff, PullRequest, ReviewResult
 from codereview_ai.review.llm_gateway import LLMError, LLMGateway, parse_review_json
@@ -187,6 +189,7 @@ class Reviewer:
         commits_text: str,
         diffs: list[FileDiff],
         static_findings_text: str = "",
+        usage_sink: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> ReviewResult:
         kept, skipped = filter_files(diffs, self.cfg)
         messages = build_messages(
@@ -197,13 +200,23 @@ class Reviewer:
             cfg=self.cfg,
             static_findings_text=static_findings_text,
         )
-        text = await self.gateway.complete(messages)
+        text = await self._complete(messages, usage_sink)
         try:
             result = parse_review_json(text)
         except LLMError:
             # 坏 JSON 多为偶发截断/格式误，仅一次重试；仍失败再抛（由 pipeline 落 failed）
-            text = await self.gateway.complete(messages)
+            text = await self._complete(messages, usage_sink)
             result = parse_review_json(text)
         # 锚定定位：给每个 finding 填真实行号；仍无法定位的（line=None）由上层降级
         resolve_findings(result.findings, kept)
         return result
+
+    async def _complete(
+        self,
+        messages: list[dict[str, Any]],
+        usage_sink: Callable[[dict[str, Any]], Awaitable[None]] | None,
+    ) -> str:
+        """透传 `gateway.complete`；仅在显式传了 `usage_sink` 时带上（兼容 fake gateway）。"""
+        if usage_sink is None:
+            return await self.gateway.complete(messages)
+        return await self.gateway.complete(messages, usage_sink=usage_sink)

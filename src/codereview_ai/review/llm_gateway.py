@@ -51,19 +51,44 @@ class LLMGateway:
         self.temperature = temperature
         self._backend = backend or self._litellm_backend
 
-    async def complete(self, messages: list[dict[str, Any]]) -> str:
-        """发起点请求并返回文本。任何失败（含空返回）都抛 LLMError。"""
+    async def complete(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        usage_sink: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> str:
+        """发起点请求并返回文本。任何失败（含空返回）都抛 `LLMError`。
+
+        `usage_sink` 可选：litellm 拿到 usage（tokens）时把
+        `{model, prompt_tokens, completion_tokens, total_tokens}` 回调给它，
+        供 diff 等非 agent 路径落 `ModelUsage`（agent 走对话采集另记）。回调异常不外抛，
+        绝不影响主链拿到文本。
+        """
+        holder: dict[str, Any] = {}
         try:
-            text = await self._backend(messages)
+            try:
+                text = await self._backend(messages, usage_holder=holder)
+            except TypeError:  # 注入的 fake backend 只收 (messages)，不认 usage_holder
+                text = await self._backend(messages)
         except LLMError:
             raise
         except Exception as exc:  # 网络/超时/鉴权等一律归一为 LLMError
             raise LLMError(f"LLM call failed: {exc}") from exc
         if not text or not text.strip():
             raise LLMError("LLM returned empty content")
+        usage = holder.get("usage")
+        if usage_sink is not None and usage is not None:
+            try:
+                await usage_sink(usage)
+            except Exception:  # noqa: BLE001 —— 用量落库失败不阻断审查主链
+                pass
         return text
 
-    async def _litellm_backend(self, messages: list[dict[str, Any]]) -> str:
+    async def _litellm_backend(
+        self,
+        messages: list[dict[str, Any]],
+        usage_holder: dict[str, Any] | None = None,
+    ) -> str:
         try:
             import litellm
         except ImportError as exc:  # 未安装 litellm 却无注入 backend → 明确报错
@@ -80,6 +105,14 @@ class LLMGateway:
         if self.temperature is not None:
             kwargs["temperature"] = self.temperature
         resp = await litellm.acompletion(**kwargs)
+        if usage_holder is not None and getattr(resp, "usage", None) is not None:
+            u = resp.usage
+            usage_holder["usage"] = {
+                "model": self.model,
+                "prompt_tokens": int(u.prompt_tokens or 0),
+                "completion_tokens": int(u.completion_tokens or 0),
+                "total_tokens": int(u.total_tokens or 0),
+            }
         content = resp.choices[0].message.content
         return content or ""
 

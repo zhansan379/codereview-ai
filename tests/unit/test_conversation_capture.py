@@ -21,10 +21,11 @@ from codereview_ai.review.agentic.capture import (
     ACTIVE_RECORDER,
     ConversationRecorder,
     conversation_capture,
+    diff_usage_sink,
     set_phase,
 )
 from codereview_ai.storage.db import create_engine, init_db, session_factory
-from codereview_ai.storage.models import ReviewConversation, ReviewTask
+from codereview_ai.storage.models import ModelUsage, ReviewConversation, ReviewTask
 
 
 @pytest.fixture
@@ -98,6 +99,17 @@ async def test_record_writes_row_and_seq_monotonic(engine: AsyncEngine):
     # 内存累计指标：轮数=条数，工具调用数只数带 tool_calls 的那条（2 个）
     assert rec.metrics() == (2, 2)
 
+    # 同步写用量行：第一条带 usage（9 token）落 model_usage；第二条无 usage 不落
+    session = session_factory(engine)
+    async with session() as s:
+        usage_rows = (await s.execute(
+            select(ModelUsage).where(ModelUsage.task_id == task_id)
+        )).scalars().all()
+    assert len(usage_rows) == 1
+    assert usage_rows[0].model == "claude-m"
+    assert usage_rows[0].total_tokens == 9
+    assert usage_rows[0].phase == "main"
+
 
 async def test_record_noop_when_task_id_none(engine: AsyncEngine):
     rec = ConversationRecorder(engine, task_id=None)
@@ -106,6 +118,31 @@ async def test_record_noop_when_task_id_none(engine: AsyncEngine):
     async with session() as s:
         n = (await s.execute(select(ReviewConversation))).scalars().all()
     assert n == []
+
+
+async def test_diff_usage_sink_writes_model_usage(engine: AsyncEngine):
+    """diff 模式补记：gateway 回调 sink → 落 model_usage（看板 Token/成本按模式拆分）。"""
+    task_id = await _seed_task(engine)
+    sink = diff_usage_sink(engine, task_id)
+    await sink({
+        "model": "deepseek/deepseek-v4-flash",
+        "prompt_tokens": 100,
+        "completion_tokens": 25,
+        "total_tokens": 125,
+    })
+    await sink({"model": "", "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})  # 空值不抛
+
+    session = session_factory(engine)
+    async with session() as s:
+        rows = (await s.execute(
+            select(ModelUsage).where(ModelUsage.task_id == task_id).order_by(ModelUsage.id)
+        )).scalars().all()
+    assert len(rows) == 2
+    r = rows[0]
+    assert r.model == "deepseek/deepseek-v4-flash"
+    assert (r.prompt_tokens, r.completion_tokens, r.total_tokens) == (100, 25, 125)
+    assert r.cost >= 0  # 定价表命中则 >0，否则一致降级为 0，均不阻断
+    assert rows[1].total_tokens == 0
 
 
 # ── 护栏：写入异常不阻断 ────────────────────────────────────────────────
