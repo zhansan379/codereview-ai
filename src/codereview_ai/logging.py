@@ -1,7 +1,8 @@
-"""结构化日志 + 脱敏 + trace_id 上下文（DESIGN §15.1 / §15.2）。
+"""日志 + 脱敏 + trace_id 上下文（DESIGN §15.1 / §15.2）。
 
-- 单行 JSON 结构化日志，字段含 `ts level logger trace_id task_id ...`。
-- `SensitiveFilter` / `JsonFormatter` 统一打码令牌类字段：token/key/secret/password/
+- 默认 `StandardFormatter` 输出与 uvicorn/fastapi 一致的标准文本；需要结构化
+  JSON（含 `ts level logger trace_id task_id ...`）时用 `JsonFormatter`。
+- `SensitiveFilter` 统一打码令牌类字段：token/key/secret/password/
   Authorization/URL 的 sign=/token=，**不记录请求 body 或 diff 正文**。
 - `TRACE_ID` 为 contextvar；`trace()` 上下文管理器在整个异步链路里携带同一 id。
 """
@@ -91,8 +92,21 @@ def _masked_message(record: logging.LogRecord) -> str:
 
 
 # ---------------------------------------------------------------------------
-# JSON 结构化 formatter
+# Formatter
 # ---------------------------------------------------------------------------
+
+class StandardFormatter(logging.Formatter):
+    """输出与 uvicorn/fastapi 一致的标准文本（`INFO:     msg`）。
+
+    通过 `levelprefix` 复刻 uvicorn 的对齐方式；脱敏由 `SensitiveFilter`
+    在 formatter 之前完成，因此标准格式下令牌仍会被打码。
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        # 复刻 uvicorn 的 levelprefix：`INFO:     `（冒号后按 8 宽度补空格对齐）
+        record.levelprefix = f"{record.levelname}:{' ' * (8 - len(record.levelname))}"
+        return super().format(record)
+
 
 class JsonFormatter(logging.Formatter):
     """把 LogRecord 渲染成单行 JSON（含脱敏、trace_id、业务字段）。"""
@@ -140,7 +154,8 @@ def setup_logging(
 
     Args:
         log_level: 日志级别。
-        fmt: 自定义 formatter（默认 `JsonFormatter`）。
+        fmt: 自定义 formatter（默认 `StandardFormatter`，与 uvicorn 输出一致；
+             需要结构化 JSON 时显式传 `JsonFormatter()`）。
         handler: 自定义 output（默认 stdout StreamHandler）。便于测试注入 StringIO。
     """
     logger = logging.getLogger(LOG_LOGGER_NAME)
@@ -148,7 +163,7 @@ def setup_logging(
     logger.propagate = False
     if not handler:
         handler = logging.StreamHandler(stream=sys.stdout)
-    handler.setFormatter(fmt or JsonFormatter())
+    handler.setFormatter(fmt or StandardFormatter(fmt="%(levelprefix)s %(message)s"))
     handler.addFilter(SensitiveFilter())
     # 幂等：避免重复 add
     if not any(h is handler for h in logger.handlers):
