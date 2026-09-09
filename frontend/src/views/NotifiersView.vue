@@ -122,45 +122,62 @@
       </template>
     </el-dialog>
 
-    <!-- 系统级 @成员管理 -->
-    <el-dialog v-model="memberDialogVisible" title="系统级 @成员管理" width="860px">
+    <!-- 系统级 @成员管理（表格内联编辑：点行内「编辑」该行变输入框；新增即追加一草稿行） -->
+    <el-dialog v-model="memberDialogVisible" title="系统级 @成员管理" width="880px">
       <div class="toolbar">
-        <el-button type="primary" @click="openMemberForm()">新增成员</el-button>
+        <el-button type="primary" @click="addMember">新增成员</el-button>
       </div>
-      <el-table :data="members" v-loading="membersLoading" stripe>
-        <el-table-column prop="name" label="姓名" width="120" />
-        <el-table-column prop="git_username" label="fork用户名" width="140" />
-        <el-table-column prop="dingtalk_mobile" label="钉钉手机号" width="130" />
-        <el-table-column prop="wecom_userid" label="企微userid" min-width="120" />
-        <el-table-column prop="feishu_open_id" label="飞书open_id" min-width="130" />
-        <el-table-column label="操作" width="140" fixed="right">
+      <el-table :data="displayMembers" v-loading="membersLoading" stripe
+        :empty-text="members.length || newRowDraft ? ' ' : '暂无成员'">
+        <el-table-column label="姓名" width="120">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openMemberForm(row)">编辑</el-button>
-            <el-button link type="danger" @click="onDeleteMember(row)">删除</el-button>
+            <el-input v-if="memberEditingId === row.id" v-model="memberForm.name" placeholder="展示名，可空" size="small" clearable style="width: 100%" />
+            <template v-else>{{ row.name || '—' }}</template>
+          </template>
+        </el-table-column>
+        <el-table-column label="fork用户名" width="150">
+          <template #default="{ row }">
+            <el-input v-if="memberEditingId === row.id" v-model="memberForm.git_username" placeholder="提交者 @ 命中键" size="small" clearable style="width: 100%" />
+            <template v-else>{{ row.git_username || '—' }}</template>
+          </template>
+        </el-table-column>
+        <el-table-column label="钉钉手机号" width="140">
+          <template #default="{ row }">
+            <el-input v-if="memberEditingId === row.id" v-model="memberForm.dingtalk_mobile" placeholder="钉钉 @ 用" size="small" clearable style="width: 100%" />
+            <template v-else>{{ row.dingtalk_mobile || '—' }}</template>
+          </template>
+        </el-table-column>
+        <el-table-column label="企微userid" min-width="120">
+          <template #default="{ row }">
+            <el-input v-if="memberEditingId === row.id" v-model="memberForm.wecom_userid" placeholder="企微点名用" size="small" clearable style="width: 100%" />
+            <template v-else>{{ row.wecom_userid || '—' }}</template>
+          </template>
+        </el-table-column>
+        <el-table-column label="飞书open_id" min-width="130">
+          <template #default="{ row }">
+            <el-input v-if="memberEditingId === row.id" v-model="memberForm.feishu_open_id" placeholder="飞书 @ 用" size="small" clearable style="width: 100%" />
+            <template v-else>{{ row.feishu_open_id || '—' }}</template>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="150" fixed="right">
+          <template #default="{ row }">
+            <template v-if="memberEditingId === row.id">
+              <el-button link type="success" :loading="memberSaving" @click="onSaveInline(row)">保存</el-button>
+              <el-button link @click="cancelInline(row)">取消</el-button>
+            </template>
+            <template v-else>
+              <el-button link type="primary" @click="startEdit(row)">编辑</el-button>
+              <el-button link type="danger" @click="onDeleteMember(row)">删除</el-button>
+            </template>
           </template>
         </el-table-column>
       </el-table>
-    </el-dialog>
-
-    <el-dialog v-model="memberFormVisible" :title="memberIsEdit ? '编辑成员' : '新增成员'" width="520px"
-      :modal="false" append-to-body>
-      <el-form :model="memberForm" label-width="120px">
-        <el-form-item label="姓名"><el-input v-model="memberForm.name" placeholder="展示名，可空" /></el-form-item>
-        <el-form-item label="fork用户名"><el-input v-model="memberForm.git_username" placeholder="提交者 @ 的命中键，如 zhansan379" /></el-form-item>
-        <el-form-item label="钉钉手机号"><el-input v-model="memberForm.dingtalk_mobile" placeholder="钉钉 @ 用" /></el-form-item>
-        <el-form-item label="企微userid"><el-input v-model="memberForm.wecom_userid" placeholder="企微点名用" /></el-form-item>
-        <el-form-item label="飞书open_id"><el-input v-model="memberForm.feishu_open_id" placeholder="飞书 @ 用" /></el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="memberFormVisible = false">取消</el-button>
-        <el-button type="primary" :loading="memberSaving" @click="onSaveMember">保存</el-button>
-      </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   listNotifiers, createNotifier, updateNotifier, deleteNotifier, listProjects,
@@ -181,11 +198,17 @@ const editingId = ref<number | null>(null)
 const members = ref<NotifierMember[]>([])
 const membersLoading = ref(false)
 const memberDialogVisible = ref(false)
-const memberFormVisible = ref(false)
-const memberSaving = ref(false)
-const memberIsEdit = ref(false)
+/** 正在内联编辑的成员 id；表格行内显示输入框 */
 const memberEditingId = ref<number | null>(null)
+/** 新增中的草稿行（id=0 哨兵）；非空时作为表格最后一行渲染输入框 */
+const newRowDraft = ref<NotifierMember | null>(null)
+const memberSaving = ref(false)
 const memberForm = reactive({ name: '', git_username: '', dingtalk_mobile: '', wecom_userid: '', feishu_open_id: '' })
+
+/** 表格绑定数据：有草稿行就临时拼进末尾，避免 data 为空触发空数据占位块 */
+const displayMembers = computed<NotifierMember[]>(() =>
+  newRowDraft.value ? [...members.value, newRowDraft.value] : members.value,
+)
 
 const REDACTED = '******'
 
@@ -234,28 +257,38 @@ function openMemberManager() {
   memberDialogVisible.value = true
   loadMembers()
 }
-function openMemberForm(row?: NotifierMember) {
-  memberIsEdit.value = !!row
-  memberEditingId.value = row?.id ?? null
+function startEdit(row: NotifierMember) {
+  newRowDraft.value = null
+  memberEditingId.value = row.id
   Object.assign(memberForm, {
-    name: row?.name ?? '',
-    git_username: row?.git_username ?? '',
-    dingtalk_mobile: row?.dingtalk_mobile ?? '',
-    wecom_userid: row?.wecom_userid ?? '',
-    feishu_open_id: row?.feishu_open_id ?? '',
+    name: row.name ?? '',
+    git_username: row.git_username ?? '',
+    dingtalk_mobile: row.dingtalk_mobile ?? '',
+    wecom_userid: row.wecom_userid ?? '',
+    feishu_open_id: row.feishu_open_id ?? '',
   })
-  memberFormVisible.value = true
 }
-async function onSaveMember() {
+function addMember() {
+  newRowDraft.value = { id: 0, name: '', git_username: '', dingtalk_mobile: '', wecom_userid: '', feishu_open_id: '' }
+  Object.assign(memberForm, { name: '', git_username: '', dingtalk_mobile: '', wecom_userid: '', feishu_open_id: '' })
+  memberEditingId.value = 0
+}
+function cancelInline(row: NotifierMember) {
+  if (row.id === 0) newRowDraft.value = null
+  else memberEditingId.value = null
+}
+async function onSaveInline(row: NotifierMember) {
   memberSaving.value = true
   try {
-    if (memberIsEdit.value && memberEditingId.value != null) {
-      await updateMember(memberEditingId.value, { ...memberForm })
-    } else {
+    if (row.id === 0) {
       await createMember({ ...memberForm })
+      ElMessage.success('已新增成员')
+      newRowDraft.value = null
+    } else {
+      await updateMember(row.id, { ...memberForm })
+      ElMessage.success('已保存成员')
+      memberEditingId.value = null
     }
-    ElMessage.success('已保存成员')
-    memberFormVisible.value = false
     loadMembers()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '保存成员失败')
