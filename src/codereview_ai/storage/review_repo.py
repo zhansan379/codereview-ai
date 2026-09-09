@@ -46,8 +46,39 @@ def _cast(value: str | None, enum_type: type, fallback):
 class ReviewRepository:
     """读写 `review_task`/`review_finding` 的仓储：增量决策读路径 + 结果持久化写路径。"""
 
+    #: 补拉「已处理可跳过」的 mr 终态/在途态（DESIGN §9 补拉通道）。failed 不在内：
+    #: 该 head 从未成功审过，补拉到 failed 行仍重新入队作重试（显式「重试」按钮亦可用）。
+    POLL_SKIP_STATES = ("queued", "running", "completed", "skipped")
+
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
+
+    async def poll_skip(
+        self, provider: str, repo_id: str, pr_number: int, head_sha: str
+    ) -> bool:
+        """补拉跳过判定：该 PR 同 head 是否已有一条「视为已处理」的 mr 任务行。
+
+        已处理态（`queued`/`running`/`completed`/`skipped`）→ True（不再入队、计数为
+        skipped）；`failed` 或从无行 → False（failed 留接口显式「重试」，从无行 = 全新
+        head 入队待审）。与 `last_ok_review` 的语义区分：后者专供增量决策读「上次**成功**
+        审查」的 head_sha，只认 completed；此处是补拉的「是否已对该 head 下过判断」，把
+        `skipped`（如 mr_disabled 门控跳过）也算已处理，避免每次补拉把存量跳过行当成
+        「新入队」重复投队。
+        """
+        session = session_factory(self._engine)
+        async with session() as s:
+            row = (await s.execute(
+                select(ReviewTask).where(
+                    ReviewTask.provider == provider,
+                    ReviewTask.repo_id == repo_id,
+                    ReviewTask.pr_number == pr_number,
+                    ReviewTask.event_type == "mr",
+                    ReviewTask.head_sha == head_sha,
+                ).limit(1)
+            )).scalar_one_or_none()
+        if row is None:
+            return False
+        return row.state in self.POLL_SKIP_STATES
 
     async def last_ok_review(
         self, provider: str, repo_id: str, pr_number: int

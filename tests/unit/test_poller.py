@@ -131,6 +131,57 @@ async def test_run_once_scans_and_enqueues_new(engine, tmp_path):
     assert pr_old.repo_full_name == "acme/widgets"
 
 
+async def _seed_skipped_review(engine: AsyncEngine, *, provider="github", repo_id="acme/widgets",
+                               pr_number: int, head_sha: str) -> None:
+    """落一条 skipped(mr_disabled) 的 mr 审查行：已存储、已下过判断，补拉应视为已处理跳过。"""
+    session = session_factory(engine)
+    async with session() as s:
+        s.add(ReviewTask(provider=provider, repo_id=repo_id, pr_number=pr_number,
+                         event_type="mr", branch="feature/x", head_sha=head_sha,
+                         base_sha="abcdef0", pr_title=f"PR #{pr_number}",
+                         web_url=f"https://example/{pr_number}", state="skipped",
+                         skip_reason="mr_disabled"))
+        await s.commit()
+
+
+async def test_run_once_skips_same_head_skipped_already_stored(engine, tmp_path):
+    """存量 skipped(mr_disabled) 行不该当成「新入队」：同 head 记为 skipped、不入队。"""
+    await _seed_project(engine)
+    await _seed_skipped_review(engine, pr_number=101, head_sha="head-skip")
+    pr_skipped = _pr(101, "head-skip")
+    pr_new = _pr(102, "head-new")
+
+    enqueuer = FakeEnqueuer()
+    poller = PRPoller(engine, FakeRegistry({"github": FakeForge([pr_skipped, pr_new])}), enqueuer)
+
+    report = await poller.run_once()
+    assert report["new"] == 1          # 只有全新 head 的 102 入队
+    assert report["skipped"] == 1      # 已存储的 101 记为已审过跳过
+    assert report["errors"] == []
+    assert [c[1].pr_number for c in enqueuer.calls] == [102]
+
+
+async def test_run_once_reenqueues_failed_head(engine, tmp_path):
+    """failed 头从未成功审过 → 补拉重新入队作重试（可再被审）。"""
+    await _seed_project(engine)
+    session = session_factory(engine)
+    async with session() as s:
+        s.add(ReviewTask(provider="github", repo_id="acme/widgets", pr_number=101,
+                         event_type="mr", branch="feature/x", head_sha="head-fail",
+                         base_sha="abcdef0", pr_title="PR #101",
+                         web_url="https://example/101", state="failed", error="boom"))
+        await s.commit()
+    pr_fail = _pr(101, "head-fail")
+
+    enqueuer = FakeEnqueuer()
+    poller = PRPoller(engine, FakeRegistry({"github": FakeForge([pr_fail])}), enqueuer)
+
+    report = await poller.run_once()
+    assert report["new"] == 1
+    assert report["skipped"] == 0
+    assert [c[1].pr_number for c in enqueuer.calls] == [101]
+
+
 async def test_run_once_skips_same_head_already_reviewed(engine, tmp_path):
     """同 head 已 completed（last_ok_review 命中）→ 记为 skipped、不入队。"""
     await _seed_project(engine)
