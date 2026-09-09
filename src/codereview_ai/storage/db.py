@@ -91,6 +91,11 @@ _COLUMN_FALLBACKS: dict[str, list[tuple[str, str, str]]] = {
         ("pr_title", "VARCHAR(255)", "DEFAULT ''"),
         ("push_commits", "TEXT", "DEFAULT ''"),
         ("web_url", "VARCHAR(1024)", "DEFAULT ''"),
+        # 执行态四列（exec_mode=实际路径；agentic 降级 diff 时落 'diff'）
+        ("exec_mode", "VARCHAR(16)", "DEFAULT 'diff'"),
+        ("diff_lines", "INTEGER", "DEFAULT 0"),
+        ("chat_rounds", "INTEGER", "DEFAULT 0"),
+        ("tool_calls", "INTEGER", "DEFAULT 0"),
     ],
     "notifier_config": [
         ("at_all", "BOOLEAN", "DEFAULT 0"),     # 评分低于阈值时是否 @全员

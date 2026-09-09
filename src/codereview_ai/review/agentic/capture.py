@@ -73,7 +73,15 @@ class ConversationRecorder:
         self._task_id = task_id
         self._trace_id = trace_id
         self._seq = 0
+        self._tool_calls = 0
         self._lock = asyncio.Lock()
+
+    def metrics(self) -> tuple[int, int]:
+        """已采集的 (对话轮数, 工具调用数)；供任务收尾写 `review_task.chat_rounds/tool_calls`。
+
+        一次性内存累计，无需重查/重解析落库 JSON。
+        """
+        return self._seq, self._tool_calls
 
     async def record(
         self,
@@ -89,6 +97,7 @@ class ConversationRecorder:
         async with self._lock:
             self._seq += 1
             seq = self._seq
+            self._tool_calls += len((response or {}).get("tool_calls") or [])
         session = session_factory(self._engine)
         async with session() as s:
             try:

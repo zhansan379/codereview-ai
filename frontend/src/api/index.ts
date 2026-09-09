@@ -489,6 +489,12 @@ export interface ModelUsageItem {
   completion_tokens: number
   total_tokens: number
 }
+export interface AgentScatterItem {
+  diff_lines: number
+  duration_s: number
+  chat_rounds: number
+  tool_calls: number
+}
 export interface DashboardStats {
   total_tasks: number
   total_findings: number
@@ -500,6 +506,10 @@ export interface DashboardStats {
   reviews_by_day: ReviewsByDay[]
   model_usage: ModelUsageItem[]
   provider_split: CountItem[]
+  tasks_by_mode: CountItem[]
+  agent_task_count: number
+  avg_chat_rounds: number
+  agent_scatter: AgentScatterItem[]
 }
 export function getStats(): Promise<DashboardStats> {
   return client.get('/stats').then((r) => r.data)
