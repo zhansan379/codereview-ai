@@ -9,6 +9,11 @@
     <el-table-column v-if="showProcess" prop="branch" label="分支" width="200" show-overflow-tooltip />
     <el-table-column v-if="showProcess" prop="attempt" label="重试" width="80" />
     <el-table-column prop="score_total" label="评分" width="60" />
+    <el-table-column label="模式" width="80">
+      <template #default="{ row }">
+        <el-tag :type="modeTagType(row.exec_mode)" size="small">{{ modeLabel(row.exec_mode) }}</el-tag>
+      </template>
+    </el-table-column>
     <el-table-column label="状态" width="100">
       <template #default="{ row }">
         <el-tag :type="stateTagType(row.state)">{{ stateLabel(row.state) }}</el-tag>
@@ -33,7 +38,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { formatTime, stateTagType, stateLabel } from '../utils/format'
+import { formatTime, stateTagType, stateLabel, modeLabel, modeTagType } from '../utils/format'
 import type { ReviewItem } from '../api'
 
 // 审查记录 / 仪表盘"最近记录"共用的表格：列统一，改动一处多处生效。

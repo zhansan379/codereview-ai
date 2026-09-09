@@ -34,3 +34,17 @@ export function stateLabel(state: string): string {
     default: return state
   }
 }
+
+// 执行模式 → 中文标签（NULL=未执行审查，如 skipped/failed/empty 空审）
+export function modeLabel(mode: string | null | undefined): string {
+  if (mode === 'agentic') return 'Agent'
+  if (mode === 'diff') return 'Diff'
+  return '未执行'
+}
+
+// 执行模式 → tag type（agent 高亮，diff 灰，未执行透明）
+export function modeTagType(mode: string | null | undefined): string {
+  if (mode === 'agentic') return 'primary'
+  if (mode === 'diff') return 'info'
+  return 'info'
+}

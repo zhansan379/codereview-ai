@@ -152,7 +152,9 @@ async def aggregate_stats(session: AsyncSession, mode: str = "all") -> StatsOut:
     findings_by_severity = await _counts(session, ReviewFinding.severity, *finding_where())
     findings_by_category = await _counts(session, ReviewFinding.category, *finding_where())
     provider_split = await _counts(session, ReviewTask.provider, task_clause)
-    tasks_by_mode = await _counts(session, ReviewTask.exec_mode)  # 拆分本身恒全量
+    tasks_by_mode = await _counts(
+        session, ReviewTask.exec_mode, ReviewTask.exec_mode.isnot(None)
+    )  # 拆分本身恒全量；排除未执行审查（NULL）
 
     # Agent 阶段管线分布：diff 无对话，天然只含 agent，不经 mode 开关过滤
     phase_dist = await _counts(session, ReviewConversation.phase)

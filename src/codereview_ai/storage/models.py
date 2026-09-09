@@ -114,7 +114,8 @@ class ReviewTask(Base):
     issues: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     # 执行态快照（仪表盘 agent/diff 区分与复杂度→成本分析用）。
     # exec_mode=实际跑的路径（agentic 可能因沙箱关/0 条产出降级为 diff，库内一律记真实值）。
-    exec_mode: Mapped[str] = mapped_column(String(16), default="diff")
+    # NULL = 未真正执行审查（skipped/failed/queued/empty 空审不填），统计与展示时排除。
+    exec_mode: Mapped[str | None] = mapped_column(String(16), nullable=True, default=None)
     diff_lines: Mapped[int] = mapped_column(Integer, default=0)  # 新增+删除行合计
     chat_rounds: Mapped[int] = mapped_column(Integer, default=0)  # LLM 调用/对话轮数
     tool_calls: Mapped[int] = mapped_column(Integer, default=0)  # 工具调用累计

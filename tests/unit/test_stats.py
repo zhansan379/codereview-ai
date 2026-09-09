@@ -122,9 +122,9 @@ def test_stats_aggregates(app):
         assert usage["gpt-4o"]["total_tokens"] == 210
         assert usage["claude"]["requests"] == 1
 
-        # 未显式指定 exec_mode 的播种行默认 diff → 模式维度全落 diff
+        # 播种行未真正执行审查（exec_mode=NULL）→ 模式维度被过滤为空，不误计入 diff
         modes = {i["key"]: i["count"] for i in d["tasks_by_mode"]}
-        assert modes == {"diff": 3}
+        assert modes == {}
         assert d["agent_task_count"] == 0
         assert d["avg_chat_rounds"] == 0
         assert d["agent_scatter"] == []

@@ -81,6 +81,7 @@ class ReviewListItem(BaseModel):
     finished_at: datetime | None
     writeback_failed: bool
     diff_lines: int = 0  # 新增+删除行合计（复杂度度量）
+    exec_mode: str | None = None  # 实际执行模式（agentic / diff）；NULL=未执行审查
 
 
 class ReviewDetail(ReviewListItem):

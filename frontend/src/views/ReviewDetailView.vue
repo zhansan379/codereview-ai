@@ -21,6 +21,9 @@
         <el-descriptions-item label="状态">
           <el-tag :type="stateTagType(detail.state)">{{ stateLabel(detail.state) }}</el-tag>
         </el-descriptions-item>
+        <el-descriptions-item label="模式">
+          <el-tag :type="modeTagType(detail.exec_mode)" size="small">{{ modeLabel(detail.exec_mode) }}</el-tag>
+        </el-descriptions-item>
         <el-descriptions-item label="评分">{{ detail.score_total }}</el-descriptions-item>
         <el-descriptions-item label="变更行数">{{ detail.diff_lines }} 行</el-descriptions-item>
         <el-descriptions-item label="提交 SHA">
@@ -156,7 +159,7 @@ import { useRoute } from 'vue-router'
 import { ChatDotRound, DataAnalysis, DocumentCopy } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { getReview, setFindingStatus, type ReviewDetail, type ReviewFinding } from '../api'
-import { formatTime, stateTagType, stateLabel } from '../utils/format'
+import { formatTime, stateTagType, stateLabel, modeLabel, modeTagType } from '../utils/format'
 
 const route = useRoute()
 const id = Number(route.params.id)

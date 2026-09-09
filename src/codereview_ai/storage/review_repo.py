@@ -433,14 +433,15 @@ class ReviewRepository:
         self,
         task_id: int,
         *,
-        exec_mode: str = "diff",
+        exec_mode: str | None = None,
         diff_lines: int = 0,
         chat_rounds: int = 0,
         tool_calls: int = 0,
     ) -> None:
         """写执行态快照四列（仪表盘 agent/diff 区分 + 复杂度×成本散点依据）。
 
-        `exec_mode` 记录**实际跑通**的路径（agentic 降级时由调用方落 'diff'）。
+        `exec_mode` 记录**实际跑通**的路径（agentic 降级时由调用方落 'diff'；
+        未真正执行审查时不传/传 None，落库为 NULL，统计与展示时排除）。
         """
         session = session_factory(self._engine)
         async with session() as s:

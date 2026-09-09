@@ -130,6 +130,7 @@ export interface ReviewItem {
   finished_at: string | null
   writeback_failed: boolean | null
   diff_lines: number
+  exec_mode: string | null
 }
 
 export interface ReviewDetail extends ReviewItem {
