@@ -178,7 +178,7 @@ async def test_stats_agent_mode(tmp_path):
 
 
 async def test_stats_mode_filter_phase_duration(tmp_path):
-    """mode=agentic/diff 过滤通用图 + KPI；phase_dist 聚合；duration_by_day 按完成日分桶。"""
+    """mode=agentic/diff 过滤通用图 + KPI；phase_box 分布聚合；duration_by_day 按完成日分桶。"""
     engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'mode.db'}")
     await init_db(engine)
     now = datetime.now(UTC)
@@ -225,10 +225,23 @@ async def test_stats_mode_filter_phase_duration(tmp_path):
     assert scatter_counts == {1}
     assert out_agent.avg_chat_rounds == (2 + 0) / 2  # a4 chat_rounds=2, a6=0
 
-    # 阶段管线：分布式聚合，恒全量
-    phases = {i.key: i.count for i in out_all.phase_dist}
-    assert phases == {"plan": 1, "main": 2, "scoring": 1}
-    assert {i.key: i.count for i in out_agent.phase_dist} == phases  # 不随模式变化
+    # 阶段管线：箱线图分布聚合，恒全量（不随 mode 变化）
+    def as_dict(b) -> dict:
+        return {"key": b.key, "task_count": b.task_count, "min": b.min, "q1": b.q1,
+                "median": b.median, "q3": b.q3, "max": b.max, "mean": b.mean,
+                "mode": b.mode}
+
+    # a4 = plan×1, main×2, scoring×1 → 各 phase 都只有单值
+    expect = {
+        "plan": {"key": "plan", "task_count": 1, "min": 1, "q1": 1.0, "median": 1.0,
+                 "q3": 1.0, "max": 1, "mean": 1.0, "mode": 1},
+        "main": {"key": "main", "task_count": 1, "min": 2, "q1": 2.0, "median": 2.0,
+                 "q3": 2.0, "max": 2, "mean": 2.0, "mode": 2},
+        "scoring": {"key": "scoring", "task_count": 1, "min": 1, "q1": 1.0,
+                    "median": 1.0, "q3": 1.0, "max": 1, "mean": 1.0, "mode": 1},
+    }
+    assert {d["key"]: d for d in map(as_dict, out_all.phase_box)} == expect
+    assert {d["key"]: d for d in map(as_dict, out_agent.phase_box)} == expect  # 不随模式变化
 
     # duration_by_day：今天完成 → all 两任务、agentic 只 a4；avg 120s
     today_iso = now.date().isoformat()
@@ -243,3 +256,43 @@ async def test_stats_mode_filter_phase_duration(tmp_path):
 def test_stats_requires_auth(app):
     fast, _token = app
     assert TestClient(fast).get("/api/stats").status_code == 401
+
+
+async def test_phase_box_distribution(tmp_path):
+    """阶段管线箱线图聚合：按 (task, phase) 分组后，phase 内聚合 min/分位/mean/mode。
+
+    播种 4 个 task，`main` 阶段各自 1/1/3/3 次调用 → 分布 [1,1,3,3]：
+    min=1 max=3 mean=2 mode=1（1 与 3 并列取最小）q1=1 median=2 q3=3 task_count=4。
+    """
+    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'box.db'}")
+    await init_db(engine)
+    async with session_factory(engine)() as s:
+        tasks = [
+            ReviewTask(provider="gitlab", repo_id="1", pr_number=1, event_type="mr",
+                       head_sha=f"h{i}", state="completed", exec_mode="agentic")
+            for i in range(4)
+        ]
+        s.add_all(tasks)
+        await s.commit()
+        ids = [t.id for t in tasks]
+        # main 分桶：1,1,3,3 → 每条一次 llm.chat()
+        counts = [1, 1, 3, 3]
+        convs = []
+        for tid, n in zip(ids, counts):
+            convs += [ReviewConversation(task_id=tid, seq=i, phase="main")
+                      for i in range(n)]
+        # scoring 只出现在 task0，2 次调用（验证多 phase 各自独立聚合）
+        convs += [ReviewConversation(task_id=ids[0], seq=10 + i, phase="scoring")
+                  for i in range(2)]
+        s.add_all(convs)
+        await s.commit()
+        out = await stats.aggregate_stats(s)
+    await engine.dispose()
+
+    by = {b.key: b for b in out.phase_box}
+    assert set(by) == {"main", "scoring"}
+    m = by["main"]
+    assert (m.task_count, m.min, m.max, m.mean, m.mode) == (4, 1, 3, 2.0, 1)
+    assert (m.q1, m.median, m.q3) == (1.0, 2.0, 3.0)
+    sc = by["scoring"]
+    assert (sc.task_count, sc.min, sc.max, sc.mode) == (1, 2, 2, 2)

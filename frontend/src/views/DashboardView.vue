@@ -130,7 +130,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
-import { getStats, listReviews, type DashboardStats, type ReviewItem } from '../api'
+import { getStats, listReviews, type DashboardStats, type ReviewItem, type PhaseBoxItem } from '../api'
 import ReviewsTable from '../components/ReviewsTable.vue'
 
 const severityRef = ref<HTMLDivElement>()
@@ -160,7 +160,7 @@ const stats = ref<DashboardStats>({
   model_usage: [],
   cost_by_day: [],
   duration_by_day: [],
-  phase_dist: [],
+  phase_box: [],
   provider_split: [],
   tasks_by_mode: [],
   agent_task_count: 0,
@@ -348,20 +348,42 @@ function drawDuration() {
 
 function drawPhase() {
   if (!phaseRef.value) return
-  const byKey = new Map(stats.value.phase_dist.map((p) => [p.key, p.count]))
-  const known = PHASE_ORDER.map((ph) => ({ name: ph, count: byKey.get(ph) || 0 }))
-  const extra = stats.value.phase_dist.filter((p) => !PHASE_ORDER.includes(p.key))
-  const data = [...known, ...extra.map((p) => ({ name: p.key, count: p.count }))]
+  const byKey = new Map(stats.value.phase_box.map((p) => [p.key, p]))
+  const known = PHASE_ORDER.map((ph) => byKey.get(ph)).filter(Boolean) as PhaseBoxItem[]
+  const extra = stats.value.phase_box.filter((p) => !PHASE_ORDER.includes(p.key))
+  const boxes = [...known, ...extra]
+  // 雷达图：每个 phase 一根轴，四序列（最少/众数/平均/最多）叠成多边形，跨阶段对比。
+  // 每轴以该 phase 观测到的 max 为满标 → 各阶段在同一规格下比相对轮廓，避免低值阶段被压扁
+  const indicators = boxes.map((b) => ({ name: b.key, max: b.max }))
+  const pick = (f: (b: PhaseBoxItem) => number) => boxes.map(f)
   ensure(phaseRef.value).setOption({
-    tooltip: {},
-    grid: { containLabel: true, left: 8, right: 16, top: 20, bottom: 8 },
-    xAxis: {
-      type: 'category',
-      data: data.map((d) => d.name),
-      axisLabel: { rotate: 20, interval: 0 },
+    tooltip: {
+      trigger: 'item',
+      confine: true,
+      formatter: (p: { dataIndex: number; name: string; seriesName: string; value: number }) => {
+        const b = boxes[p.dataIndex]
+        return `${b ? b.key : p.name} · ${p.seriesName}<br/>${p.value} 次` +
+          (b ? `<br/>参与 task: ${b.task_count} 个` : '')
+      },
     },
-    yAxis: { type: 'value', minInterval: 1 },
-    series: [{ type: 'bar', data: data.map((d) => d.count), barMaxWidth: 28 }],
+    legend: { bottom: 0 },
+    radar: {
+      indicator: indicators,
+      radius: '62%',
+      splitNumber: 4,
+      name: { textStyle: { fontSize: 11 } },
+    },
+    series: [
+      {
+        type: 'radar',
+        data: [
+          { name: '最少', value: pick((b) => b.min) },
+          { name: '众数', value: pick((b) => b.mode) },
+          { name: '平均', value: pick((b) => b.mean) },
+          { name: '最多', value: pick((b) => b.max) },
+        ],
+      },
+    ],
   })
 }
 
