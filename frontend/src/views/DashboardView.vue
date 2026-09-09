@@ -38,7 +38,7 @@
       <el-col :span="12" :xs="24" :md="12">
         <el-card>
           <template #header>严重级别分布</template>
-          <div ref="severityRef" class="chart"></div>
+          <KpiList :rows="severityRows" />
         </el-card>
       </el-col>
       <el-col :span="12" :xs="24" :md="12">
@@ -53,13 +53,13 @@
       <el-col :span="12" :xs="24" :md="12">
         <el-card>
           <template #header>任务状态分布</template>
-          <div ref="stateRef" class="chart chart-sm"></div>
+          <KpiList :rows="stateRows" />
         </el-card>
       </el-col>
       <el-col :span="12" :xs="24" :md="12">
         <el-card>
           <template #header>审查渠道分流</template>
-          <div ref="providerRef" class="chart chart-sm"></div>
+          <KpiList :rows="providerRows" />
         </el-card>
       </el-col>
     </el-row>
@@ -103,7 +103,7 @@
       <el-col :span="8" :xs="24" :md="8">
         <el-card>
           <template #header>审查模式分布（agent / diff）</template>
-          <div ref="modeRef" class="chart"></div>
+          <KpiList :rows="modeRows" />
         </el-card>
       </el-col>
       <el-col :span="16" :xs="24" :md="16">
@@ -132,12 +132,9 @@ import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { getStats, listReviews, type DashboardStats, type ReviewItem, type PhaseBoxItem } from '../api'
 import ReviewsTable from '../components/ReviewsTable.vue'
+import KpiList from '../components/KpiList.vue'
 
-const severityRef = ref<HTMLDivElement>()
 const trendRef = ref<HTMLDivElement>()
-const stateRef = ref<HTMLDivElement>()
-const providerRef = ref<HTMLDivElement>()
-const modeRef = ref<HTMLDivElement>()
 const scatterRef = ref<HTMLDivElement>()
 const tokenRef = ref<HTMLDivElement>()
 const costRef = ref<HTMLDivElement>()
@@ -168,22 +165,76 @@ const stats = ref<DashboardStats>({
   agent_scatter: [],
 })
 
-function drawSeverity() {
-  if (!severityRef.value) return
-  ensure(severityRef.value).setOption({
-    tooltip: { trigger: 'item' },
-    series: [
-      {
-        type: 'pie',
-        radius: ['40%', '68%'],
-        data: stats.value.findings_by_severity.map((s) => ({
-          name: s.key,
-          value: s.count,
-        })),
-      },
-    ],
-  })
+// ══ 数字统计行：把只有少数取值/两片的饼图/柱图改成可扫读的数字列表 ══
+
+// percentage hint：少数据时直接给占比，一眼看出权重
+function pct(n: number, total: number): string {
+  return total > 0 ? `${Math.round((n / total) * 100)}%` : ''
 }
+
+const SEVERITY_META: Record<string, { label: string; color: string }> = {
+  critical: { label: '严重', color: '#f56c6c' },
+  high: { label: '高', color: '#e6a23c' },
+  medium: { label: '中', color: '#909399' },
+  low: { label: '低', color: '#c0c4cc' },
+}
+
+const severityTotal = computed(() => stats.value.findings_by_severity.reduce((s, x) => s + x.count, 0))
+const severityRows = computed(() =>
+  stats.value.findings_by_severity.map((x) => ({
+    label: SEVERITY_META[x.key]?.label ?? x.key,
+    value: x.count,
+    color: SEVERITY_META[x.key]?.color,
+    hint: pct(x.count, severityTotal.value),
+  })),
+)
+
+const STATE_META: Record<string, { label: string; color: string }> = {
+  running: { label: '运行中', color: '#409eff' },
+  queued: { label: '排队中', color: '#909399' },
+  completed: { label: '已完成', color: '#67c23a' },
+  failed: { label: '失败', color: '#f56c6c' },
+  skipped: { label: '跳过', color: '#e6a23c' },
+}
+const STATE_ORDER = ['running', 'queued', 'completed', 'failed', 'skipped']
+
+const stateTotal = computed(() => stats.value.tasks_by_state.reduce((s, x) => s + x.count, 0))
+const stateRows = computed(() =>
+  // 已知状态按 STATE_ORDER 排，未知状态（如 pending）追加在后
+  [...STATE_ORDER, ...stats.value.tasks_by_state.filter((x) => !STATE_ORDER.includes(x.key)).map((x) => x.key)]
+    .map((key) => stats.value.tasks_by_state.find((x) => x.key === key))
+    .filter((x): x is { key: string; count: number } => !!x)
+    .map((x) => ({
+      label: STATE_META[x.key]?.label ?? x.key,
+      value: x.count,
+      color: STATE_META[x.key]?.color ?? '#909399',
+      hint: pct(x.count, stateTotal.value),
+    })),
+)
+
+const providerTotal = computed(() => stats.value.provider_split.reduce((s, x) => s + x.count, 0))
+const providerRows = computed(() =>
+  stats.value.provider_split.map((x) => ({
+    label: x.key,
+    value: x.count,
+    color: '#409eff',
+    hint: pct(x.count, providerTotal.value),
+  })),
+)
+
+const modeTotal = computed(() => stats.value.tasks_by_mode.reduce((s, x) => s + x.count, 0))
+const MODE_META: Record<string, { label: string; color: string }> = {
+  agentic: { label: 'Agent 审查', color: '#722ed1' },
+  diff: { label: 'Diff 审查', color: '#13c2c2' },
+}
+const modeRows = computed(() =>
+  stats.value.tasks_by_mode.map((x) => ({
+    label: MODE_META[x.key]?.label ?? x.key,
+    value: x.count,
+    color: MODE_META[x.key]?.color ?? '#409eff',
+    hint: pct(x.count, modeTotal.value),
+  })),
+)
 
 function drawTrend() {
   if (!trendRef.value) return
@@ -196,25 +247,6 @@ function drawTrend() {
     },
     yAxis: { type: 'value', minInterval: 1 },
     series: [{ type: 'line', smooth: true, data: stats.value.reviews_by_day.map((d) => d.count) }],
-  })
-}
-
-function drawMode() {
-  if (!modeRef.value) return
-  ensure(modeRef.value).setOption({
-    tooltip: { trigger: 'item' },
-    legend: { bottom: 0 },
-    series: [
-      {
-        type: 'pie',
-        radius: ['40%', '68%'],
-        center: ['50%', '46%'],
-        data: stats.value.tasks_by_mode.map((s) => ({
-          name: s.key === 'agentic' ? 'agent' : s.key,
-          value: s.count,
-        })),
-      },
-    ],
   })
 }
 
@@ -352,48 +384,36 @@ function drawPhase() {
   const known = PHASE_ORDER.map((ph) => byKey.get(ph)).filter(Boolean) as PhaseBoxItem[]
   const extra = stats.value.phase_box.filter((p) => !PHASE_ORDER.includes(p.key))
   const boxes = [...known, ...extra]
-  // 雷达图：每个 phase 一根轴，四序列（最少/众数/平均/最多）叠成多边形，跨阶段对比。
-  // 每轴以该 phase 观测到的 max 为满标 → 各阶段在同一规格下比相对轮廓，避免低值阶段被压扁
-  const indicators = boxes.map((b) => ({ name: b.key, max: b.max }))
-  const pick = (f: (b: PhaseBoxItem) => number) => boxes.map(f)
+  // 散点覆盖平均/众数：[x 下标, 取值]，boxplot 数据 [min,q1,median,q3,max]
+  const boxData = boxes.map((b) => [b.min, b.q1, b.median, b.q3, b.max])
+  const meanPts = boxes.map((b, i) => [i, b.mean])
+  const modePts = boxes.map((b, i) => [i, b.mode])
   ensure(phaseRef.value).setOption({
     tooltip: {
       trigger: 'item',
       confine: true,
-      formatter: (p: { dataIndex: number; name: string; seriesName: string; value: number }) => {
+      formatter: (p: { dataIndex: number; seriesType?: string; value: number[] }) => {
         const b = boxes[p.dataIndex]
-        return `${b ? b.key : p.name} · ${p.seriesName}<br/>${p.value} 次` +
-          (b ? `<br/>参与 task: ${b.task_count} 个` : '')
+        if (!b) return ''
+        return `${b.key}<br/>参与 task: ${b.task_count} 个<br/>` +
+          `${p.seriesType === 'boxplot' ? `最少: ${p.value[0]}　中位: ${b.median}　最多: ${p.value[4]}<br/>` : ''}` +
+          `平均: ${b.mean}　众数: ${b.mode}<br/>Q1: ${b.q1}　Q3: ${b.q3}`
       },
     },
     legend: { bottom: 0 },
-    radar: {
-      indicator: indicators,
-      radius: '62%',
-      splitNumber: 4,
-      name: { textStyle: { fontSize: 11 } },
+    // left 预留 y 轴名('单次审查 LLM 调用数')空间：containLabel 不收纳轴名，太小会被左侧裁掉
+    grid: { containLabel: true, left: 16, right: 8, top: 24, bottom: 28 },
+    xAxis: {
+      type: 'category',
+      data: boxes.map((b) => b.key),
+      axisLabel: { rotate: 20, interval: 0 },
     },
+    yAxis: { type: 'value', minInterval: 1, name: '单次审查 LLM 调用数', nameGap: 10 },
     series: [
-      {
-        type: 'radar',
-        data: [
-          { name: '最少', value: pick((b) => b.min) },
-          { name: '众数', value: pick((b) => b.mode) },
-          { name: '平均', value: pick((b) => b.mean) },
-          { name: '最多', value: pick((b) => b.max) },
-        ],
-      },
+      { type: 'boxplot', data: boxData },
+      { name: '平均', type: 'scatter', symbol: 'diamond', symbolSize: 8, data: meanPts },
+      { name: '众数', type: 'scatter', symbol: 'rect', symbolSize: 8, data: modePts },
     ],
-  })
-}
-
-function drawBar(el: HTMLDivElement, items: { key: string; count: number }[]) {
-  ensure(el).setOption({
-    tooltip: {},
-    grid: { containLabel: true, left: 8, right: 16, top: 20, bottom: 8 },
-    xAxis: { type: 'category', data: items.map((i) => i.key) },
-    yAxis: { type: 'value' },
-    series: [{ type: 'bar', data: items.map((i) => i.count), barMaxWidth: 24 }],
   })
 }
 
@@ -402,7 +422,7 @@ function goDetail(id: number) {
 }
 
 // 响应式下窗口变化时让已初始化的图表实例 reflow 到新尺寸（而非被裁剪）
-const chartEls = [severityRef, trendRef, stateRef, providerRef, modeRef, scatterRef, tokenRef, costRef, durationRef, phaseRef]
+const chartEls = [trendRef, scatterRef, tokenRef, costRef, durationRef, phaseRef]
 function resizeCharts() {
   chartEls.forEach((r) => {
     const el = r.value
@@ -411,11 +431,7 @@ function resizeCharts() {
 }
 
 function redrawAll() {
-  drawSeverity()
   drawTrend()
-  if (stateRef.value) drawBar(stateRef.value, stats.value.tasks_by_state)
-  if (providerRef.value) drawBar(providerRef.value, stats.value.provider_split)
-  drawMode()
   drawScatter()
   drawToken()
   drawCost()
