@@ -23,7 +23,12 @@ const router = createRouter({
         {
           path: '/reviews',
           name: 'Reviews',
-          component: () => import('../views/ReviewsView.vue'),
+          component: () => import('../views/ReviewTabsView.vue'),
+        },
+        {
+          // 旧聚合页地址兜底：并入审查记录页的「MR 汇总」tab
+          path: '/reviews/prs',
+          redirect: { path: '/reviews', query: { tab: 'mr' } },
         },
         {
           path: '/reviews/:id',

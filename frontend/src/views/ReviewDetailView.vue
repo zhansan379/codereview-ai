@@ -61,7 +61,13 @@
         <el-button type="primary" plain @click="$router.push(`/reviews/${id}/conversation`)">
           <el-icon><ChatDotRound /></el-icon>&nbsp;原始对话
         </el-button>
-        <el-button type="success" plain @click="$router.push(`/reviews/${id}/compare`)">
+        <!-- 首轮无「上次」可对比，隐藏按钮（避免空页噪音） -->
+        <el-button
+          v-if="detail.prev_round_id != null"
+          type="success"
+          plain
+          @click="$router.push(`/reviews/${id}/compare`)"
+        >
           <el-icon><DataAnalysis /></el-icon>&nbsp;对比上次
         </el-button>
       </div>

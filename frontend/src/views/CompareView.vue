@@ -11,7 +11,7 @@
               <span class="count">{{ result.new.length }}</span>
             </div>
           </template>
-          <FindingTable :rows="result.new" empty="本轮无新增问题" severity-tag="danger" />
+          <FindingBucketTable :rows="result.new" empty="本轮无新增问题" severity-tag="danger" />
         </el-card>
 
         <el-card class="bucket bucket-resolved" shadow="never">
@@ -21,7 +21,7 @@
               <span class="count">{{ result.resolved.length }}</span>
             </div>
           </template>
-          <FindingTable :rows="result.resolved" empty="本轮已全部修复" severity-tag="success" />
+          <FindingBucketTable :rows="result.resolved" empty="本轮已全部修复" severity-tag="success" />
         </el-card>
 
         <el-card class="bucket bucket-persisting" shadow="never">
@@ -31,7 +31,7 @@
               <span class="count">{{ result.persisting.length }}</span>
             </div>
           </template>
-          <FindingTable :rows="result.persisting" empty="无持续存在的问题" severity-tag="warning" />
+          <FindingBucketTable :rows="result.persisting" empty="无持续存在的问题" severity-tag="warning" />
         </el-card>
 
         <el-card class="bucket bucket-not-reviewed" shadow="never">
@@ -41,7 +41,7 @@
               <span class="count">{{ result.not_reviewed.length }}</span>
             </div>
           </template>
-          <FindingTable :rows="result.not_reviewed" empty="无" severity-tag="info" />
+          <FindingBucketTable :rows="result.not_reviewed" empty="无" severity-tag="info" />
         </el-card>
       </div>
 
@@ -57,47 +57,10 @@
 </template>
 
 <script setup lang="ts">
-import { defineComponent, h, ref, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { fetchReviewCompare, type CompareResult, type CompareBucketItem } from '../api'
-
-// 直接把平铺 finding dict 渲染成紧凑表（不共享详情页扩展的表头，保持桶页简洁）。
-const FindingTable = defineComponent({
-  props: {
-    rows: { type: Array as () => CompareBucketItem[], default: () => [] },
-    empty: { type: String, default: '空' },
-    severityTag: { type: String, default: 'info' },
-  },
-  setup(props) {
-    const sevTag = (s: string): any => {
-      if (s === 'critical' || s === 'high' || s === 'error') return 'danger'
-      if (s === 'medium' || s === 'warning') return 'warning'
-      return 'info'
-    }
-    return () => {
-      if (!props.rows.length) {
-        return h('div', { class: 'empty-row' }, props.empty)
-      }
-      const rows = props.rows.map((r) =>
-        h('tr', { key: r.file + ':' + r.content }, [
-          h('td', { class: 'sev' }, h('el-tag', { type: sevTag(r.severity), size: 'small' }, r.severity)),
-          h('td', { class: 'file' }, r.file),
-          h('td', { class: 'line' }, r.line ?? r.old_line ?? '-'),
-          h('td', { class: 'cnt' }, r.content),
-        ])
-      )
-      return h('table', { class: 'bucket-table' }, [
-        h('thead', null, h('tr', null, [
-          h('th', null, '严重度'),
-          h('th', null, '文件'),
-          h('th', null, '行'),
-          h('th', null, '问题内容'),
-        ])),
-        h('tbody', null, rows),
-      ])
-    }
-  },
-})
+import { fetchReviewCompare, type CompareResult } from '../api'
+import FindingBucketTable from '../components/FindingBucketTable.vue'
 
 const route = useRoute()
 const id = Number(route.params.id)
@@ -135,43 +98,5 @@ onMounted(load)
 }
 .bucket :deep(.el-card__body) {
   padding: 8px 12px;
-}
-.bucket-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12.5px;
-}
-.bucket-table th,
-.bucket-table td {
-  border-bottom: 1px solid #f0f2f5;
-  padding: 6px 8px;
-  text-align: left;
-  vertical-align: top;
-}
-.bucket-table th {
-  color: #909399;
-  font-weight: 600;
-}
-.sev {
-  width: 70px;
-  white-space: nowrap;
-}
-.file {
-  width: 28%;
-  word-break: break-all;
-}
-.line {
-  width: 46px;
-  color: #909399;
-  white-space: nowrap;
-}
-.cnt {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.empty-row {
-  color: #909399;
-  font-size: 12.5px;
-  padding: 8px 4px;
 }
 </style>
