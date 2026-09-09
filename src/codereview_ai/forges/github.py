@@ -3,7 +3,8 @@
 字段路径对照 `reference/platform_payload_map.md` §3/§4。
 - webhook 的 `pull_request.head.sha` 是幂等键 head_sha；`base_sha` 直接用 `pull_request.base.sha`。
 - files API 一次返回全部改动文件，每项自带 unified `patch`、`additions/deletions`、`status`。
-- 新增文件（status=added）的全文可从 patch 直接还原（全是 `+` 行），供锚定定位的全文兜底。
+- 新增/修改文件的新侧全文可从该文件的完整 unified patch 还原（按 hunk 的新侧起始行号
+  铺回 `+` 行与上下文），供锚定定位、覆盖集、未变更复用、静态分析用的全文兜底。
 - GitHub 的 changes 同样可能延迟返回空数组 → `asyncio.sleep` + 指数退避重试（与 GitLab 一致）。
 - 回写：总结走 `issues/{n}/comments`，行级走单次 `pulls/{n}/reviews` 批量（event=COMMENT）。
 - 发批量的 HTTP 客户端在构造时注入（测试用 httpx.MockTransport，离线可测）。
@@ -12,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import replace
 from typing import Any
 
@@ -34,6 +36,9 @@ _STATUS_TO_CHANGE = {
     "changed": ChangeType.MODIFIED,
     "copied": ChangeType.MODIFIED,
 }
+
+#: unified diff hunk 头，取「新侧起始行号」（第二个 `+\d+`）。
+_HUNK_RE = re.compile(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 
 def parse_pull_request_payload(data: dict[str, Any]) -> PullRequest | None:
@@ -123,16 +128,39 @@ def _to_file_diff(item: dict[str, Any]) -> FileDiff:
 
 
 def _new_file_content_from_patch(patch: str, change: ChangeType) -> str:
-    """新增文件：patch 全是 `+` 行，剥前缀还原全文（供锚定全文兜底）。"""
-    if change is not ChangeType.NEW_FILE:
+    """从该文件的完整 unified patch 还原**新侧**全文；删除文件/无可还原行 → ""。
+
+    GitHub files API 每项的 `patch` 是这一文件从头到尾的完整 diff：每一行要么在某个
+    `@@ ... @@` hunk 内、要么是 `--- / +++` 元头或 `\\ No newline` 标记。因此可以按 hunk
+    头携带的**新侧起始行号**，把 `+`（新增）与 ` `（上下文）行铺回对应行号、`-`（删除）
+    行剔除，即得该文件在新 head 的完整正文。对 NEW_FILE 退化为「剥 `+` 前缀」；对
+    MODIFIED/RENAMED 也是同一套 apply，因此覆盖集/复用不再因修改文件无正文而失效。
+    """
+    if change is ChangeType.DELETED_FILE:
         return ""
-    lines: list[str] = []
+    modelines: dict[int, str] = {}
+    max_line = 0
+    new_no: int | None = None
     for raw in patch.splitlines():
-        if raw.startswith("+") and not raw.startswith("+++"):
-            lines.append(raw[1:])
-    if not lines:
+        if raw.startswith("@@"):
+            m = _HUNK_RE.match(raw)
+            new_no = int(m.group(1)) if m else None
+            continue
+        if raw.startswith("\\"):  # “\ No newline at end of file”
+            continue
+        if raw.startswith("---") or raw.startswith("+++"):
+            continue
+        if raw.startswith("-"):
+            continue
+        if raw.startswith("+") or raw.startswith(" "):
+            if new_no is None:
+                continue
+            modelines[new_no] = raw[1:]
+            max_line = max(max_line, new_no)
+            new_no += 1
+    if not modelines:
         return ""
-    return "\n".join(lines)
+    return "\n".join(modelines.get(i, "") for i in range(1, max_line + 1))
 
 
 def pull_request_from_item(item: dict[str, Any], repo_id: str = "") -> PullRequest | None:

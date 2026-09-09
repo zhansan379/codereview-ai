@@ -189,8 +189,36 @@ def test_to_file_diff_modified_keeps_summary_counts():
     assert d.deletions == 2
 
 
-def test_new_file_content_ignores_hunk_header():
-    assert _new_file_content_from_patch("@@ -0,0 +1,1 @@\n+x\n", ChangeType.MODIFIED) == ""
+def test_new_file_content_restores_modified_hunk():
+    # MODIFIED：hunk 头不混入内容，`+` 行铺回新文件
+    assert _new_file_content_from_patch("@@ -0,0 +1,1 @@\n+x\n", ChangeType.MODIFIED) == "x"
+    # 上下文行保留，`-` 删除行不进新文件
+    assert _new_file_content_from_patch(
+        "--- a.py\n+++ b.py\n@@ -1 +1,2 @@\n ctx\n+added\n", ChangeType.MODIFIED
+    ) == "ctx\nadded"
+
+
+def test_new_file_content_restores_multiple_hunks_by_line_number():
+    patch = (
+        "--- a.py\n+++ b.py\n"
+        "@@ -1,4 +1,4 @@\n line1\n-old\n+new\n line3\n"
+        "@@ -6,2 +6,2 @@\n keep1\n-rm\n+add\n"
+    )
+    got = _new_file_content_from_patch(patch, ChangeType.MODIFIED)
+    # 新行号：hunk1→1,2,3；hunk2→6,7；4/5 未触及补空
+    assert got == "line1\nnew\nline3\n\n\nkeep1\nadd"
+
+
+def test_new_file_content_ignores_no_newline_marker_and_metadata():
+    patch = (
+        "diff --git a/f.py b/f.py\nindex x..y 100644\n"
+        "--- a/f.py\n+++ b/f.py\n@@ -1 +1 @@\n kept\n\\ No newline at end of file\n"
+    )
+    assert _new_file_content_from_patch(patch, ChangeType.MODIFIED) == "kept"
+
+
+def test_new_file_content_deleted_is_empty():
+    assert _new_file_content_from_patch("", ChangeType.DELETED_FILE) == ""
 
 
 # ── fetch_files 拉取 + 空数组重试 ──────────────────────────────────────
