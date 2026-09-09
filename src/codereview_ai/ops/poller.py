@@ -5,9 +5,11 @@ webhook 之外补一条**主动通道**：按启用项目调 `ForgeAdapter.list_
 worker 异步消费（与 webhook 同一条审查核心 `review_pull_request`，见 worker.py）。补拉本身不再
 阻塞在 LLM 耗时上，页面只需要在「入队」这一瞬间等待几秒。
 
-复用跳过靠 `ReviewRepository.last_ok_review`：同 head 已 `completed` → 记为 `skipped`、不入队
-（与审查核心的 `REASON_ALREADY` 语义一致，避免无谓入队）。并发重复审查仍由 worker 内的
-per-head 锁兜底。
+复用跳过靠 `ReviewRepository.poll_skip`：同 head 已有「已处理」的 mr 行（`completed` 已审过 /
+`skipped` 门控跳过 / `queued`·`running` 在途）→ 记为 `skipped`、不入队（与审查核心的
+`REASON_ALREADY` 语义一致，避免无谓入队）。只有**全新 head** 或 `failed` 头才入队待审——
+存量 `mr_disabled` 跳过行因此不再被当成「新入队」重复投队；之后要重审的，走任务行的
+「补审」按钮（`force_rerun` 绕过门控）。并发重复审查仍由 worker 内的 per-head 锁兜底。
 
 - `run_once()`：扫全部启用项目一轮，返回报告供接口/日志展示（每项目、每 PR 异常隔离）。
 - `run_forever(stop_event, interval)`：asyncio 定时循环，到点跑一轮；`stop_event` 置位即退
@@ -92,9 +94,11 @@ class PRPoller:
                     pr.repo_full_name = proj.repo_full_name  # 补拉项无路径 → 用项目行
                 label = f"{pr.repo_full_name or proj.repo_full_name} pr#{pr.pr_number}"
                 try:
-                    # 1) 同 head 已 completed → 跳过，不入队（与审查核心 ALREADY 语义一致）。
-                    ref = await review_repo.last_ok_review(proj.provider, proj.repo_id, pr.pr_number)
-                    if ref and ref.head_sha == pr.head_sha:
+                    # 1) 同 head 已有「已处理」的 mr 行（completed 已审 / skipped 门控跳过 /
+                    #    queued·running 在途）→ 跳过，不入队（仅新 head 或 failed 头入队待审）。
+                    if await review_repo.poll_skip(
+                        proj.provider, proj.repo_id, pr.pr_number, pr.head_sha
+                    ):
                         report["skipped"] += 1
                         self.progress["skipped"] += 1
                         continue
