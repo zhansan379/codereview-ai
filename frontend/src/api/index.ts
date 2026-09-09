@@ -402,9 +402,6 @@ export function getReview(id: number): Promise<ReviewDetail> {
 export function deleteReview(id: number): Promise<any> {
   return client.delete(`/reviews/${id}`).then((r) => r.data)
 }
-export function setFindingStatus(id: number, status: 'waived' | 'active'): Promise<ReviewFinding> {
-  return client.post(`/reviews/findings/${id}/status`, { status }).then((r) => r.data)
-}
 
 // ===== agentic 对话 / 前后对比 =====
 export interface ConversationItem {

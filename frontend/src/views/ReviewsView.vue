@@ -239,7 +239,6 @@ const severityOptions = [
 const statusOptions = [
   { value: 'active', label: '待处理' },
   { value: 'resolved', label: '已解决' },
-  { value: 'waived', label: '已搁置' },
 ]
 const stateOptions: Record<string, string> = {
   queued: '排队中',

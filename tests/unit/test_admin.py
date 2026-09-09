@@ -318,7 +318,7 @@ def test_reviews_export_xlsx_filters(app):
             s.add(ReviewFinding(task_id=t1.id, fingerprint="h", severity="high",
                                 category="bug", file="a.py", title="t", status="active"))
             s.add(ReviewFinding(task_id=t1.id, fingerprint="m", severity="medium",
-                                category="perf", file="b.py", title="mm", status="waived"))
+                                category="perf", file="b.py", title="mm", status="active"))
             s.add(ReviewFinding(task_id=t2.id, fingerprint="c", severity="low",
                                 category="style", file="c.py", title="cc", status="active"))
             await s.commit()

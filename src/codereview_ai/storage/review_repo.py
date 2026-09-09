@@ -330,8 +330,7 @@ class ReviewRepository:
         （§7.3 保守门，防部分审查误判）。逐行：
         - `active` 且本轮缺席 → `resolved`（覆盖到已修复）；
         - `active` 且本轮仍在 → 刷新 `last_seen`；
-        - `resolved` 且本轮复现 → 回 `active`，`reopened_count += 1`；
-        - `waived` 永不自动改（人工忽略保持忽略）。
+        - `resolved` 且本轮复现 → 回 `active`，`reopened_count += 1`。
 
         返回「复现并回 active 的指纹集」，供 `insert_findings` 作 `skip_fingerprints` 去重。
         """
@@ -367,7 +366,6 @@ class ReviewRepository:
                         reopen.add(row.fingerprint)
                     elif row.status == "active":
                         row.last_seen = now
-                    # waived：永不自动改
                 elif row.status == "active":
                     row.status = "resolved"
                     row.last_seen = now

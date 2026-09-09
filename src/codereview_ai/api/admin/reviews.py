@@ -91,10 +91,6 @@ class ReviewDetail(ReviewListItem):
     prev_round_id: int | None = None
 
 
-class FindingStatusUpdate(BaseModel):
-    status: str
-
-
 class ReviewFindingOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -201,7 +197,6 @@ _SEVERITY_LABELS = {
 _STATUS_LABELS = {
     "active": "待处理",
     "resolved": "已解决",
-    "waived": "已搁置",
 }
 _SOURCE_LABELS = {"llm": "LLM", "static": "静态分析"}
 
@@ -621,32 +616,3 @@ async def compare_review(
         "resolved": result.resolved,
         "not_reviewed": result.not_reviewed,
     }
-
-
-@router.post("/findings/{finding_id}/status", response_model=ReviewFindingOut)
-async def set_finding_status(
-    finding_id: int,
-    body: FindingStatusUpdate,
-    session: AsyncSession = Depends(get_db),
-) -> ReviewFinding:
-    """人工更新 finding 状态（DESIGN §7.3）：`waived`（搁置/忽略）↔ `active`（恢复）。
-
-    `resolved` 由 worker 非增量全量对账自动托管，禁止手改（防误判已解决埋 bug）。
-    """
-    if body.status not in {"waived", "active"}:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "仅支持 waived/active；resolved 由系统对账托管，禁止手改",
-        )
-    from codereview_ai.storage.models import _utcnow
-
-    row = (await session.execute(
-        select(ReviewFinding).where(ReviewFinding.id == finding_id)
-    )).scalar_one_or_none()
-    if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "finding 不存在")
-    row.status = body.status
-    row.last_seen = _utcnow()
-    await session.commit()
-    await session.refresh(row)
-    return row

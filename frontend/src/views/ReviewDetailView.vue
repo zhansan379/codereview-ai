@@ -132,28 +132,6 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="90" align="center">
-          <template #default="{ row }">
-            <el-button
-              v-if="row.status === 'active'"
-              type="warning"
-              size="small"
-              plain
-              link
-              :disabled="busy"
-              @click="onFindingStatus(row, 'waived')"
-            >搁置</el-button>
-            <el-button
-              v-if="row.status === 'waived'"
-              type="primary"
-              size="small"
-              plain
-              link
-              :disabled="busy"
-              @click="onFindingStatus(row, 'active')"
-            >恢复</el-button>
-          </template>
-        </el-table-column>
       </el-table>
     </el-card>
   </div>
@@ -164,7 +142,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ChatDotRound, DataAnalysis, DocumentCopy } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { getReview, setFindingStatus, type ReviewDetail, type ReviewFinding } from '../api'
+import { getReview, type ReviewDetail, type ReviewFinding } from '../api'
 import { formatTime, stateTagType, stateLabel, modeLabel, modeTagType } from '../utils/format'
 
 const route = useRoute()
@@ -175,13 +153,11 @@ const busy = ref(false)
 
 function findingStatusTag(status: string | null): any {
   if (status === 'resolved') return 'success'
-  if (status === 'waived') return 'warning'
   return 'info'
 }
 
 function statusLabel(status: string | null): string {
   if (status === 'resolved') return '已解决'
-  if (status === 'waived') return '已搁置'
   return '待处理'
 }
 
@@ -300,16 +276,6 @@ async function load() {
     detail.value = await getReview(id)
   } finally {
     loading.value = false
-  }
-}
-
-async function onFindingStatus(row: ReviewFinding, status: 'waived' | 'active') {
-  busy.value = true
-  try {
-    await setFindingStatus(row.id, status)
-    await load()
-  } finally {
-    busy.value = false
   }
 }
 
