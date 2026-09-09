@@ -71,7 +71,7 @@
           <el-select
             v-model="form.project_id"
             clearable
-            value-on-clear="null"
+            :value-on-clear="null"
             :placeholder="projects.length ? '请选择项目' : '暂无项目'"
             :loading="projectsLoading"
             style="width: 100%"
@@ -140,6 +140,9 @@ async function loadProjects() {
   projectsLoading.value = true
   try {
     projects.value = await listProjects()
+  } catch (e: any) {
+    projects.value = []
+    ElMessage.error(e?.message || '项目列表加载失败')
   } finally {
     projectsLoading.value = false
   }
