@@ -24,6 +24,7 @@ from codereview_ai.forges.base import (
     ForgeAdapter,
     change_type_from_flags,
     count_diff_stats,
+    new_file_content_from_patch,
     repo_path_from_url,
 )
 from codereview_ai.forges.signatures import GITLAB
@@ -106,19 +107,21 @@ def _to_file_diff(item: dict[str, Any]) -> FileDiff:
     new_path = str(item.get("new_path") or old_path)
     diff = str(item.get("diff") or "")
     adds, dels = count_diff_stats(diff)
+    change_type = change_type_from_flags(
+        is_new=bool(item.get("new_file")),
+        is_deleted=bool(item.get("deleted_file")),
+        is_renamed=bool(item.get("renamed_file")),
+    )
     return FileDiff(
         old_path=old_path,
         new_path=new_path,
         diff=diff,
         additions=adds,
         deletions=dels,
-        change_type=change_type_from_flags(
-            is_new=bool(item.get("new_file")),
-            is_deleted=bool(item.get("deleted_file")),
-            is_renamed=bool(item.get("renamed_file")),
-        ),
-        # GitLab changes API 不返回文件全文；全文兜底留给后续按文件补抓（M3）。
-        new_file_content="",
+        change_type=change_type,
+        # changes API 的 diff 是完整 unified patch，可直接还原新侧全文，
+        # 供覆盖集/未变更复用判定（修改文件此前恒空导致覆盖集失效，已修复）。
+        new_file_content=new_file_content_from_patch(diff, change_type),
     )
 
 

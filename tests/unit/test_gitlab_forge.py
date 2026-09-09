@@ -115,7 +115,7 @@ def test_to_file_diff_new_flag():
     assert d.change_type == ChangeType.NEW_FILE
     assert d.additions == 2
     assert d.deletions == 0
-    assert d.new_file_content == ""
+    assert d.new_file_content == "line1\nline2"
 
 
 def test_to_file_diff_deleted_and_renamed():
@@ -123,6 +123,21 @@ def test_to_file_diff_deleted_and_renamed():
     assert deleted.change_type == ChangeType.DELETED_FILE
     renamed = _to_file_diff({"old_path": "old.py", "new_path": "new.py", "renamed_file": True, "diff": ""})  # noqa: E501
     assert renamed.change_type == ChangeType.RENAMED_FILE
+
+
+def test_to_file_diff_modified_restores_new_content():
+    item = {
+        "old_path": "a.py",
+        "new_path": "a.py",
+        "new_file": False,
+        "deleted_file": False,
+        "renamed_file": False,
+        "diff": "--- a.py\n+++ b.py\n@@ -1 +1,2 @@\n ctx\n+added\n",
+    }
+    d = _to_file_diff(item)
+    assert d.change_type == ChangeType.MODIFIED
+    # 修改文件也要能还原新侧全文（覆盖集/复用判定依据），不再是空串
+    assert d.new_file_content == "ctx\nadded"
 
 
 # ── fetch_files 拉取 + 空数组重试 ──────────────────────────────────────
