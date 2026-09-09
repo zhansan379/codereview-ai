@@ -110,6 +110,12 @@ class ReviewTask(Base):
     summary_md: Mapped[str] = mapped_column(Text, default="")
     score_total: Mapped[int] = mapped_column(Integer, default=0)
     issues: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    # 执行态快照（仪表盘 agent/diff 区分与复杂度→成本分析用）。
+    # exec_mode=实际跑的路径（agentic 可能因沙箱关/0 条产出降级为 diff，库内一律记真实值）。
+    exec_mode: Mapped[str] = mapped_column(String(16), default="diff")
+    diff_lines: Mapped[int] = mapped_column(Integer, default=0)  # 新增+删除行合计
+    chat_rounds: Mapped[int] = mapped_column(Integer, default=0)  # LLM 调用/对话轮数
+    tool_calls: Mapped[int] = mapped_column(Integer, default=0)  # 工具调用累计
     # 原始 webhook body；重试时据此回放重新入队（否则 simple 档内存队列不会消费 DB 侧 flip 的 queued）
     payload: Mapped[str] = mapped_column(Text, default="")
 

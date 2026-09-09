@@ -144,6 +144,8 @@ class _RecordingReviewRepo:
 
     def __init__(self) -> None:
         self.states: list[str] = []
+        self.exec_modes: list[str] = []
+        self.metrics: list[tuple[int, int, int]] = []
 
     async def last_ok_review(self, *a, **k):
         return None
@@ -163,6 +165,10 @@ class _RecordingReviewRepo:
     async def set_coverage(self, *a, **k):
         pass  # 覆盖集写入（diff_snapshot，未变更文件复用用）—— 桩不落 DB
 
+    async def set_exec_metrics(self, task_id, *, exec_mode, diff_lines, chat_rounds, tool_calls):
+        self.exec_modes.append(exec_mode)
+        self.metrics.append((diff_lines, chat_rounds, tool_calls))
+
     async def last_covered(self, *a, **k):
         return None
 
@@ -177,6 +183,10 @@ async def test_process_marks_running_then_completed():
     )
     assert "running" in repo.states
     assert repo.states[-1] == "completed"
+    # 默认 diff 策略 → exec_mode/diff_lines/chat/tool 随收尾一起落库
+    assert repo.exec_modes == ["diff"]
+    assert len(repo.metrics) == 1
+    assert repo.metrics[0][0] == 2  # _FakeForge MR diff：1 增 + 1 删 = 2 变更行
 
 
 async def test_concurrent_same_head_reviews_only_once(tmp_path):
@@ -547,3 +557,30 @@ async def test_enqueue_pr_worker_consumes_and_reviews(tmp_path):
     async with session_factory(engine)() as s:
         row = (await s.execute(select(ReviewTask))).scalar_one()
     assert row.state == "completed" and row.pr_number == 999
+
+
+def test_count_diff_lines_added_minus():
+    """diff_lines 口径：只数 /^[+-]/ 变更行、跳过 +++/--- hunk 头，新增+删除合计。"""
+    from types import SimpleNamespace
+
+    from codereview_ai.worker import _count_diff_lines
+
+    diffs = [
+        SimpleNamespace(diff="""\
+--- a/old.py
++++ b/new.py
+@@ -1,3 +1,4 @@
+ context
++added line
+-removed line
++another
+"""),
+        SimpleNamespace(diff="""\
+--- a/one.txt
++++ b/one.txt
+@@ -0,0 +1,1 @@
++only new
+"""),
+    ]
+    # 3 个变更行（added/removed/added）+ 1（only new）= 4；---/+++ 头与 @@ 不计
+    assert _count_diff_lines(diffs) == 4

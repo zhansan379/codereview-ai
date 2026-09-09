@@ -134,6 +134,26 @@ class PushGate:
         return self.branch_match(branch) if self.branch_match else True
 
 
+def _count_diff_lines(diffs: list[FileDiff]) -> int:
+    """diff 行数口径 = 新增+删除行合计（供 `review_task.diff_lines` 复杂度度量）。
+
+    只数以 `+`/`-` 开头的变更行；跳过 `+++`/`---` 的 hunk 头文件标记（非实际改动）。
+    """
+    total = 0
+    for d in diffs:
+        for line in d.diff.splitlines():
+            if line.startswith(("+", "-")) and not line.startswith(("+++", "---")):
+                total += 1
+    return total
+
+
+def _exec_metrics(recorder: ConversationRecorder | None) -> tuple[int, int]:
+    """取 (chat_rounds, tool_calls)；未采集对话（recorder 为 None）记 0。"""
+    if recorder is None:
+        return 0, 0
+    return recorder.metrics()
+
+
 async def _review_agent_or_diff(
     reviewer: Reviewer,
     grouper: SemanticGrouper | None,
@@ -145,9 +165,12 @@ async def _review_agent_or_diff(
     agent_runtime: SandboxRuntime | None,
     agent_llm_factory: Callable[[], AgentLLM] | None,
     agent_config: AgentConfig | None = None,
-) -> ReviewResult:
+) -> tuple[ReviewResult, str]:
     """按 `strategy` 调度审查：`agentic` 走沙箱，否则普通 diff 分组审查。
 
+    返回 (result, exec_mode)：`exec_mode` 记录**实际走通**的路径（agentic 会在沙箱
+    关闭 `SandboxDisabled`、或非平凡 diff 产出 0 条时降级为 diff）——调用方据此落库，
+    让仪表盘能按真实模式区分 agent/diff。
     agentic 需 `agent_runtime` 与 `agent_llm_factory` 都配置；任一步骤异常（含沙箱
     默认关 `SandboxDisabled`）→ **整条降级为 diff 审查**（DESIGN §12.4 B9），保证
     至少一条普通 review 落回，不把 agent 的失败转成任务级 failed 丢失审查。
@@ -166,17 +189,21 @@ async def _review_agent_or_diff(
                     "agentic 产出 0 条，降级普通 diff 审查兜底（diffs=%d）",
                     len(diffs),
                 )
-                return await review_in_groups(
-                    reviewer, grouper, pr=pr, commits_text=commits_text, diffs=diffs,
-                    static_findings=static_findings,
+                return (
+                    await review_in_groups(
+                        reviewer, grouper, pr=pr, commits_text=commits_text, diffs=diffs,
+                        static_findings=static_findings,
+                    ),
+                    "diff",
                 )
-            return result
+            return result, "agentic"
         except SandboxDisabled as exc:
             logger.warning("agentic 不可用，降级为普通 diff 审查：%s", exc)
-    return await review_in_groups(
+    diff_result = await review_in_groups(
         reviewer, grouper, pr=pr, commits_text=commits_text, diffs=diffs,
         static_findings=static_findings,
     )
+    return diff_result, "diff"
 
 
 def _commits_text(ev: PushEvent) -> str:
@@ -494,7 +521,7 @@ async def _do_review_pull_request(
         static_findings = await _run_static(static_analyzer, diffs)
         # 审查的 LLM 调用经 contextvar 采集进 review_conversation（adapter 读到 recorder 即采）
         async with conversation_capture(recorder):
-            result = await _review_agent_or_diff(
+            result, exec_mode = await _review_agent_or_diff(
                 reviewer, grouper, pr=refreshed, commits_text=refreshed.title, diffs=diffs,
                 static_findings=static_findings, strategy=review_strategy,
                 agent_runtime=agent_runtime, agent_llm_factory=agent_llm_factory,
@@ -524,6 +551,13 @@ async def _do_review_pull_request(
                 # 本轮覆盖集（new_path→sha1(new)）落 diff_snapshot：供下轮未变更文件复用
                 # 与 /compare 的 not_reviewed 判定。
                 await review_repo.set_coverage(task_id, covered_file_map(diffs))
+                # 执行态四列快照（exec_mode=实际路径；chat/tool 轮数取对话采集累计）
+                chat_rounds, tool_calls = _exec_metrics(recorder)
+                await review_repo.set_exec_metrics(
+                    task_id, exec_mode=exec_mode,
+                    diff_lines=_count_diff_lines(diffs),
+                    chat_rounds=chat_rounds, tool_calls=tool_calls,
+                )
                 await review_repo.mark_state(
                     task_id, state="completed", summary_md=result.summary,
                     score_total=result.scores.total,
@@ -740,7 +774,7 @@ async def _review_push_event(
             return
         pr = _push_as_pr(ev)
         static_findings = await _run_static(static_analyzer, diffs)
-        result = await _review_agent_or_diff(
+        result, exec_mode = await _review_agent_or_diff(
             reviewer, grouper, pr=pr, commits_text=_commits_text(ev), diffs=diffs,
             static_findings=static_findings, strategy=review_strategy,
             agent_runtime=agent_runtime, agent_llm_factory=agent_llm_factory,
@@ -752,6 +786,11 @@ async def _review_push_event(
             notifier.launch(pr, result)
         if review_repo is not None:
             await review_repo.insert_findings(audit_id, result.findings)
+            # push 轨当前不采集对话，chat/tool 轮数记 0；exec_mode/diff_lines 照实落库
+            await review_repo.set_exec_metrics(
+                audit_id, exec_mode=exec_mode,
+                diff_lines=_count_diff_lines(diffs), chat_rounds=0, tool_calls=0,
+            )
             await review_repo.mark_state(
                 audit_id, state="completed", summary_md=result.summary,
                 score_total=result.scores.total,

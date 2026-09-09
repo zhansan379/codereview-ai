@@ -78,8 +78,10 @@ async def test_record_writes_row_and_seq_monotonic(engine: AsyncEngine):
     await rec.record("main", request=[{"role": "user", "content": "hello"}],
                      response={"content": "hi", "tool_calls": [], "usage": {"total_tokens": 9}},
                      model="claude-m")
-    await rec.record("scoring", request=[{"role": "assistant", "content": "x"}],
-                     response={"content": '{"ok":1}'}, model="claude-m")
+    # 第三条带 2 个 tool_calls → 计入 metrics().tool_calls（worker 收尾同源采集）
+    await rec.record("scoring", request=[{"role": "user", "content": "x"}],
+                     response={"content": '{"ok":1}', "tool_calls": [{"id": "a"}, {"id": "b"}]},
+                     model="claude-m")
 
     session = session_factory(engine)
     async with session() as s:
@@ -93,6 +95,8 @@ async def test_record_writes_row_and_seq_monotonic(engine: AsyncEngine):
     assert rows[0].model == "claude-m" and rows[0].trace_id == "trace-abc"
     assert json.loads(rows[0].request_json)[0]["content"] == "hello"
     assert json.loads(rows[0].response_json)["content"] == "hi"
+    # 内存累计指标：轮数=条数，工具调用数只数带 tool_calls 的那条（2 个）
+    assert rec.metrics() == (2, 2)
 
 
 async def test_record_noop_when_task_id_none(engine: AsyncEngine):

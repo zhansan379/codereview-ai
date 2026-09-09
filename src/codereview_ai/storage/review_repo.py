@@ -332,6 +332,32 @@ class ReviewRepository:
             row.diff_snapshot = json.dumps(covered, ensure_ascii=False, sort_keys=True)
             await s.commit()
 
+    async def set_exec_metrics(
+        self,
+        task_id: int,
+        *,
+        exec_mode: str = "diff",
+        diff_lines: int = 0,
+        chat_rounds: int = 0,
+        tool_calls: int = 0,
+    ) -> None:
+        """写执行态快照四列（仪表盘 agent/diff 区分 + 复杂度×成本散点依据）。
+
+        `exec_mode` 记录**实际跑通**的路径（agentic 降级时由调用方落 'diff'）。
+        """
+        session = session_factory(self._engine)
+        async with session() as s:
+            row = (await s.execute(
+                select(ReviewTask).where(ReviewTask.id == task_id)
+            )).scalar_one_or_none()
+            if row is None:
+                return
+            row.exec_mode = exec_mode
+            row.diff_lines = diff_lines
+            row.chat_rounds = chat_rounds
+            row.tool_calls = tool_calls
+            await s.commit()
+
     async def last_covered(
         self, provider: str, repo_id: str, pr_number: int
     ) -> dict[str, str] | None:

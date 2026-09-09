@@ -438,11 +438,12 @@ async def test_strategy_agentic_degrades_to_diff(tmp_path):
     # strategy=agentic 但沙箱关 → 降级普通 diff 审查仍产出（§12.4 B9）
     from codereview_ai.worker import _review_agent_or_diff
 
-    result = await _review_agent_or_diff(
+    result, mode = await _review_agent_or_diff(
         _FakeReviewer(), None, _pr(), "t", _diffs(tmp_path), [],
         strategy="agentic", agent_runtime=_BrokenRuntime(),
         agent_llm_factory=lambda: _FakeLLM([]),
     )
+    assert mode == "diff"  # 沙箱关 → 声明 agentic、实落 diff
     assert len(result.findings) == 1
     assert result.findings[0].content == "diff 意见"
 
@@ -451,12 +452,13 @@ async def test_strategy_agentic_zero_findings_falls_back_to_diff(tmp_path):
     # agentic 跑完但 0 条意见（agent 未调用 code_comment）→ 降级普通 diff 审查兜底，绝不高成空成功
     from codereview_ai.worker import _review_agent_or_diff
 
-    result = await _review_agent_or_diff(
+    result, mode = await _review_agent_or_diff(
         _FakeReviewer(), None, _pr(), "t", _diffs(tmp_path), [],
         strategy="agentic", agent_runtime=FakeRuntime(),
         agent_llm_factory=lambda: _FakeLLM(
             [AgentTurn(tool_calls=[ToolCall("task_done", {"state": "DONE"})])]),
     )
+    assert mode == "diff"  # agent 非平凡 diff 产出 0 条 → 降级 diff
     assert len(result.findings) == 1
     assert result.findings[0].content == "diff 意见"  # 来自 diff 兜底，而非空 agentic
     assert result.findings[0].source != "agent"
@@ -465,10 +467,11 @@ async def test_strategy_agentic_zero_findings_falls_back_to_diff(tmp_path):
 async def test_strategy_diff_uses_diff_review(tmp_path):
     from codereview_ai.worker import _review_agent_or_diff
 
-    result = await _review_agent_or_diff(
+    result, mode = await _review_agent_or_diff(
         _FakeReviewer(), None, _pr(), "t", _diffs(tmp_path), [],
         strategy="diff", agent_runtime=None, agent_llm_factory=None,
     )
+    assert mode == "diff"
     assert result.findings[0].content == "diff 意见"
 
 

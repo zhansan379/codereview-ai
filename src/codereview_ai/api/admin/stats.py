@@ -40,6 +40,18 @@ class ModelUsageItem(BaseModel):
     total_tokens: int
 
 
+class AgentScatterItem(BaseModel):
+    """复杂度×成本散点单点（一条 agent 审查）。
+
+    diff_lines=新增+删除合计；duration_s=started→finished 纯 agent 运行秒；tool_calls、
+    chat_rounds 反映探索轮数。论证「越复杂 → 工具轮数越多 → 响应越久」。
+    """
+    diff_lines: int
+    duration_s: int
+    chat_rounds: int
+    tool_calls: int
+
+
 class StatsOut(BaseModel):
     total_tasks: int
     total_findings: int
@@ -51,6 +63,10 @@ class StatsOut(BaseModel):
     reviews_by_day: list[ReviewsByDay]
     model_usage: list[ModelUsageItem]
     provider_split: list[CountItem]
+    tasks_by_mode: list[CountItem]  # exec_mode 分布（agent / diff）
+    agent_task_count: int  # agent 实际执行的任务数
+    avg_chat_rounds: float  # agent 平均对话轮数
+    agent_scatter: list[AgentScatterItem]
 
 
 async def _counts(session: AsyncSession, col: Any) -> list[CountItem]:
@@ -85,6 +101,44 @@ async def aggregate_stats(session: AsyncSession) -> StatsOut:
     findings_by_severity = await _counts(session, ReviewFinding.severity)
     findings_by_category = await _counts(session, ReviewFinding.category)
     provider_split = await _counts(session, ReviewTask.provider)
+    tasks_by_mode = await _counts(session, ReviewTask.exec_mode)
+
+    # agent 实际执行任务数 + 平均对话轮数（KPI 用；exec_mode 由 worker 落真实路径）
+    agent_row = (await session.execute(
+        select(
+            func.count(),
+            func.coalesce(func.avg(ReviewTask.chat_rounds), 0),
+        ).where(ReviewTask.exec_mode == "agentic")
+    )).one()
+    agent_task_count = int(agent_row[0] or 0)
+    avg_chat_rounds = round(float(agent_row[1] or 0), 2)
+
+    # 复杂度×成本散点：最近 200 条完成、时间戳齐全的 agent 审查
+    #（duration_s 取 started→finished 纯运行时长，不含排队；仅 agent 模式，diff 无工具轮数）。
+    scatter_rows = (await session.execute(
+        select(
+            ReviewTask.diff_lines, ReviewTask.started_at, ReviewTask.finished_at,
+            ReviewTask.chat_rounds, ReviewTask.tool_calls,
+        )
+        .where(
+            ReviewTask.exec_mode == "agentic",
+            ReviewTask.state == "completed",
+            ReviewTask.started_at.isnot(None),
+            ReviewTask.finished_at.isnot(None),
+        )
+        .order_by(ReviewTask.id.desc())
+        .limit(200)
+    )).all()
+    agent_scatter = [
+        AgentScatterItem(
+            diff_lines=int(r[0] or 0),
+            duration_s=int((r[2] - r[1]).total_seconds()),
+            chat_rounds=int(r[3] or 0),
+            tool_calls=int(r[4] or 0),
+        )
+        for r in scatter_rows
+        if r[1] is not None and r[2] is not None and (r[2] - r[1]).total_seconds() >= 0
+    ]
 
     # 近 14 天每日审查量（服务端补零，缺失日期填 0）
     today = datetime.now(UTC).date()
@@ -123,6 +177,8 @@ async def aggregate_stats(session: AsyncSession) -> StatsOut:
         tasks_by_state=tasks_by_state, findings_by_severity=findings_by_severity,
         findings_by_category=findings_by_category, reviews_by_day=reviews_by_day,
         model_usage=model_usage, provider_split=provider_split,
+        tasks_by_mode=tasks_by_mode, agent_task_count=agent_task_count,
+        avg_chat_rounds=avg_chat_rounds, agent_scatter=agent_scatter,
     )
 
 

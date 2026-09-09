@@ -57,6 +57,26 @@
       </el-col>
     </el-row>
 
+    <el-row :gutter="20" class="charts-row">
+      <el-col :span="8">
+        <el-card>
+          <template #header>审查模式分布（agent / diff）</template>
+          <div ref="modeRef" class="chart chart-sm"></div>
+        </el-card>
+      </el-col>
+      <el-col :span="16">
+        <el-card>
+          <template #header>
+            Agent 复杂度 × 成本
+            <span class="scatter-sub">
+              {{ stats.agent_task_count }} 次 agent 审查 · 平均 {{ stats.avg_chat_rounds }} 轮
+            </span>
+          </template>
+          <div ref="scatterRef" class="chart"></div>
+        </el-card>
+      </el-col>
+    </el-row>
+
     <el-card class="table-card">
       <template #header>最近记录</template>
       <ReviewsTable :items="recent" :loading="loading" time-field="finished_at" @detail="goDetail" />
@@ -75,6 +95,8 @@ const severityRef = ref<HTMLDivElement>()
 const trendRef = ref<HTMLDivElement>()
 const stateRef = ref<HTMLDivElement>()
 const providerRef = ref<HTMLDivElement>()
+const modeRef = ref<HTMLDivElement>()
+const scatterRef = ref<HTMLDivElement>()
 const router = useRouter()
 const recent = ref<ReviewItem[]>([])
 const loading = ref(false)
@@ -89,6 +111,10 @@ const stats = ref<DashboardStats>({
   reviews_by_day: [],
   model_usage: [],
   provider_split: [],
+  tasks_by_mode: [],
+  agent_task_count: 0,
+  avg_chat_rounds: 0,
+  agent_scatter: [],
 })
 
 function drawSeverity() {
@@ -122,6 +148,56 @@ function drawTrend() {
   })
 }
 
+function drawMode() {
+  if (!modeRef.value) return
+  echarts.init(modeRef.value).setOption({
+    tooltip: { trigger: 'item' },
+    legend: { bottom: 0 },
+    series: [
+      {
+        type: 'pie',
+        radius: ['40%', '68%'],
+        center: ['50%', '46%'],
+        data: stats.value.tasks_by_mode.map((s) => ({
+          name: s.key === 'agentic' ? 'agent' : s.key,
+          value: s.count,
+        })),
+      },
+    ],
+  })
+}
+
+function drawScatter() {
+  if (!scatterRef.value) return
+  const pts = stats.value.agent_scatter
+  const maxCalls = Math.max(1, ...pts.map((p) => p.tool_calls))
+  echarts.init(scatterRef.value).setOption({
+    tooltip: {
+      trigger: 'item',
+      formatter: (p: { value: number[] }) =>
+        `diff 行数: ${p.value[0]}<br/>耗时: ${p.value[1]}s<br/>轮数: ${p.value[2]}<br/>工具调用: ${p.value[3]}`,
+    },
+    grid: { left: 56, right: 24, top: 28, bottom: 44 },
+    xAxis: { type: 'value', name: 'diff 行数', minInterval: 1 },
+    yAxis: { type: 'value', name: '耗时 (s)' },
+    visualMap: {
+      dimension: 3,
+      min: 0,
+      max: maxCalls,
+      itemHeight: 110,
+      text: ['工具调用', '少'],
+      seriesIndex: 0,
+    },
+    series: [
+      {
+        type: 'scatter',
+        data: pts.map((p) => [p.diff_lines, p.duration_s, p.chat_rounds, p.tool_calls]),
+        symbolSize: (val: number[]) => 8 + Math.min(24, (val[3] || 0) * 2),
+      },
+    ],
+  })
+}
+
 function drawBar(el: HTMLDivElement, items: { key: string; count: number }[]) {
   echarts.init(el).setOption({
     tooltip: {},
@@ -149,6 +225,8 @@ async function loadDash() {
     drawTrend()
     if (stateRef.value) drawBar(stateRef.value, dash.tasks_by_state)
     if (providerRef.value) drawBar(providerRef.value, dash.provider_split)
+    drawMode()
+    drawScatter()
   } finally {
     loading.value = false
   }
@@ -175,6 +253,12 @@ onMounted(loadDash)
 }
 .chart-sm {
   height: 240px;
+}
+.scatter-sub {
+  font-size: 13px;
+  font-weight: 400;
+  color: #909399;
+  margin-left: 8px;
 }
 .table-card {
   margin-top: 20px;
