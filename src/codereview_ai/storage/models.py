@@ -168,6 +168,9 @@ class ReviewConversation(Base):
     phase: Mapped[str] = mapped_column(String(32), default="loop")
     model: Mapped[str] = mapped_column(String(64), default="")
     trace_id: Mapped[str] = mapped_column(String(64), default="")
+    # 该轮所在文件组的 key（排序后 new_path 逗号连接，见 group_review._group_key）。
+    # 空 = 未分组/整组一次（小改动或历史行）；组审查时每轮随 ACTIVE_GROUP 逐卡带上。
+    file_group: Mapped[str] = mapped_column(Text, default="")
     request_json: Mapped[str] = mapped_column(Text, default="")
     response_json: Mapped[str] = mapped_column(Text, default="")
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

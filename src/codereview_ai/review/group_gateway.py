@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from codereview_ai.review.agentic.capture import ACTIVE_RECORDER
 from codereview_ai.review.agentic.prompts import GROUPING_TASK_SYSTEM, GROUPING_TASK_USER
 from codereview_ai.review.grouping import GroupLLM
 from codereview_ai.review.llm_gateway import LLMGateway, repair_json_array
@@ -27,10 +28,21 @@ class LLMGroupAdapter:
     async def group_metadata(self, entries: list[str], max_files: int) -> list[list[str]] | None:
         """`GroupLLM` 契约：文件元数据 → 纯路径组；失败/坏 JSON → None（外层降级）。"""
         user = GROUPING_TASK_USER.replace("{{file_list}}", "\n".join(entries))
-        raw = await self._gateway.complete([
+        messages = [
             {"role": "system", "content": GROUPING_TASK_SYSTEM},
             {"role": "user", "content": user},
-        ])
+        ]
+        raw = await self._gateway.complete(messages)
+        # 分组调用 = 一条独立的 `grouping` 轮，走对话采集，让会话页出现「文件分组」泳道
+        # （对齐上游 grouping_task）。无 usage（complete 只回文本）；异常被 record 内部吞掉不阻断分组。
+        rec = ACTIVE_RECORDER.get()
+        if rec is not None:
+            await rec.record(
+                "grouping",
+                request=messages,
+                response={"content": raw, "tool_calls": [], "usage": None},
+                model=self._gateway.model or "",
+            )
         obj = repair_json_array(raw)
         if obj is None:
             return None

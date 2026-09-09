@@ -410,6 +410,7 @@ export interface ConversationItem {
   phase: string
   model: string
   trace_id: string
+  file_group: string
   request: any
   response: any
   ts: string
