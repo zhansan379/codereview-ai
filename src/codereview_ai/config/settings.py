@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     # —— 静态分析融合（§11：默认开，缺工具自动降级）——
     review_static_enabled: bool = True
     static_workspace_dir: str = ""  # 临时工作区目录；空 = 系统临时目录
+    semgrep_rules_dir: str = ""  # 本地规则目录；空=registry(p/ci)优先、失败内置包兜底
 
     # —— agentic 审查（§12：默认关；开启后勾 agentic 的项目走「clone 全仓→只读工具」——
     agent_review_enabled: bool = False  # 全局总开关；项目级 review_strategy="agentic" 时才真正走

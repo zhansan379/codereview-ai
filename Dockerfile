@@ -25,6 +25,11 @@ RUN uv sync --frozen --no-dev
 # 拷前端构建产物（/admin SPA；mount_admin 找不到 frontend/dist 时后台页 404，见 admin_ui.py）
 COPY frontend/dist ./frontend/dist
 
+# semgrep：静态分析层（DESIGN §11）在 PATH 上找 `semgrep` 二进制。它不在项目
+# dependencies（是独立 CLI，subprocess 调用），故单独 pip 装——必须在切到 appuser 之前装，
+# 否则 appuser 无写权限；规则用的是内置本地包（semgrep_rules/，随 COPY src 进镜像，离线可用）。
+RUN pip install --no-cache-dir semgrep
+
 # 非 root 运行，降低容器被攻破后的影响面
 RUN useradd --create-home appuser && chown -R appuser:appuser /app
 USER appuser

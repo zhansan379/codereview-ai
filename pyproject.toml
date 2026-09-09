@@ -40,6 +40,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/codereview_ai"]
+# 内置本地 semgrep 规则（review/semgrep_rules/）不是 .py，需显式打进 wheel，
+# 否则非 editable 安装（Docker 里 uv sync 无 --editable）时 __file__ 指向 site-packages，
+# 规则目录会缺失 → 静态层只好走 CR_SEMGREP_RULES 兜底。
+[tool.hatch.build.targets.wheel.force-include]
+"src/codereview_ai/review/semgrep_rules" = "codereview_ai/review/semgrep_rules"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

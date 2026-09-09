@@ -12,6 +12,7 @@ from codereview_ai.domain.models import Category, ChangeType, FileDiff, Severity
 from codereview_ai.review.group_review import review_in_groups
 from codereview_ai.review.reviewer import Reviewer, ReviewerConfig, build_messages
 from codereview_ai.review.static_analysis import (
+    _BUNDLED_RULES_DIR,
     RunResult,
     StaticAnalyzer,
     render_static_findings,
@@ -158,6 +159,100 @@ async def test_analyze_degrades_on_bad_json(tmp_path):
 
     analyzer = StaticAnalyzer(runner=_BadRunner(), workspace=tmp_path)
     assert await analyzer.analyze([_py_diff("x")]) == []
+
+
+# ── semgrep：registry-first + 本地兜底 + 运行失败降级 ─────────────────────
+
+
+class _ArgsRunner:
+    """记录每次 semgrep 调用，按 config 预设 exit_code/stderr 返回罐头 JSON。
+
+    `exit_by_config` 精确控制哪个规则源成败；未列出的 config 用 `default_exit`（默认 0）。
+    用于验证 registry-first（p/ci）与本地兜底（bundled）的两段路径。
+    """
+
+    def __init__(
+        self,
+        exit_by_config: dict[str, int] | None = None,
+        default_exit: int = 0,
+        stderr: str = "",
+    ) -> None:
+        self.semgrep_calls: list[list[str]] = []
+        self._exit_by = exit_by_config or {}
+        self._default_exit = default_exit
+        self._stderr = stderr
+
+    async def run(self, tool: str, args: list[str], cwd) -> RunResult:
+        if tool == "ruff":
+            return RunResult(json.dumps([]), 0)
+        self.semgrep_calls.append(args)
+        cfg = _cfg(args)
+        exit_code = self._exit_by.get(cfg, self._default_exit)
+        return RunResult(json.dumps({
+            "results": [{
+                "check_id": "cr.python.security.audit.eval",
+                "path": "a.py",
+                "start": {"line": 1, "col": 1},
+                "end": {"line": 1, "col": 5},
+                "extra": {"severity": "ERROR", "message": "eval 风险", "fix": None},
+            }],
+            "errors": [],
+        }), exit_code, stderr=self._stderr)
+
+
+def _cfg(args: list[str]) -> str:
+    return args[args.index("--config") + 1]
+
+
+async def test_semgrep_registry_first_uses_pci_on_success(tmp_path):
+    """默认（未配 CR_SEMGREP_RULES）：先试 p/ci；成功则只用它，不触发本地兜底。"""
+    runner = _ArgsRunner()  # 默认 exit 0 → p/ci 成功
+    await StaticAnalyzer(runner=runner, workspace=tmp_path).analyze([_py_diff("x = 1\n")])
+    assert len(runner.semgrep_calls) == 1, "registry 成功不应再跑本地"
+    assert _cfg(runner.semgrep_calls[0]) == "p/ci"
+    # 去掉 --strict（会把 WARNING 升级成整体失败），不带意外标志
+    assert "--strict" not in runner.semgrep_calls[0]
+
+
+async def test_semgrep_registry_failure_falls_back_to_local(tmp_path, caplog):
+    """p/ci 拉取失败（exit≠0）→ 降级内置本地包取结果，仍不阻断。"""
+    runner = _ArgsRunner(exit_by_config={"p/ci": 3}, default_exit=0)
+    analyzer = StaticAnalyzer(runner=runner, workspace=tmp_path)
+    findings = await analyzer.analyze([_py_diff("x = 1\n")])
+    calls = [c for c in runner.semgrep_calls]  # ruff 之外全是 semgrep
+    assert len(calls) == 2
+    assert _cfg(calls[0]) == "p/ci"
+    assert _cfg(calls[1]) == str(_BUNDLED_RULES_DIR.resolve())  # 兜底到内置包
+    sg = [f for f in findings if f.source == "static:semgrep"]
+    assert len(sg) == 1  # 兜底拿到了 finding
+    msgs = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("主规则源" in m and "降级" in m for m in msgs)
+
+
+async def test_semgrep_honors_custom_rules_dir_fully_offline(tmp_path):
+    """显式 CR_SEMGREP_RULES=本地目录：直接用它，不碰 registry、不降级。"""
+    rules_dir = tmp_path / "myrules"
+    rules_dir.mkdir()
+    (rules_dir / "x.yml").write_text("rules: []\n", encoding="utf-8")
+    runner = _ArgsRunner(exit_by_config={"p/ci": 99})  # 即便 p/ci 会失败也不该被调用
+    analyzer = StaticAnalyzer(runner=runner, workspace=tmp_path, semgrep_rules=rules_dir)
+    await analyzer.analyze([_py_diff("x = 1\n")])
+    assert len(runner.semgrep_calls) == 1  # 只有显式目录一次
+    assert _cfg(runner.semgrep_calls[0]) == str(rules_dir.resolve())
+
+
+async def test_semgrep_failure_warns_but_does_not_block(tmp_path, caplog):
+    """semgrep 装载失败（规则读取/拉取出错，exit≠0）→ warning 降级，但仍返回能解析的 finding。"""
+    runner = _ArgsRunner(exit_by_config={"p/ci": 2}, default_exit=2,
+                         stderr="rules: failed to load cr_security.yml")
+    analyzer = StaticAnalyzer(runner=runner, workspace=tmp_path)
+    findings = await analyzer.analyze([_py_diff("x = 1\n")])
+    sg = [f for f in findings if f.source == "static:semgrep"]
+    assert len(sg) == 1  # 不阻断，仍尽力解析
+    msgs = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("装载失败（exit=2" in m and "规则源" in m for m in msgs)
+    # 失败详情（stderr）进了警告，便于排查
+    assert any("failed to load" in m for m in msgs)
 
 
 # ── prompt 注入 ─────────────────────────────────────────────────────────
