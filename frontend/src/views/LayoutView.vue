@@ -31,6 +31,10 @@
           <el-icon><Timer /></el-icon>
           <span>定时任务</span>
         </el-menu-item>
+        <el-menu-item index="/clone-caches">
+          <el-icon><Box /></el-icon>
+          <span>拉取缓存</span>
+        </el-menu-item>
         <el-menu-item index="/settings">
           <el-icon><Setting /></el-icon>
           <span>设置</span>
@@ -63,6 +67,7 @@ import {
   Bell,
   Setting,
   Timer,
+  Box,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 

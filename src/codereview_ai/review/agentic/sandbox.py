@@ -14,9 +14,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 import tempfile
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Protocol
 
@@ -46,6 +47,8 @@ from codereview_ai.review.agentic.tools import (
 )
 from codereview_ai.review.group_review import GROUPING_MIN_FILES
 from codereview_ai.review.grouping import SemanticGrouper
+
+logger = logging.getLogger("codereview_ai.agentic.sandbox")
 
 
 class SandboxDisabled(RuntimeError):
@@ -149,10 +152,16 @@ class LocalCloneRuntime:
         *,
         enabled: bool = True,
         token_for: TokenProvider | None = None,
+        record_sync: Callable[..., Awaitable[None]] | None = None,
     ) -> None:
+        """`record_sync`：每次成功同步后异步回调记录一次拉取（写 `clone_cache_repo`）。
+
+        仅由装配方（`main.py`）注入以旁路登记最近拉取；缺省 None 不影响其它调用方。
+        """
         self._cloner = RepoCloner(cache_root)
         self._enabled = enabled
         self._token_for = token_for
+        self._record_sync = record_sync
         self._workspace: Path | None = None
 
     async def guard(self) -> None:
@@ -172,6 +181,19 @@ class LocalCloneRuntime:
             ref=pr.head_sha, token=token,
         )
         self._workspace = workspace
+        if self._record_sync is not None:
+            try:  # 拉取记录是旁路：失败仅告警，不得阻断审查
+                await self._record_sync(
+                    key=slugify_key(pr.repo_full_name),
+                    provider=pr.provider,
+                    repo_full_name=pr.repo_full_name,
+                    url=url,
+                    local_path=str(workspace),
+                    head_sha=pr.head_sha,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("记录 agent 拉取缓存失败（%s）：%s",
+                               pr.repo_full_name, exc)
         diff_map = _materialize(diffs, workspace)  # 兜底：diff 文本 + 变更文件写入
         # repo_dir+pinned_sha：三个读文件工具一律走不可变 git 对象（按 head_sha 寻址），
         # 不依赖任何 working tree 实体（bare 仓库也无此物）。
