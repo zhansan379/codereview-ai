@@ -41,11 +41,6 @@ const router = createRouter({
           component: () => import('../views/ConversationView.vue'),
         },
         {
-          path: '/reviews/:id/compare',
-          name: 'ReviewCompare',
-          component: () => import('../views/CompareView.vue'),
-        },
-        {
           path: '/projects',
           name: 'Projects',
           component: () => import('../views/ProjectsView.vue'),

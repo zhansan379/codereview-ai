@@ -21,7 +21,6 @@ from starlette import status
 from starlette.responses import StreamingResponse
 
 from codereview_ai.api.deps import get_current_user, get_db
-from codereview_ai.review.compare import bucket_compare
 from codereview_ai.review.pr_compare import group_pr_deltas
 from codereview_ai.storage.models import ReviewConversation, ReviewFinding, ReviewTask
 
@@ -569,50 +568,3 @@ def _covered_paths(task: ReviewTask) -> set[str]:
     if not isinstance(snap, dict):
         return set()
     return {str(k) for k in snap}
-
-
-@router.get("/{review_id}/compare")
-async def compare_review(
-    review_id: int, session: AsyncSession = Depends(get_db)
-) -> dict[str, object]:
-    """该审查任务与**上一次 completed mr 任务**的 findings 四桶增量对比。
-
-    桶语义（OCR `Compare`）：`new` 本次多出 / `persisting` 前后都有 /
-    `resolved` 上次有、本次覆盖到已修 / `not_reviewed` 上次有但本次没碰（不算已修）。
-    覆盖集读 `diff_snapshot`（未变更文件复用后只含真正审到的文件），存量老任务无
-    `diff_snapshot` → 覆盖集为空 → 上次有本次无的进 `not_reviewed`（保守）。无上一次
-    completed 任务 → 四桶全空。
-    """
-    current = await _task_or_404(review_id, session)
-    after_rows = (await session.execute(
-        select(ReviewFinding).where(ReviewFinding.task_id == review_id).order_by(ReviewFinding.id)  # noqa: E501
-    )).scalars().all()
-    # 本次覆盖集：diff_snapshot（covered_file_map 写入的 {path: sha1}）的路径集合。
-    after_covered = _covered_paths(current)
-    prev = (await session.execute(
-        select(ReviewTask).where(
-            ReviewTask.provider == current.provider,
-            ReviewTask.repo_id == current.repo_id,
-            ReviewTask.pr_number == current.pr_number,
-            ReviewTask.event_type == "mr",
-            ReviewTask.state == "completed",
-            ReviewTask.id != review_id,
-        ).order_by(ReviewTask.id.desc()).limit(1)
-    )).scalar_one_or_none()
-    before_rows: list[ReviewFinding] = []
-    if prev is not None:
-        before_rows = list((await session.execute(
-            select(ReviewFinding).where(ReviewFinding.task_id == prev.id).order_by(ReviewFinding.id)  # noqa: E501
-        )).scalars().all())
-
-    result = bucket_compare(
-        [_FindRow(b) for b in before_rows],
-        [_FindRow(a) for a in after_rows],
-        after_covered,
-    )
-    return {
-        "new": result.new,
-        "persisting": result.persisting,
-        "resolved": result.resolved,
-        "not_reviewed": result.not_reviewed,
-    }
