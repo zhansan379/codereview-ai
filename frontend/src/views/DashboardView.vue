@@ -1,40 +1,47 @@
 <template>
   <div>
-    <el-row :gutter="20">
-      <el-col :span="6">
-        <el-card>
-          <div class="stat-label">审查任务</div>
-          <div class="stat-value">{{ stats.total_tasks }}</div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card>
-          <div class="stat-label">问题总数</div>
-          <div class="stat-value">{{ stats.total_findings }}</div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card>
-          <div class="stat-label">未解决高危</div>
-          <div class="stat-value" style="color: #f56c6c">{{ stats.open_high }}</div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card>
-          <div class="stat-label">未解决严重</div>
-          <div class="stat-value" style="color: #e6a23c">{{ stats.open_critical }}</div>
-        </el-card>
-      </el-col>
-    </el-row>
+    <div class="dash-toolbar">
+      <el-radio-group v-model="mode" size="small" @change="onModeChange">
+        <el-radio-button value="all">全部</el-radio-button>
+        <el-radio-button value="agentic">Agent</el-radio-button>
+        <el-radio-button value="diff">Diff</el-radio-button>
+      </el-radio-group>
+      <span class="toolbar-hint">按实际执行模式（exec_mode）分组通用图；agent 专属图不受影响</span>
+    </div>
+
+    <div class="kpi-grid">
+      <el-card>
+        <div class="stat-label">审查任务</div>
+        <div class="stat-value">{{ stats.total_tasks }}</div>
+      </el-card>
+      <el-card>
+        <div class="stat-label">问题总数</div>
+        <div class="stat-value">{{ stats.total_findings }}</div>
+      </el-card>
+      <el-card>
+        <div class="stat-label">未解决高危</div>
+        <div class="stat-value" style="color: #f56c6c">{{ stats.open_high }}</div>
+      </el-card>
+      <el-card>
+        <div class="stat-label">未解决严重</div>
+        <div class="stat-value" style="color: #e6a23c">{{ stats.open_critical }}</div>
+      </el-card>
+      <el-card>
+        <div class="stat-label">平均对话轮数（agent）</div>
+        <div class="stat-value">
+          {{ stats.avg_chat_rounds }}<span class="stat-unit">轮</span>
+        </div>
+      </el-card>
+    </div>
 
     <el-row :gutter="20" class="charts-row">
-      <el-col :span="12">
+      <el-col :span="12" :xs="24" :md="12">
         <el-card>
           <template #header>严重级别分布</template>
           <div ref="severityRef" class="chart"></div>
         </el-card>
       </el-col>
-      <el-col :span="12">
+      <el-col :span="12" :xs="24" :md="12">
         <el-card>
           <template #header>近 14 天审查趋势</template>
           <div ref="trendRef" class="chart"></div>
@@ -43,13 +50,13 @@
     </el-row>
 
     <el-row :gutter="20" class="charts-row">
-      <el-col :span="12">
+      <el-col :span="12" :xs="24" :md="12">
         <el-card>
           <template #header>任务状态分布</template>
           <div ref="stateRef" class="chart chart-sm"></div>
         </el-card>
       </el-col>
-      <el-col :span="12">
+      <el-col :span="12" :xs="24" :md="12">
         <el-card>
           <template #header>审查渠道分流</template>
           <div ref="providerRef" class="chart chart-sm"></div>
@@ -58,17 +65,52 @@
     </el-row>
 
     <el-row :gutter="20" class="charts-row">
-      <el-col :span="8">
+      <el-col :span="12" :xs="24" :md="12">
         <el-card>
-          <template #header>审查模式分布（agent / diff）</template>
-          <div ref="modeRef" class="chart chart-sm"></div>
+          <template #header>模型 Token 用量</template>
+          <div ref="tokenRef" class="chart"></div>
         </el-card>
       </el-col>
-      <el-col :span="16">
+      <el-col :span="12" :xs="24" :md="12">
+        <el-card>
+          <template #header>
+            近 14 天成本
+            <span class="header-sub">
+              累计 {{ totalCost }}
+            </span>
+          </template>
+          <div ref="costRef" class="chart"></div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="20" class="charts-row">
+      <el-col :span="12" :xs="24" :md="12">
+        <el-card>
+          <template #header>近 14 天审查耗时趋势</template>
+          <div ref="durationRef" class="chart"></div>
+        </el-card>
+      </el-col>
+      <el-col :span="12" :xs="24" :md="12">
+        <el-card>
+          <template #header>Agent 阶段管线分布</template>
+          <div ref="phaseRef" class="chart"></div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="20" class="charts-row">
+      <el-col :span="8" :xs="24" :md="8">
+        <el-card>
+          <template #header>审查模式分布（agent / diff）</template>
+          <div ref="modeRef" class="chart"></div>
+        </el-card>
+      </el-col>
+      <el-col :span="16" :xs="24" :md="16">
         <el-card>
           <template #header>
             Agent 复杂度 × 成本
-            <span class="scatter-sub">
+            <span class="header-sub">
               {{ stats.agent_task_count }} 次 agent 审查 · 平均 {{ stats.avg_chat_rounds }} 轮
             </span>
           </template>
@@ -85,7 +127,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { getStats, listReviews, type DashboardStats, type ReviewItem } from '../api'
@@ -97,6 +139,12 @@ const stateRef = ref<HTMLDivElement>()
 const providerRef = ref<HTMLDivElement>()
 const modeRef = ref<HTMLDivElement>()
 const scatterRef = ref<HTMLDivElement>()
+const tokenRef = ref<HTMLDivElement>()
+const costRef = ref<HTMLDivElement>()
+const durationRef = ref<HTMLDivElement>()
+const phaseRef = ref<HTMLDivElement>()
+// 模式分组开关：影响通用图（趋势/耗时/严重级/状态/渠道/token/成本/KPI），agent 专属图恒不受影响
+const mode = ref<'all' | 'agentic' | 'diff'>('all')
 const router = useRouter()
 const recent = ref<ReviewItem[]>([])
 const loading = ref(false)
@@ -110,6 +158,9 @@ const stats = ref<DashboardStats>({
   findings_by_category: [],
   reviews_by_day: [],
   model_usage: [],
+  cost_by_day: [],
+  duration_by_day: [],
+  phase_dist: [],
   provider_split: [],
   tasks_by_mode: [],
   agent_task_count: 0,
@@ -119,7 +170,7 @@ const stats = ref<DashboardStats>({
 
 function drawSeverity() {
   if (!severityRef.value) return
-  echarts.init(severityRef.value).setOption({
+  ensure(severityRef.value).setOption({
     tooltip: { trigger: 'item' },
     series: [
       {
@@ -136,9 +187,9 @@ function drawSeverity() {
 
 function drawTrend() {
   if (!trendRef.value) return
-  echarts.init(trendRef.value).setOption({
-    tooltip: { trigger: 'axis' },
-    grid: { left: 40, right: 16, top: 24, bottom: 24 },
+  ensure(trendRef.value).setOption({
+    tooltip: { trigger: 'axis', confine: true },
+    grid: { containLabel: true, left: 8, right: 16, top: 20, bottom: 8 },
     xAxis: {
       type: 'category',
       data: stats.value.reviews_by_day.map((d) => d.day.slice(5)), // MM-DD
@@ -150,7 +201,7 @@ function drawTrend() {
 
 function drawMode() {
   if (!modeRef.value) return
-  echarts.init(modeRef.value).setOption({
+  ensure(modeRef.value).setOption({
     tooltip: { trigger: 'item' },
     legend: { bottom: 0 },
     series: [
@@ -171,20 +222,36 @@ function drawScatter() {
   if (!scatterRef.value) return
   const pts = stats.value.agent_scatter
   const maxCalls = Math.max(1, ...pts.map((p) => p.tool_calls))
-  echarts.init(scatterRef.value).setOption({
+  // containLabel+confine 把轴名/刻度/tooltip 全圈进卡片内，右侧给 visualMap 色带预留空间，避免内容溢出
+  ensure(scatterRef.value).setOption({
     tooltip: {
       trigger: 'item',
+      confine: true,
       formatter: (p: { value: number[] }) =>
         `diff 行数: ${p.value[0]}<br/>耗时: ${p.value[1]}s<br/>轮数: ${p.value[2]}<br/>工具调用: ${p.value[3]}`,
     },
-    grid: { left: 56, right: 24, top: 28, bottom: 44 },
-    xAxis: { type: 'value', name: 'diff 行数', minInterval: 1 },
-    yAxis: { type: 'value', name: '耗时 (s)' },
+    grid: { containLabel: true, left: 8, right: 64, top: 20, bottom: 8 },
+    xAxis: {
+      type: 'value',
+      name: 'diff 行数',
+      minInterval: 1,
+      nameLocation: 'middle',
+      nameGap: 28,
+    },
+    yAxis: {
+      type: 'value',
+      name: '耗时 (s)',
+      nameLocation: 'middle',
+      nameGap: 36,
+    },
     visualMap: {
       dimension: 3,
       min: 0,
       max: maxCalls,
+      itemWidth: 14,
       itemHeight: 110,
+      right: 0,
+      top: 'center',
       text: ['工具调用', '少'],
       seriesIndex: 0,
     },
@@ -192,15 +259,116 @@ function drawScatter() {
       {
         type: 'scatter',
         data: pts.map((p) => [p.diff_lines, p.duration_s, p.chat_rounds, p.tool_calls]),
-        symbolSize: (val: number[]) => 8 + Math.min(24, (val[3] || 0) * 2),
+        symbolSize: (val: number[]) => 6 + Math.min(16, (val[3] || 0) * 1.5),
       },
     ],
   })
 }
 
-function drawBar(el: HTMLDivElement, items: { key: string; count: number }[]) {
-  echarts.init(el).setOption({
+const totalCost = computed(() =>
+  stats.value.cost_by_day.reduce((s, d) => s + d.cost, 0).toFixed(2)
+)
+
+function drawToken() {
+  if (!tokenRef.value) return
+  const items = stats.value.model_usage
+  ensure(tokenRef.value).setOption({
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, confine: true },
+    legend: { bottom: 0 },
+    // top 预留 y 轴名('token')空间，left 预留轴名横向宽度：containLabel 不收纳轴名，太小会被左侧裁掉
+    grid: { containLabel: true, left: 16, right: 16, top: 40, bottom: 24 },
+    xAxis: { type: 'category', data: items.map((m) => m.model) },
+    yAxis: { type: 'value', name: 'token' },
+    series: [
+      {
+        name: '输入',
+        type: 'bar',
+        stack: 'tokens',
+        data: items.map((m) => m.prompt_tokens),
+        barMaxWidth: 40,
+      },
+      {
+        name: '输出',
+        type: 'bar',
+        stack: 'tokens',
+        data: items.map((m) => m.completion_tokens),
+        barMaxWidth: 40,
+      },
+    ],
+  })
+}
+
+function drawCost() {
+  if (!costRef.value) return
+  ensure(costRef.value).setOption({
+    tooltip: { trigger: 'axis', confine: true },
+    // top 预留 y 轴名('成本')空间，left 预留轴名横向宽度：containLabel 不收纳轴名，太小会被左侧裁掉
+    grid: { containLabel: true, left: 8, right: 16, top: 40, bottom: 12 },
+    xAxis: {
+      type: 'category',
+      data: stats.value.cost_by_day.map((d) => d.day.slice(5)),
+    },
+    yAxis: { type: 'value', name: '成本' },
+    series: [
+      {
+        type: 'line',
+        smooth: true,
+        areaStyle: { opacity: 0.15 },
+        data: stats.value.cost_by_day.map((d) => Number(d.cost.toFixed(4))),
+      },
+    ],
+  })
+}
+
+// 复用已有实例（模式开关重绘）而非重复 init（重复 init 会抛「已初始化」）
+function ensure(el: HTMLDivElement) {
+  return echarts.getInstanceByDom(el) ?? echarts.init(el)
+}
+
+// Agent 管线阶段规范顺序；未在列出的兜底phase（如 loop）追加在后
+const PHASE_ORDER = ['plan', 'main', 're_location', 'review_filter', 'scoring', 'compress']
+
+function drawDuration() {
+  if (!durationRef.value) return
+  const items = stats.value.duration_by_day
+  ensure(durationRef.value).setOption({
+    tooltip: {
+      trigger: 'axis',
+      formatter: (p: { name: string; value: number }[]) => {
+        const rec = items.find((d) => d.day.slice(5) === p[0].name)
+        return `${p[0].name}<br/>平均耗时: ${p[0].value}s<br/>任务数: ${rec ? rec.count : 0}`
+      },
+    },
+    grid: { containLabel: true, left: 8, right: 16, top: 20, bottom: 8 },
+    xAxis: { type: 'category', data: items.map((d) => d.day.slice(5)) },
+    yAxis: { type: 'value', name: '耗时 (s)' },
+    series: [{ type: 'bar', data: items.map((d) => d.avg_seconds), barMaxWidth: 24 }],
+  })
+}
+
+function drawPhase() {
+  if (!phaseRef.value) return
+  const byKey = new Map(stats.value.phase_dist.map((p) => [p.key, p.count]))
+  const known = PHASE_ORDER.map((ph) => ({ name: ph, count: byKey.get(ph) || 0 }))
+  const extra = stats.value.phase_dist.filter((p) => !PHASE_ORDER.includes(p.key))
+  const data = [...known, ...extra.map((p) => ({ name: p.key, count: p.count }))]
+  ensure(phaseRef.value).setOption({
     tooltip: {},
+    grid: { containLabel: true, left: 8, right: 16, top: 20, bottom: 72 },
+    xAxis: {
+      type: 'category',
+      data: data.map((d) => d.name),
+      axisLabel: { rotate: 20, interval: 0 },
+    },
+    yAxis: { type: 'value', minInterval: 1 },
+    series: [{ type: 'bar', data: data.map((d) => d.count), barMaxWidth: 28 }],
+  })
+}
+
+function drawBar(el: HTMLDivElement, items: { key: string; count: number }[]) {
+  ensure(el).setOption({
+    tooltip: {},
+    grid: { containLabel: true, left: 8, right: 16, top: 20, bottom: 8 },
     xAxis: { type: 'category', data: items.map((i) => i.key) },
     yAxis: { type: 'value' },
     series: [{ type: 'bar', data: items.map((i) => i.count), barMaxWidth: 24 }],
@@ -211,31 +379,83 @@ function goDetail(id: number) {
   router.push(`/reviews/${id}`)
 }
 
+// 响应式下窗口变化时让已初始化的图表实例 reflow 到新尺寸（而非被裁剪）
+const chartEls = [severityRef, trendRef, stateRef, providerRef, modeRef, scatterRef, tokenRef, costRef, durationRef, phaseRef]
+function resizeCharts() {
+  chartEls.forEach((r) => {
+    const el = r.value
+    if (el) echarts.getInstanceByDom(el)?.resize()
+  })
+}
+
+function redrawAll() {
+  drawSeverity()
+  drawTrend()
+  if (stateRef.value) drawBar(stateRef.value, stats.value.tasks_by_state)
+  if (providerRef.value) drawBar(providerRef.value, stats.value.provider_split)
+  drawMode()
+  drawScatter()
+  drawToken()
+  drawCost()
+  drawDuration()
+  drawPhase()
+}
+
 async function loadDash() {
   loading.value = true
   try {
     const [dash, list] = await Promise.all([
-      getStats(),
+      getStats(mode.value),
       listReviews({ limit: 10 }),
     ])
     stats.value = dash
     recent.value = list.items || []
     await nextTick()
-    drawSeverity()
-    drawTrend()
-    if (stateRef.value) drawBar(stateRef.value, dash.tasks_by_state)
-    if (providerRef.value) drawBar(providerRef.value, dash.provider_split)
-    drawMode()
-    drawScatter()
+    redrawAll()
   } finally {
     loading.value = false
   }
 }
 
-onMounted(loadDash)
+async function onModeChange() {
+  loading.value = true
+  try {
+    stats.value = await getStats(mode.value)
+    await nextTick()
+    redrawAll()
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('resize', resizeCharts)
+  loadDash()
+})
+onUnmounted(() => window.removeEventListener('resize', resizeCharts))
 </script>
 
 <style scoped>
+.dash-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.toolbar-hint {
+  color: #909399;
+  font-size: 13px;
+}
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
+}
+@media (max-width: 992px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
 .stat-label {
   color: #909399;
   font-size: 13px;
@@ -245,16 +465,26 @@ onMounted(loadDash)
   font-weight: 700;
   margin-top: 6px;
 }
+.stat-unit {
+  font-size: 14px;
+  font-weight: 400;
+  color: #909399;
+  margin-left: 2px;
+}
 .charts-row {
   margin-top: 20px;
 }
 .chart {
   height: 300px;
+  width: 100%;
+  box-sizing: border-box;
 }
 .chart-sm {
   height: 240px;
+  width: 100%;
+  box-sizing: border-box;
 }
-.scatter-sub {
+.header-sub {
   font-size: 13px;
   font-weight: 400;
   color: #909399;

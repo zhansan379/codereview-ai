@@ -19,7 +19,12 @@ from codereview_ai.api.admin import stats
 from codereview_ai.api.auth import issue_token
 from codereview_ai.api.auth import router as auth_router
 from codereview_ai.storage.db import create_engine, init_db, session_factory
-from codereview_ai.storage.models import ModelUsage, ReviewFinding, ReviewTask
+from codereview_ai.storage.models import (
+    ModelUsage,
+    ReviewConversation,
+    ReviewFinding,
+    ReviewTask,
+)
 
 
 def _fernet_key() -> str:
@@ -169,6 +174,69 @@ async def test_stats_agent_mode(tmp_path):
     assert point.duration_s == 60
     assert point.chat_rounds == 8
     assert point.tool_calls == 15
+    await engine.dispose()
+
+
+async def test_stats_mode_filter_phase_duration(tmp_path):
+    """mode=agentic/diff 过滤通用图 + KPI；phase_dist 聚合；duration_by_day 按完成日分桶。"""
+    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'mode.db'}")
+    await init_db(engine)
+    now = datetime.now(UTC)
+    started = now - timedelta(seconds=120)
+    async with session_factory(engine)() as s:
+        s.add_all([
+            # agentic 完成（今天完成，120s）→ 进散点、进 agentic 计数与耗时
+            ReviewTask(provider="gitlab", repo_id="1", pr_number=1, event_type="mr",
+                       head_sha="a4", state="completed", exec_mode="agentic",
+                       chat_rounds=2, diff_lines=30, started_at=started, finished_at=now),
+            # diff 完成 → 只进 diff 计数与耗时，不进散点
+            ReviewTask(provider="github", repo_id="2", pr_number=2, event_type="mr",
+                       head_sha="a5", state="completed", exec_mode="diff",
+                       started_at=started, finished_at=now),
+            # agentic 失败（无时间戳）→ 计入 agentic 任务数与平均轮数分母，不进耗时
+            ReviewTask(provider="github", repo_id="3", pr_number=3, event_type="mr",
+                       head_sha="a6", state="failed", exec_mode="agentic"),
+        ])
+        await s.commit()
+        a4 = (await s.execute(select(ReviewTask).where(ReviewTask.head_sha == "a4"))).scalar_one()
+        s.add_all([
+            ReviewConversation(task_id=a4.id, seq=0, phase="plan"),
+            ReviewConversation(task_id=a4.id, seq=1, phase="main"),
+            ReviewConversation(task_id=a4.id, seq=2, phase="main"),
+            ReviewConversation(task_id=a4.id, seq=3, phase="scoring"),
+        ])
+        await s.commit()
+
+        out_all = await stats.aggregate_stats(s)
+        out_agent = await stats.aggregate_stats(s, mode="agentic")
+        out_diff = await stats.aggregate_stats(s, mode="diff")
+
+    # 模式过滤：agentic 只看 agent 任务（a4+a6）；diff 只看 diff（a5）；all 全量
+    assert out_all.total_tasks == 3
+    assert out_agent.total_tasks == 2
+    assert out_diff.total_tasks == 1
+
+    # agent 专属度量恒全量（不随开关）：散点只收 agentic+completed → a4；平均轮数含 failed 分母
+    scatter_counts = {
+        len(out_agent.agent_scatter),
+        len(out_diff.agent_scatter),
+        len(out_all.agent_scatter),
+    }
+    assert scatter_counts == {1}
+    assert out_agent.avg_chat_rounds == (2 + 0) / 2  # a4 chat_rounds=2, a6=0
+
+    # 阶段管线：分布式聚合，恒全量
+    phases = {i.key: i.count for i in out_all.phase_dist}
+    assert phases == {"plan": 1, "main": 2, "scoring": 1}
+    assert {i.key: i.count for i in out_agent.phase_dist} == phases  # 不随模式变化
+
+    # duration_by_day：今天完成 → all 两任务、agentic 只 a4；avg 120s
+    today_iso = now.date().isoformat()
+    today_all = next(d for d in out_all.duration_by_day if d.day == today_iso)
+    assert today_all.count == 2 and today_all.avg_seconds == 120.0
+    today_agent = next(d for d in out_agent.duration_by_day if d.day == today_iso)
+    assert today_agent.count == 1 and today_agent.avg_seconds == 120.0
+
     await engine.dispose()
 
 

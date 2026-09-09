@@ -488,6 +488,16 @@ export interface ModelUsageItem {
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number
+  cost: number
+}
+export interface DailyCostItem {
+  day: string
+  cost: number
+}
+export interface DailyDurationItem {
+  day: string
+  count: number
+  avg_seconds: number
 }
 export interface AgentScatterItem {
   diff_lines: number
@@ -505,12 +515,15 @@ export interface DashboardStats {
   findings_by_category: CountItem[]
   reviews_by_day: ReviewsByDay[]
   model_usage: ModelUsageItem[]
+  cost_by_day: DailyCostItem[]
+  duration_by_day: DailyDurationItem[]
+  phase_dist: CountItem[]
   provider_split: CountItem[]
   tasks_by_mode: CountItem[]
   agent_task_count: number
   avg_chat_rounds: number
   agent_scatter: AgentScatterItem[]
 }
-export function getStats(): Promise<DashboardStats> {
-  return client.get('/stats').then((r) => r.data)
+export function getStats(mode: 'all' | 'agentic' | 'diff' = 'all'): Promise<DashboardStats> {
+  return client.get('/stats', { params: { mode } }).then((r) => r.data)
 }
