@@ -80,6 +80,7 @@ class ReviewListItem(BaseModel):
     queued_at: datetime
     finished_at: datetime | None
     writeback_failed: bool
+    diff_lines: int = 0  # 新增+删除行合计（复杂度度量）
 
 
 class ReviewDetail(ReviewListItem):
