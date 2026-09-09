@@ -75,7 +75,7 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
-// 高亮当前菜单：审查详情页归属到「审查记录」
+// 高亮当前菜单：审查详情页归属到「审查记录」（含 /reviews/prs 旧聚合链接）。
 const activeMenu = computed(() => {
   if (route.path.startsWith('/reviews')) return '/reviews'
   return route.path

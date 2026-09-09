@@ -278,9 +278,9 @@ function filterFields(): Omit<ReviewFilter, 'limit' | 'offset'> {
   }
 }
 
-// 把当前筛选写入 URL query，供进入详情返回后恢复。
+// 把当前筛选写入 URL query（保留 tab 等宿主参数），供进入详情返回后恢复。
 function syncUrl() {
-  const q: Record<string, string | number> = {}
+  const q: Record<string, string | number> = { ...route.query }
   if (query.state) q.state = query.state
   if (query.provider) q.provider = query.provider
   if (query.event_type) q.event_type = query.event_type

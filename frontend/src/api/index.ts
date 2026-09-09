@@ -135,6 +135,8 @@ export interface ReviewItem {
 
 export interface ReviewDetail extends ReviewItem {
   findings: ReviewFinding[]
+  // 同一 MR 上一次 completed 审查任务 id；null = 首轮（无「上次」可对比）。
+  prev_round_id: number | null
 }
 
 export interface ReviewList {
@@ -454,6 +456,48 @@ export function fetchReviewConversation(
 }
 export function fetchReviewCompare(id: number): Promise<CompareResult> {
   return client.get(`/reviews/${id}/compare`).then((r) => r.data)
+}
+
+// ===== 按 MR 聚合的收敛视图（/reviews/prs）=====
+export interface PrRound {
+  id: number
+  head_sha: string
+  // 这一轮 vs 上一轮的差量计数：new / persisting / resolved / not_reviewed。
+  delta: Record<string, number>
+}
+
+export interface ReviewPr {
+  key: string
+  provider: string
+  repo_id: string
+  pr_number: number
+  pr_title: string
+  web_url: string
+  branch: string
+  rounds_count: number
+  rounds: PrRound[]
+  // 末轮完整四桶（CompareBucketItem[]）
+  last_delta: CompareResult
+  rate_pct: number
+}
+
+export interface ReviewPrPage {
+  items: ReviewPr[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export function listReviewPrs(params: {
+  provider?: string
+  pr_number?: number
+  q?: string
+  finished_from?: string
+  finished_to?: string
+  limit?: number
+  offset?: number
+}): Promise<ReviewPrPage> {
+  return client.get('/reviews/prs', { params }).then((r) => r.data)
 }
 // Excel 导出：以 blob 请求，返回下载文件原始字节。顶层筛选与列表一致（所见即所导）。
 export function exportReviews(

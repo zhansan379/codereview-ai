@@ -69,3 +69,15 @@ def test_flat_carries_line_and_old_line():
     row = res.new[0]
     assert row["line"] == 10 and row["file"] == "a.py"
     assert row["severity"] == "high" and row["category"] == "bug"
+
+
+def test_buckets_sorted_stable():
+    # 桶内按 file → line → category → content 稳定排序，不依赖插入序（对齐 OCR sortFindings）。
+    after = [
+        _f("zz", "b.py", line=5),
+        _f("aa", "a.py", line=1),
+        _f("mm", "a.py", line=2),
+    ]
+    res = bucket_compare([], after, {"a.py", "b.py"})
+    assert [x["file"] for x in res.new] == ["a.py", "a.py", "b.py"]
+    assert [x["line"] for x in res.new] == [1, 2, 5]

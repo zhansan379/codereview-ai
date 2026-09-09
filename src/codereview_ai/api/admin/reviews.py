@@ -22,6 +22,7 @@ from starlette.responses import StreamingResponse
 
 from codereview_ai.api.deps import get_current_user, get_db
 from codereview_ai.review.compare import bucket_compare
+from codereview_ai.review.pr_compare import group_pr_deltas
 from codereview_ai.storage.models import ReviewConversation, ReviewFinding, ReviewTask
 
 router = APIRouter(prefix="/reviews", dependencies=[Depends(get_current_user)])
@@ -86,6 +87,8 @@ class ReviewListItem(BaseModel):
 
 class ReviewDetail(ReviewListItem):
     findings: list[ReviewFindingOut] = []
+    # 同一 MR 上一次 completed 审查任务 id；None = 首轮（无「上次」可对比）。
+    prev_round_id: int | None = None
 
 
 class FindingStatusUpdate(BaseModel):
@@ -114,6 +117,37 @@ class ReviewFindingOut(BaseModel):
 
 class ReviewPage(BaseModel):
     items: list[ReviewListItem]
+    total: int
+    limit: int
+    offset: int
+
+
+class PrRoundOut(BaseModel):
+    """一轮已完成审查的收敛情况（计数，供 PR 时间线渲染）。"""
+
+    id: int
+    head_sha: str
+    delta: dict[str, int]
+
+
+class ReviewPr(BaseModel):
+    """一个 MR 的聚合收敛视图（多轮已完成审查串成时间线 + 末轮四桶）。"""
+
+    key: str
+    provider: str
+    repo_id: str
+    pr_number: int
+    pr_title: str
+    web_url: str = ""
+    branch: str = ""
+    rounds_count: int
+    rounds: list[PrRoundOut]
+    last_delta: dict[str, list[dict[str, object]]]
+    rate_pct: int
+
+
+class ReviewPrPage(BaseModel):
+    items: list[ReviewPr]
     total: int
     limit: int
     offset: int
@@ -297,6 +331,82 @@ async def export_reviews(
     )
 
 
+@router.get("/prs", response_model=ReviewPrPage)
+async def list_review_prs(
+    session: AsyncSession = Depends(get_db),
+    provider: str | None = None,
+    pr_number: int | None = None,
+    q: str | None = None,
+    finished_from: datetime | None = None,
+    finished_to: datetime | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> ReviewPrPage:
+    """按 MR 聚合的收敛视图：同一 MR（provider+repo+pr_number）多轮已完成审查，
+    把相邻轮 findings 差量串成时间线 + 末轮四桶（`group_pr_deltas` 纯函数）。
+
+    注意：本路由必须注册在 `/{review_id}` 之前，否则 `/prs` 会被
+    `{review_id:int}` 抢先匹配而解析失败（422）。
+
+    - 只统计 `event_type=='mr' and state=='completed'` 的任务；首轮 `before=[]` 全进 new。
+    - 筛选：`provider` 平台 / `pr_number` MR 号精确 / `q` 标题关键词 / 时间范围（按任务时间）。
+    - PR 之间按最近一轮 id 降序分页（`limit`/`offset`）。
+    - findings 一次取全（非 N+1），再按 task_id 归组喂给纯函数。
+    """
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+    kw = (q or "").strip().lower()
+    tasks = list((await session.execute(
+        select(ReviewTask)
+        .where(
+            ReviewTask.event_type == "mr",
+            ReviewTask.state == "completed",
+            ReviewTask.pr_number.is_not(None),
+        )
+        .order_by(ReviewTask.id)  # 本 PR 内按 id 升序 ≡ 审查顺序
+    )).scalars().all())
+    tasks = [t for t in tasks
+             if (not provider or t.provider == provider)
+             and (pr_number is None or t.pr_number == pr_number)
+             and (not kw or (t.pr_title or "").lower().find(kw) >= 0)
+             and (not finished_from or (t.finished_at or t.queued_at) >= finished_from)
+             and (not finished_to or (t.finished_at or t.queued_at) <= finished_to)]
+
+    # findings 一次拉全，按 task_id 归组（避免逐任务 N+1）。
+    findings_by_task: dict[int, list[_FindRow]] = {}
+    if tasks:
+        rows = (await session.execute(
+            select(ReviewFinding).where(ReviewFinding.task_id.in_(
+                [t.id for t in tasks]
+            )).order_by(ReviewFinding.id)
+        )).scalars().all()
+        for r in rows:
+            findings_by_task.setdefault(r.task_id, []).append(_FindRow(r))
+
+    # 按 (provider, repo_id, pr_number) 分组；组内已按 task.id 升序。
+    grouped: dict[tuple[str, str, int], list[tuple[int, str, list[_FindRow], set[str]]]] = {}
+    for t in tasks:
+        grouped.setdefault((t.provider, t.repo_id, t.pr_number), []).append(
+            (t.id, t.head_sha, findings_by_task.get(t.id, []), _covered_paths(t))
+        )
+
+    prs = group_pr_deltas(grouped)
+    prs.sort(key=lambda p: p.rounds[-1].id if p.rounds else 0, reverse=True)
+
+    items: list[ReviewPr] = []
+    for p in prs[offset:offset + limit]:
+        t = next(t for t in tasks if f"{t.provider}:{t.repo_id}:{t.pr_number}" == p.key)
+        items.append(ReviewPr(
+            key=p.key, provider=t.provider, repo_id=t.repo_id,
+            pr_number=t.pr_number or 0, pr_title=t.pr_title, web_url=t.web_url,
+            branch=t.branch, rounds_count=len(p.rounds),
+            rounds=[PrRoundOut(id=r.id, head_sha=r.head_sha, delta=r.delta)
+                    for r in p.rounds],
+            last_delta=p.last_delta, rate_pct=p.rate_pct,
+        ))
+    return ReviewPrPage(items=items, total=len(prs), limit=limit, offset=offset)
+
+
 @router.get("/{review_id}", response_model=ReviewDetail)
 async def get_review(review_id: int, session: AsyncSession = Depends(get_db)) -> ReviewDetail:
     row = (await session.execute(select(ReviewTask).where(ReviewTask.id == review_id))).scalar_one_or_none()  # noqa: E501
@@ -309,6 +419,19 @@ async def get_review(review_id: int, session: AsyncSession = Depends(get_db)) ->
     )).scalars().all()
     detail = ReviewDetail(**ReviewListItem.model_validate(row).model_dump())
     detail.findings = [ReviewFindingOut.model_validate(f) for f in findings]
+    # 首轮判定：找同一 MR 上一次 completed 任务（口径与 /compare 一致）。
+    if row.event_type == "mr":
+        prev = (await session.execute(
+            select(ReviewTask.id).where(
+                ReviewTask.provider == row.provider,
+                ReviewTask.repo_id == row.repo_id,
+                ReviewTask.pr_number == row.pr_number,
+                ReviewTask.event_type == "mr",
+                ReviewTask.state == "completed",
+                ReviewTask.id != review_id,
+            ).order_by(ReviewTask.id.desc()).limit(1)
+        )).scalar_one_or_none()
+        detail.prev_round_id = prev
     return detail
 
 
@@ -436,6 +559,23 @@ class _FindRow:
         self.source = r.source
 
 
+def _covered_paths(task: ReviewTask) -> set[str]:
+    """该任务本轮真正审到的文件路径集（来自 `diff_snapshot` 的 covered_file_map）。
+
+    未变更文件复用后 diff_snapshot 只含**真正审到**的文件；存量老任务无快照 → 空集
+    （保守：上次有本次无的进 `not_reviewed`，不算已修）。仅 mr 任务才有快照。
+    """
+    if not (task.diff_snapshot and task.event_type == "mr"):
+        return set()
+    try:
+        snap = json.loads(task.diff_snapshot)
+    except json.JSONDecodeError:
+        return set()
+    if not isinstance(snap, dict):
+        return set()
+    return {str(k) for k in snap}
+
+
 @router.get("/{review_id}/compare")
 async def compare_review(
     review_id: int, session: AsyncSession = Depends(get_db)
@@ -453,14 +593,7 @@ async def compare_review(
         select(ReviewFinding).where(ReviewFinding.task_id == review_id).order_by(ReviewFinding.id)  # noqa: E501
     )).scalars().all()
     # 本次覆盖集：diff_snapshot（covered_file_map 写入的 {path: sha1}）的路径集合。
-    after_covered: set[str] = set()
-    if current.diff_snapshot and current.event_type == "mr":
-        try:
-            covered = json.loads(current.diff_snapshot)
-            if isinstance(covered, dict):
-                after_covered = {str(k) for k in covered}
-        except json.JSONDecodeError:
-            after_covered = set()
+    after_covered = _covered_paths(current)
     prev = (await session.execute(
         select(ReviewTask).where(
             ReviewTask.provider == current.provider,

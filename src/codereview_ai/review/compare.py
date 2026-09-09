@@ -76,4 +76,17 @@ def bucket_compare(
             result.resolved.append(_flat(f))
         else:
             result.not_reviewed.append(_flat(f))
+
+    # 桶内排序，保证输出稳定可复现（对齐 OCR `Compare` 的 sortFindings：
+    # New 桶可能来自多轮/并发 append，依赖插入序会脱锚，前端也按此拍平展示）。
+    key = lambda row: (  # noqa: E731
+        row["file"] or "", row.get("line") or 0,       # OCR: path → start line
+        str(row.get("category") or ""),                #      → category
+        str(row.get("content") or ""),                 #      → content
+        str(row.get("existing_code") or ""),           #      → snippet 兜底
+    )
+    result.new = sorted(result.new, key=key)
+    result.persisting = sorted(result.persisting, key=key)
+    result.resolved = sorted(result.resolved, key=key)
+    result.not_reviewed = sorted(result.not_reviewed, key=key)
     return result
