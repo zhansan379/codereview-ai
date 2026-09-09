@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import tempfile
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -281,6 +282,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "未配置可用 LLM 模型（env CR_LLM_MODEL / DB model_config）或可用平台"
                 "（env CR_GITHUB_TOKEN/CR_GITLAB_TOKEN 或设置页 DB），webhook 仍可入队但无 worker"
             )
+
+        app_port = os.environ.get("CR_APP_PORT", "5001")
+        logger.info("管理后台已就绪：http://127.0.0.1:%s/admin", app_port)
 
         try:
             yield
