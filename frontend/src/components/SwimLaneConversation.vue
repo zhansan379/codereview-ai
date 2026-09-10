@@ -382,22 +382,22 @@ function toggle(card: Card): void {
   flex-wrap: wrap;
   gap: 8px;
   padding: 8px 12px;
-  border: 1px solid var(--border, #e2e5f0);
+  border: 1px solid var(--border, var(--el-border-color-light));
   border-radius: 8px;
-  background: #fff;
+  background: var(--el-bg-color);
 }
 .legend-label {
   font-size: 11px;
   font-weight: 600;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-right: 2px;
 }
 .legend-chip, .g-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid color-mix(in srgb, var(--gc, #909399) 30%, transparent);
-  background: color-mix(in srgb, var(--gc, #909399) 6%, #fff);
+  border: 1px solid color-mix(in srgb, var(--gc, var(--el-text-color-secondary)) 30%, transparent);
+  background: color-mix(in srgb, var(--gc, var(--el-text-color-secondary)) 6%, var(--el-bg-color));
   color: var(--el-text-color-primary);
   padding: 2px 9px;
   border-radius: 20px;
@@ -421,10 +421,10 @@ function toggle(card: Card): void {
   padding-bottom: 1px;
 }
 .lane {
-  border: 1px solid var(--border, #e2e5f0);
+  border: 1px solid var(--border, var(--el-border-color-light));
   border-left: 3px solid var(--lane);
   border-radius: 10px;
-  background: var(--surface, #fff);
+  background: var(--surface, var(--el-bg-color));
   overflow: hidden;
 }
 .lane-head {
@@ -432,8 +432,8 @@ function toggle(card: Card): void {
   align-items: center;
   gap: 10px;
   padding: 10px 16px;
-  border-bottom: 1px solid var(--border, #e2e5f0);
-  background: color-mix(in srgb, var(--lane) 6%, #fff);
+  border-bottom: 1px solid var(--border, var(--el-border-color-light));
+  background: color-mix(in srgb, var(--lane) 6%, var(--el-bg-color));
 }
 .lane-dot {
   width: 9px;
@@ -451,7 +451,7 @@ function toggle(card: Card): void {
 }
 .lane-code {
   font-size: 11px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
 }
 .lane-count {
@@ -465,7 +465,7 @@ function toggle(card: Card): void {
 }
 .lane-tokens {
   font-size: 11px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
 }
 .lane-cards {
@@ -477,11 +477,11 @@ function toggle(card: Card): void {
 
 /* ── 任务卡片 ── */
 .card {
-  border: 1px solid var(--border, #e2e5f0);
+  border: 1px solid var(--border, var(--el-border-color-light));
   border-radius: 8px;
   overflow: hidden;
   transition: box-shadow 0.15s ease;
-  background: #fff;
+  background: var(--el-bg-color);
 }
 .card:hover {
   box-shadow: 0 2px 8px rgba(15, 17, 24, 0.06);
@@ -491,17 +491,17 @@ function toggle(card: Card): void {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: #f6f7fb;
-  border-bottom: 1px solid var(--border, #e2e5f0);
+  background: var(--el-fill-color-light);
+  border-bottom: 1px solid var(--border, var(--el-border-color-light));
   cursor: pointer;
   flex-wrap: wrap;
   user-select: none;
 }
 .card-head:hover {
-  background: color-mix(in srgb, var(--lane) 7%, #f6f7fb);
+  background: color-mix(in srgb, var(--lane) 7%, var(--el-fill-color-light));
 }
 .forehead {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 11px;
   width: 12px;
 }
@@ -519,27 +519,27 @@ function toggle(card: Card): void {
   white-space: nowrap;
 }
 .badge-model {
-  background: #eef2ff;
-  color: #3730a3;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
   font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
 }
 .badge-time {
-  background: #f1f3f9;
-  color: #4a5068;
+  background: var(--el-fill-color);
+  color: var(--el-text-color-regular);
 }
 .badge-tokens {
-  background: #ecfdf5;
-  color: #065f46;
+  background: var(--el-color-success-light-9);
+  color: var(--el-color-success);
   font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
 }
 .badge-neutral {
-  background: #f1f3f9;
-  color: #4a5068;
+  background: var(--el-fill-color);
+  color: var(--el-text-color-regular);
 }
 .trace {
   margin-left: auto;
   font-size: 11px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   max-width: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -561,24 +561,24 @@ function toggle(card: Card): void {
   font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin: 8px 0 6px;
 }
 .warn {
   margin: 2px 0 8px;
   padding: 4px 10px;
-  border: 1px solid #f3d19e;
+  border: 1px solid var(--el-color-warning-light-5);
   border-radius: 4px;
-  background: #fdf6ec;
-  color: #b88230;
+  background: var(--el-color-warning-light-9);
+  color: var(--el-color-warning);
   font-size: 12px;
 }
 .text {
   margin: 0;
   padding: 8px 12px;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 4px;
-  background: #fafbfd;
+  background: var(--el-fill-color-lighter);
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 12.5px;
   line-height: 1.6;
@@ -589,19 +589,19 @@ function toggle(card: Card): void {
 }
 .text.small {
   font-size: 12px;
-  background: #fff;
+  background: var(--el-bg-color);
 }
 .text.reasoning {
-  background: #f8f8fc;
-  border-color: #e6e4f2;
+  background: var(--el-fill-color-lighter);
+  border-color: var(--el-border-color-light);
   max-height: 480px;
-  color: #4a4362;
+  color: var(--el-text-color-regular);
 }
 .json {
   padding: 8px 12px;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 4px;
-  background: #fafbfd;
+  background: var(--el-fill-color-lighter);
 }
 
 /* ── 工具调用 ── */
@@ -610,9 +610,9 @@ function toggle(card: Card): void {
 }
 .toolcall {
   margin-bottom: 8px;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
-  background: #fafbfd;
+  background: var(--el-fill-color-lighter);
   overflow: hidden;
 }
 .toolcall-detail {
@@ -637,13 +637,13 @@ function toggle(card: Card): void {
   user-select: none;
 }
 .toolcall-head:hover {
-  background: #f6f7fb;
+  background: var(--el-fill-color-light);
 }
 .toolcall-body {
   padding: 0 10px 10px;
 }
 .tool-icon {
-  color: #9ba3c2;
+  color: var(--el-text-color-placeholder);
 }
 .tool-name {
   color: #7c3aed;
@@ -654,8 +654,8 @@ function toggle(card: Card): void {
   display: inline-block;
   width: 5px;
   height: 5px;
-  border-right: 1.5px solid #909399;
-  border-bottom: 1.5px solid #909399;
+  border-right: 1.5px solid var(--el-text-color-secondary);
+  border-bottom: 1.5px solid var(--el-text-color-secondary);
   transform: rotate(-45deg);
   transition: transform 0.15s ease;
   flex-shrink: 0;
@@ -663,7 +663,7 @@ function toggle(card: Card): void {
 .tl {
   font-size: 11px;
   font-weight: 600;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   margin: 10px 0 5px;
@@ -672,7 +672,7 @@ function toggle(card: Card): void {
 /* ── 请求消息（默认折叠）── */
 .reqd {
   margin-top: 10px;
-  border-top: 1px dashed #ebeef5;
+  border-top: 1px dashed var(--el-border-color-lighter);
 }
 .reqd-toggle {
   cursor: pointer;
@@ -683,7 +683,7 @@ function toggle(card: Card): void {
   list-style: none;
   font-size: 12px;
   font-weight: 600;
-  color: #4a5068;
+  color: var(--el-text-color-regular);
   user-select: none;
 }
 .reqd-toggle::-webkit-details-marker,
@@ -716,7 +716,7 @@ summary::-webkit-details-marker {
   font-size: 12px;
 }
 .muted {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 12px;
 }
 </style>

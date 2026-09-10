@@ -119,17 +119,17 @@ const meta = computed(() => {
   cursor: pointer;
 }
 .jrow.clickable:hover {
-  background: rgba(64, 158, 255, 0.06);
+  background: var(--el-color-primary-light-9);
 }
 .caret {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   width: 10px;
   font-size: 11px;
   flex: none;
 }
 .jblock {
   margin-left: 16px;
-  border-left: 1px dashed #dcdfe6;
+  border-left: 1px dashed var(--el-border-color);
   padding-left: 8px;
 }
 .jkey {
@@ -137,10 +137,10 @@ const meta = computed(() => {
   flex: none;
 }
 .jop {
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 .jpreview {
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 .jval.num {
   color: #2f6f9f;
@@ -161,5 +161,19 @@ const meta = computed(() => {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* 语法高亮是分类色（不走 EP 语义 token），暗色下原色太深，单独提亮同色系 */
+html.dark .jkey {
+  color: #c4a7f5;
+}
+html.dark .jval.num {
+  color: #7fb8e0;
+}
+html.dark .jval.str {
+  color: #7bc47f;
+}
+html.dark .jval.bool {
+  color: #d78ae8;
 }
 </style>

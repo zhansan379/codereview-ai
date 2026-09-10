@@ -199,11 +199,11 @@ onMounted(load)
 .hint {
   margin-left: 12px;
   font-size: 12px;
-  color: #e6a23c;
+  color: var(--el-color-warning);
 }
 .form-tip {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-top: 2px;
 }
 </style>

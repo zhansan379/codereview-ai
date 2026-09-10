@@ -455,15 +455,15 @@ onMounted(() => {
   margin: 0;
 }
 .filter-form .el-form-item__label {
-  color: #606266;
+  color: var(--el-text-color-regular);
 }
 .score-sep {
   margin: 0 6px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 .export-scope {
   font-size: 13px;
-  color: #606266;
+  color: var(--el-text-color-regular);
   line-height: 1.6;
 }
 .export-scope + .export-scope {

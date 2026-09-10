@@ -75,7 +75,7 @@ async function onSubmit() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #f0f2f5;
+  background: var(--el-bg-color-page);
 }
 .login-card {
   width: 360px;

@@ -427,7 +427,7 @@ onMounted(load)
 }
 .form-tip {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-top: 2px;
 }
 .token-editor {
@@ -459,7 +459,7 @@ onMounted(load)
   margin-bottom: 8px;
 }
 .chain-label {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 13px;
   white-space: nowrap;
   width: 64px;
@@ -472,7 +472,7 @@ onMounted(load)
   margin-top: 10px;
 }
 .muted {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 12px;
   margin-left: 6px;
 }

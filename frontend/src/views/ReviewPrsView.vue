@@ -324,11 +324,11 @@ onMounted(load)
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 12.5px;
 }
 .branch {
-  color: #606266;
+  color: var(--el-text-color-regular);
 }
 .conv-text {
   font-size: 12.5px;
@@ -336,13 +336,13 @@ onMounted(load)
   margin-left: 4px;
 }
 .conv-text.good {
-  color: #67c23a;
+  color: var(--el-color-success);
 }
 .conv-text.warn {
-  color: #e6a23c;
+  color: var(--el-color-warning);
 }
 .conv-text.muted {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-weight: 400;
 }
 .timeline {
@@ -358,35 +358,35 @@ onMounted(load)
   gap: 6px;
   padding: 3px 8px;
   font-size: 12px;
-  color: #606266;
-  background: #f5f7fa;
-  border: 1px solid #e4e7ed;
+  color: var(--el-text-color-regular);
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--el-border-color-light);
   border-radius: 12px;
   white-space: nowrap;
   cursor: default;
 }
 .tl-round.current {
-  background: #ecf5ff;
-  border-color: #b3d8ff;
-  color: #409eff;
+  background: var(--el-color-primary-light-9);
+  border-color: var(--el-color-primary-light-5);
+  color: var(--el-color-primary);
 }
 .tl-round b {
   font-weight: 600;
 }
 .tl-round .up {
-  color: #f56c6c;
+  color: var(--el-color-danger);
 }
 .tl-round .down {
-  color: #67c23a;
+  color: var(--el-color-success);
 }
 .buckets {
   margin-top: 6px;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
   overflow: hidden;
 }
 .bucket-item + .bucket-item {
-  border-top: 1px solid #f0f2f5;
+  border-top: 1px solid var(--el-border-color-lighter);
 }
 .bucket-toggle {
   display: flex;
@@ -395,18 +395,18 @@ onMounted(load)
   padding: 8px 12px;
   cursor: pointer;
   user-select: none;
-  background: #fafafa;
+  background: var(--el-fill-color-lighter);
 }
 .bucket-toggle:hover {
-  background: #f0f2f5;
+  background: var(--el-bg-color-page);
 }
 .count {
   font-size: 13px;
-  color: #606266;
+  color: var(--el-text-color-regular);
 }
 .caret {
   margin-left: auto;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 12px;
   transition: transform 0.15s ease;
 }
@@ -417,7 +417,7 @@ onMounted(load)
   padding: 8px 12px;
 }
 .empty-tip {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   text-align: center;
   padding: 40px 0;
 }

@@ -214,7 +214,7 @@ onMounted(load)
 }
 .form-tip {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-left: 10px;
 }
 .perm-panel {
@@ -223,7 +223,7 @@ onMounted(load)
   box-sizing: border-box;
   max-height: 480px;
   overflow: auto;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
   padding: 12px;
 }
@@ -236,7 +236,7 @@ onMounted(load)
 .perm-group-title {
   font-weight: 600;
   margin-bottom: 8px;
-  color: #303133;
+  color: var(--el-text-color-primary);
 }
 /* 权限多选默认 white-space:nowrap 且横向排布，标签长时会撑破对话框。
    改用 flex 换行 + 标签可断词，保证面板宽度恒不超出容器。 */
@@ -257,7 +257,7 @@ onMounted(load)
   min-width: 0;
 }
 .muted {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 12px;
 }
 </style>

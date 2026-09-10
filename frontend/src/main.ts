@@ -9,6 +9,8 @@ import '@/styles/dark.scss'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'
+// 副作用导入：mount 前就把 html.dark 落好，避免刷新时闪一下亮色
+import './composables/useDark'
 
 // 入口：挂载 Pinia、Vue Router、Element Plus，注册图标组件（供模板中用 <el-icon><Xxx /></el-icon>）
 const app = createApp(App)

@@ -51,7 +51,7 @@ defineProps<{ rows: KpiRow[] }>()
 .hint {
   font-size: 12px;
   font-weight: 400;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-left: 4px;
 }
 .tile-label {
@@ -59,7 +59,7 @@ defineProps<{ rows: KpiRow[] }>()
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: #606266;
+  color: var(--el-text-color-regular);
   min-width: 0;
 }
 .dot {
@@ -69,7 +69,7 @@ defineProps<{ rows: KpiRow[] }>()
   flex: none;
 }
 .empty {
-  color: #c0c4cc;
+  color: var(--el-text-color-placeholder);
   font-size: 13px;
   align-self: center;
 }

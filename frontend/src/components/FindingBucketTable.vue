@@ -48,13 +48,13 @@ function sevTag(s: string): string {
 }
 .bucket-table th,
 .bucket-table td {
-  border-bottom: 1px solid #f0f2f5;
+  border-bottom: 1px solid var(--el-border-color-lighter);
   padding: 6px 8px;
   text-align: left;
   vertical-align: top;
 }
 .bucket-table th {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-weight: 600;
 }
 .sev {
@@ -67,7 +67,7 @@ function sevTag(s: string): string {
 }
 .line {
   width: 46px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   white-space: nowrap;
 }
 .cnt {
@@ -75,7 +75,7 @@ function sevTag(s: string): string {
   word-break: break-word;
 }
 .empty-row {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 12.5px;
   padding: 8px 4px;
 }

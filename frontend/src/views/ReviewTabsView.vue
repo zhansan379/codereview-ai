@@ -55,7 +55,7 @@ function onTabChange(v: string | number) {
   padding: 10px 16px;
 }
 .tab-hint {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 12.5px;
 }
 </style>
