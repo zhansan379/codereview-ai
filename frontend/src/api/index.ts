@@ -16,6 +16,8 @@ export interface LoginResult {
   access_token: string
   token_type: string
   expires_in: number
+  refresh_token: string
+  refresh_expires_in?: number
   user: User
   permissions: string[]
 }
@@ -173,8 +175,19 @@ export interface TaskItem {
 }
 
 // ===== 认证 =====
-export function login(username: string, password: string): Promise<LoginResult> {
-  return client.post('/auth/login', { username, password }).then((r) => r.data)
+export function login(
+  username: string,
+  password: string,
+  captchaId = '',
+  captchaAnswer = '',
+): Promise<LoginResult> {
+  return client
+    .post('/auth/login', {
+      username,
+      password,
+      ...(captchaId ? { captcha_id: captchaId, captcha_answer: captchaAnswer } : {}),
+    })
+    .then((r) => r.data)
 }
 export function me(): Promise<MeResult> {
   return client.get('/auth/me').then((r) => r.data)

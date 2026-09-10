@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { login as apiLogin, me as apiMe, type User } from '../api'
 
 const TOKEN_KEY = 'cr_token'
+const REFRESH_KEY = 'cr_refresh'
 const PERMS_KEY = 'cr_perms'
 
 interface AuthState {
@@ -24,12 +25,13 @@ export const useAuthStore = defineStore('auth', {
     hasPerm: (state) => (code: string) => state.permissions.includes(code),
   },
   actions: {
-    async login(username: string, password: string) {
-      const res = await apiLogin(username, password)
+    async login(username: string, password: string, captchaId = '', captchaAnswer = '') {
+      const res = await apiLogin(username, password, captchaId, captchaAnswer)
       this.token = res.access_token
       this.user = res.user
       this.permissions = res.permissions
       sessionStorage.setItem(TOKEN_KEY, res.access_token)
+      if (res.refresh_token) sessionStorage.setItem(REFRESH_KEY, res.refresh_token)
       sessionStorage.setItem(PERMS_KEY, JSON.stringify(res.permissions))
       return res
     },
@@ -55,6 +57,7 @@ export const useAuthStore = defineStore('auth', {
       this.user = null
       this.permissions = []
       sessionStorage.removeItem(TOKEN_KEY)
+      sessionStorage.removeItem(REFRESH_KEY)
       sessionStorage.removeItem(PERMS_KEY)
     },
   },

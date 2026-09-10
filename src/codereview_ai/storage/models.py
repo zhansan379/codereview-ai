@@ -408,6 +408,8 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64))
     password_hash: Mapped[str] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(128), default="")
+    email: Mapped[str] = mapped_column(String(255), default="")
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     role_id: Mapped[int] = mapped_column(ForeignKey("role.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
@@ -445,3 +447,24 @@ class Workspace(Base):
     slug: Mapped[str] = mapped_column(String(64))
     owner_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class AuthSession(Base):
+    """登录会话（阶段 D 开放安全加固）：记录每个 sid 的 refresh，支撑 access 撤销 + refresh 轮换。
+
+    `refresh_hash`=sha256(refresh 令牌的随机段)（存哈希不存明文）；`revoked_at` 非空即该 sid 的
+    全部 access token 即刻失效。沿用仓库「Integer FK 无 relationship」风格。
+    """
+
+    __tablename__ = "auth_session"
+    __table_args__ = (Index("idx_auth_session_user_id", "user_id"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # sid（随机，也入 access claim）
+    user_id: Mapped[int] = mapped_column(Integer)
+    refresh_hash: Mapped[str] = mapped_column(String(96))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    user_agent: Mapped[str] = mapped_column(String(255), default="")

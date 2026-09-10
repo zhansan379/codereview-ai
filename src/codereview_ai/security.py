@@ -64,3 +64,16 @@ def verify_password(password: str, stored: str) -> bool:
 def reset_meets_policy(password: str) -> bool:
     """密码策略：最小长度 ≥8。创建与重置共用。"""
     return len(password) >= MIN_PASSWORD_LEN
+
+
+def generate_token(nbytes: int = 32) -> str:
+    """生成 URL-safe 随机令牌（refresh 令牌 / captcha id / sid）。"""
+    return secrets.token_urlsafe(nbytes)
+
+
+def hash_token(token: str) -> str:
+    """对随机令牌做 sha256 hex。仅用于**比对**（refresh_hash、验证码答案 hash），非口令存储。
+
+    随机性由令牌侧保证（`generate_token`），单次 sha256 足够；配合 `compare_digest` 常时比较。
+    """
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()

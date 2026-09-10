@@ -56,6 +56,7 @@ from codereview_ai.ops.tracing import TraceMiddleware
 from codereview_ai.queue.asyncio import AsyncioTaskQueue
 from codereview_ai.queue.concurrency import WorkerPool
 from codereview_ai.review.static_analysis import StaticAnalyzer
+from codereview_ai.security_guard import LoginGuard
 from codereview_ai.storage.clone_cache_repo import CloneCacheRepoRepository
 from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.project_repo import ProjectRepository
@@ -102,6 +103,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await init_db(engine)
         app.state.engine = engine
         app.state.settings = settings
+        # —— 阶段 D：登录限速 + 验证码守卫（内存实例，测试可 reset）——
+        app.state.login_guard = LoginGuard(
+            login_rate_attempts=settings.login_rate_limit_attempts,
+            login_rate_window_seconds=settings.login_rate_limit_window_seconds,
+            captcha_threshold_attempts=settings.captcha_threshold_attempts,
+            captcha_ttl_seconds=settings.captcha_ttl_seconds,
+        )
 
         # —— agent 本地克隆缓存：注册表 + 清除策略后台（独立于 agentic 开关，列表/清理恒可用）——
         cache_root = settings.agent_clone_cache_dir or str(
