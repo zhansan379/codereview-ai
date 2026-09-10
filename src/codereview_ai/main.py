@@ -61,6 +61,8 @@ from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.project_repo import ProjectRepository
 from codereview_ai.storage.review_repo import ReviewRepository
 from codereview_ai.storage.seed import (
+    ensure_member_role,
+    ensure_workspace_backfill,
     prune_obsolete_permissions,
     seed_rbac,
     sync_permission_catalog,
@@ -129,6 +131,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await sync_permission_catalog(s)
             await prune_obsolete_permissions(s)
             await seed_rbac(s, settings.admin_password)
+            await ensure_member_role(s)            # 存量库也补自助注册默认角色
+            await ensure_workspace_backfill(s)     # 存量项目归入默认工作区（幂等）
 
         # —— simple 档队列：webhook 入队即返回 202，worker 异步消费 ——
         store = EventStore()

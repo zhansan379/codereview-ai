@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from codereview_ai.security import hash_password
-from codereview_ai.storage.models import Permission, Role, RolePermission, User
+from codereview_ai.storage.models import Permission, Project, Role, RolePermission, User, Workspace
 
 logger = logging.getLogger("codereview_ai.seed")
 
@@ -49,6 +49,11 @@ DEFAULT_ROLES: dict[str, tuple[str, bool, bool, list[str]]] = {
     ]),
     "viewer": ("观察者", False, False, [
         "projects:view", "reviews:view", "stats:view",
+    ]),
+    # 自助注册默认角色：只含项目作用域码（在自己的 workspace 内建/管项目+看审查），
+    # 不含任何全局码（settings/forges/models/users/roles/schedules/stats 一律不给）。
+    "member": ("成员", False, False, [
+        "projects:view", "projects:manage", "reviews:view", "reviews:manage",
     ]),
 }
 
@@ -161,3 +166,86 @@ async def sync_permission_catalog(session: AsyncSession) -> int:
         await session.commit()
         logger.info("补齐权限目录 %d 条：%s", len(added), ", ".join(added))
     return len(added)
+
+
+async def ensure_member_role(session: AsyncSession) -> bool:
+    """确保自助注册默认角色 `member` 存在（幂等）。
+
+    `seed_rbac` 只在空库播种（已有用户即跳过）；存量升级库不会自带 member 角色，
+    而注册端点依赖它。这里在目录/权限已对账的基础上，补建缺失的 member 角色及其
+    权限关联（只增不删，管理员后续手动加的角色权限不动）。
+    """
+    role = (await session.execute(
+        select(Role).where(Role.builtin_code == "member")
+    )).scalar_one_or_none()
+    name, _is_super, _all_projects, perm_codes = DEFAULT_ROLES["member"]
+    created = role is None
+    if role is None:
+        role = Role(
+            name=name, description=name, is_super=False, is_system=True,
+            all_projects=False, builtin_code="member",
+        )
+        session.add(role)
+        await session.flush()
+    # 只补缺的 junction 行（权限行由 sync_permission_catalog 保证存在）
+    perms = {p.id for p in (await session.execute(
+        select(Permission).where(Permission.code.in_(perm_codes))
+    )).scalars().all()}
+    have = {rp.permission_id for rp in (await session.execute(
+        select(RolePermission).where(RolePermission.role_id == role.id)
+    )).scalars().all()}
+    missing = sorted(perms - have)
+    for pid in missing:
+        session.add(RolePermission(role_id=role.id, permission_id=pid))
+    await session.commit()
+    if created or missing:
+        logger.info("member 角色就绪（新增权限关联 %d 条：%s）",
+                    len(missing), missing)
+    return created or bool(missing)
+
+
+async def ensure_workspace_backfill(session: AsyncSession) -> bool:
+    """存量数据回填默认工作区（幂等）：建「默认工作区」并把无归属项目挂到其下。
+
+    只在「一张 workspace 都没有」时执行一次（对齐 `seed_rbac` 的整体跳过闸）。
+    返回 `True` 当本次创建了默认工作区。owner 取首个用户（播种的 admin）。
+    """
+    count = (await session.execute(select(func.count()).select_from(Workspace))).scalar_one()
+    if count > 0:
+        return False
+    owner_id = (await session.execute(
+        select(User.id).order_by(User.id).limit(1)
+    )).scalar_one_or_none()
+    ws = Workspace(name="默认工作区", slug="default", owner_id=owner_id)
+    session.add(ws)
+    await session.flush()
+    await session.execute(
+        update(Project).where(Project.workspace_id.is_(None)).values(workspace_id=ws.id)
+    )
+    await session.commit()
+    logger.info("工作区回填：创建默认工作区 id=%s（owner=%s），存量项目归入其下", ws.id, owner_id)
+    return True
+
+
+async def user_owned_workspace_ids(session: AsyncSession, user: User) -> tuple[bool, set[int]]:
+    """用户拥有的 workspace 集。
+
+    `(is_all, ids)`：超管 is_all=True（全量直通）；否则 ids=其 owner 的空间。
+    """
+    if user.role and user.role.is_super:
+        return True, set()
+    rows = (await session.execute(
+        select(Workspace.id).where(Workspace.owner_id == user.id)
+    )).scalars().all()
+    return False, set(rows)
+
+
+async def user_workspace(session: AsyncSession, user: User) -> Workspace | None:
+    """用户要建项目时归属的 workspace：超管取默认/管理端空间；否则取其私有空间。"""
+    if user.role and user.role.is_super:
+        return (await session.execute(
+            select(Workspace).order_by(Workspace.id).limit(1)
+        )).scalar_one_or_none()
+    return (await session.execute(
+        select(Workspace).where(Workspace.owner_id == user.id).order_by(Workspace.id).limit(1)
+    )).scalar_one_or_none()

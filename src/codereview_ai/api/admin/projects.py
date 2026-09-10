@@ -21,9 +21,11 @@ from codereview_ai.api.deps import (
     allowed_project_ids,
     get_current_user,
     get_db,
+    resolved_permission_codes,
     user_can,
 )
 from codereview_ai.storage.models import Project, ProjectMember, User
+from codereview_ai.storage.seed import user_workspace
 
 router = APIRouter(prefix="/projects", dependencies=[Depends(get_current_user)])
 
@@ -47,6 +49,7 @@ class ProjectOut(BaseModel):
     push_enabled: bool | None = None
     push_branch_globs: str = ""
     mr_enabled: bool | None = None
+    workspace_id: int | None = None  # 租户归属（多租户开放注册）
 
 
 class ProjectWrite(BaseModel):
@@ -125,8 +128,13 @@ async def create_project(
     user: CurrentUser,
     session: AsyncSession = Depends(get_db),
 ) -> Project:
-    if not await user_can(session, user, "projects:manage", project_id=None):
-        _forbid()
+    # 多租户写侧归属：非超管须有自己的 workspace 且角色含 projects:manage 才能建项目
+    ws = await user_workspace(session, user)
+    if not user.role.is_super:
+        if ws is None:
+            _forbid()  # 无自有空间（注册用户都会自动有）→ 不允许
+        if "projects:manage" not in resolved_permission_codes(user):
+            _forbid()
     provider = body.provider.strip() if body.provider else ""
     repo_id = body.repo_id.strip() if body.repo_id else ""
     if not provider or not repo_id:
@@ -134,6 +142,7 @@ async def create_project(
     if await _duplicate_project(session, provider=provider, repo_id=repo_id):
         raise HTTPException(status.HTTP_409_CONFLICT, _DUPLICATE_MSG)
     row = Project(**body.model_dump())
+    row.workspace_id = ws.id if ws is not None else None
     session.add(row)
     try:
         await session.commit()

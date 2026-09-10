@@ -21,7 +21,7 @@ from starlette import status
 
 from codereview_ai.storage.db import session_factory
 from codereview_ai.storage.models import Project, ProjectMember, ReviewTask, Role, User
-from codereview_ai.storage.seed import PERMISSION_CATALOG
+from codereview_ai.storage.seed import PERMISSION_CATALOG, user_owned_workspace_ids
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -103,7 +103,8 @@ async def user_can(
     - 超管：任何权限、任何项目均通过。
     - 权限码不在角色权限集：拒绝。
     - 全局权限：通过。
-    - 项目权限：需 `role.all_projects`，或该用户是 `project_id` 的成员。
+    - 项目权限：需 `role.all_projects`；指定项目时，`project_id` 落在自己拥有的
+      workspace（空间 owner，多租户）或自己是该项目成员则通过。
     """
     if user.role.is_super:
         return True
@@ -111,11 +112,18 @@ async def user_can(
         return False
     if code in GLOBAL_PERM_CODES:
         return True
-    # 项目级权限：全项目角色直通；否则需指定项目且是成员
+    # 项目级权限：全项目角色直通
     if user.role.all_projects:
         return True
     if project_id is None:
         return False
+    is_all, ws_ids = await user_owned_workspace_ids(session, user)
+    if not is_all and ws_ids:
+        wid = (await session.execute(
+            select(Project.workspace_id).where(Project.id == project_id)
+        )).scalar_one_or_none()
+        if wid in ws_ids:
+            return True  # 空间 owner 对自有空间项目有管理权
     return bool((await session.execute(
         select(ProjectMember.id).where(
             ProjectMember.user_id == user.id, ProjectMember.project_id == project_id
