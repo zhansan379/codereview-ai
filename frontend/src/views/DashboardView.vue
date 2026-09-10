@@ -410,6 +410,17 @@ function ensure(el: HTMLDivElement) {
 
 // Agent 管线阶段规范顺序；未在列出的兜底phase（如 loop）追加在后
 const PHASE_ORDER = ['plan', 'main', 're_location', 'review_filter', 'scoring', 'compress']
+// 雷达分几环。满标必须能被它整除成整数刻度，否则 echarts 会警告「ticks may be not readable」
+const PHASE_SPLITS = 4
+
+/** 把上限抬到「好看的整数」：每环步长取 1/2/5×10^k，使 176 → 200（50 一环）而不是 44 一环。 */
+function niceCeil(v: number, splits: number): number {
+  if (v <= 0) return 0
+  const raw = v / splits
+  const mag = 10 ** Math.floor(Math.log10(raw))
+  const step = [1, 2, 5, 10].find((m) => m * mag >= raw)! * mag
+  return step * splits
+}
 
 function drawDuration() {
   if (!durationRef.value) return
@@ -456,21 +467,31 @@ function drawPhase() {
   const extra = stats.value.phase_box.filter((p) => !PHASE_ORDER.includes(p.key))
   const boxes = [...known, ...extra]
   // 雷达图：每个 phase 一根轴，四序列（最少/众数/平均/最多）叠成多边形，跨阶段对比。
-  // 每轴以该 phase 观测到的 max 为满标 → 各阶段在同一规格下比相对轮廓，避免低值阶段被压扁
-  const indicators = boxes.map((b) => ({ name: b.key, max: b.max }))
+  // 满标统一取全局 max（不是每轴自己的 max）——按各自 max 归一时 main 的 176 次和
+  // plan 的 1 次都落在最外圈、半径一样，跨阶段就没法比了，「最多」序列还会恒等于
+  // 轴满标退化成一个贴边多边形。统一满标后轻量阶段会挤向圆心，这正是真实权重。
+  const globalMax = niceCeil(Math.max(0, ...boxes.map((b) => b.max)), PHASE_SPLITS)
+  // 没有 agent 对话（全新实例 / 纯 diff 账户 / RBAC 过滤后无 agent 任务）时提前退出：
+  // radar 的 indicator 为空数组会让 echarts 在建坐标系时抛错，画不出来还会带崩整次重绘
+  if (!boxes.length || globalMax <= 0) {
+    ensure(phaseRef.value).clear()
+    return
+  }
+  const indicators = boxes.map((b) => ({ name: b.key, max: globalMax }))
   const pick = (f: (b: PhaseBoxItem) => number) => boxes.map(f)
   ensure(phaseRef.value).setOption({
     tooltip: {
       trigger: 'item',
       confine: true,
-      // 雷达悬停命中的是某个「度量」的整根多边形（params.value 按月份顺序排布），
-      // 不暴露具体月份索引 → 逐月列出该度量的调用次数，比单点更具体可读
+      // 雷达悬停命中的是某个「度量」的整根多边形（params.value 按 boxes 的阶段顺序排布），
+      // 不暴露具体是哪根轴 → 逐阶段列出该度量的调用次数，比单点更具体可读；
+      // 带上样本任务数，因为图上 1 个任务的阶段和 8 个任务的阶段是等权画的
       formatter: (p: { name: string; value: number | number[] }) => {
         const arr = Array.isArray(p.value) ? p.value : []
         const fmt = (v: number) =>
           Number.isInteger(v) ? `${v}` : `${Math.round(v * 100) / 100}`
         const lines = boxes.map((b, i) =>
-          `${b.key}　${arr[i] == null ? '—' : `${fmt(arr[i])} 次`}`
+          `${b.key}　${arr[i] == null ? '—' : `${fmt(arr[i])} 次`}　<span style="opacity:.6">${b.task_count} 个任务</span>`
         )
         return `<b>${p.name}</b>（各阶段单次审查 LLM 调用次数）<br/>${lines.join('<br/>')}`
       },
@@ -479,8 +500,10 @@ function drawPhase() {
     radar: {
       indicator: indicators,
       radius: '62%',
-      splitNumber: 4,
-      name: { textStyle: { fontSize: 11 } },
+      splitNumber: PHASE_SPLITS,
+      axisName: { fontSize: 11 },
+      // 满标统一之后刻度才有意义（各轴同一量程），显出来读者才知道离圆心多远是多少次
+      axisLabel: { show: true, fontSize: 10, showMinLabel: false },
     },
     series: [
       {
