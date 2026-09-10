@@ -661,8 +661,11 @@ async def _do_review_pull_request(
                 )
 
         if notifier is not None:
-            # F4.4 fire-and-forget：推送后台化，不拖慢也不阻断审查主链
-            notifier.launch(refreshed, result)
+            # F4.4 fire-and-forget：推送后台化，不拖慢也不阻断审查主链。
+            # 带 task.project_id 供通知按租户收口（阶段 B：租户项目不发全局默认渠道）。
+            pid = (await review_repo.task_project_id(task_id)
+                   if review_repo is not None and task_id is not None else None)
+            notifier.launch(refreshed, result, project_id=pid)
 
         if increments is not None and refreshed.head_sha:
             # 内存档才显式记录落点；DB 档 findigs 已落 review_finding，由 review_repo 读取
@@ -880,7 +883,9 @@ async def _review_push_event(
         summary = build_push_summary(ev, result)
         await forge.post_commit_summary(ev, summary)  # 只一条总结评论，无行级（§7.7）
         if notifier is not None:
-            notifier.launch(pr, result)
+            # 带 audit.project_id 供通知租户收口（阶段 B）；push 轨无审计行理论不可达，兜底 None
+            pid = await review_repo.task_project_id(audit_id) if review_repo is not None and audit_id else None
+            notifier.launch(pr, result, project_id=pid)
         if review_repo is not None:
             await review_repo.insert_findings(audit_id, result.findings)
             # push 轨当前不采集对话，chat/tool 轮数记 0；exec_mode/diff_lines 照实落库

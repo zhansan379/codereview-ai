@@ -346,6 +346,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(forges.router, prefix="/api")
     app.include_router(reviews.router, prefix="/api")
     app.include_router(pull.router, prefix="/api")
+    app.include_router(pull.tenant_router, prefix="/api")
     app.include_router(schedules.router, prefix="/api")
     app.include_router(clone_cache.router, prefix="/api")
     app.include_router(admin_settings.router, prefix="/api")

@@ -18,12 +18,23 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from codereview_ai.api.deps import get_current_user, require_permission
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from codereview_ai.api.deps import (
+    CurrentUser,
+    get_current_user,
+    get_db,
+    require_permission,
+)
+from codereview_ai.storage.seed import user_owned_workspace_ids
+
+#: 运营者手动补拉（全局 `pulls:manage`）。
 router = APIRouter(
     prefix="/pulls",
     dependencies=[Depends(get_current_user), Depends(require_permission("pulls:manage"))],
 )
+#: 租户自助补拉（多租户阶段 B）：任何登录用户触发，扫描范围限定在其拥有的 workspace 内项目。
+tenant_router = APIRouter(prefix="/pulls", dependencies=[Depends(get_current_user)])
 
 
 class PollReport(BaseModel):
@@ -60,13 +71,13 @@ def _poller_or_503(request: Request):
     return poller
 
 
-async def _background_poll(app: Any, poller: Any) -> None:
-    """后台跑一轮补拉，结果写入 `app.state.poll_*`（供 /status 读取）。"""
+async def _background_poll(app: Any, poller: Any, workspace_ids: set[int] | None = None) -> None:
+    """后台跑一轮补拉（可限定 workspace 集），结果写入 `app.state.poll_*`（供 /status 读取）。"""
     app.state.poll_running = True
     app.state.poll_last = None
     app.state.poll_error = None
     try:
-        report: dict[str, Any] = await poller.run_once()
+        report: dict[str, Any] = await poller.run_once(workspace_ids)
         if report.get("conflict"):
             # 撞上另在跑的一轮（多为定时补拉）→ 提示已跳过，不覆盖已存在的 poll_last。
             app.state.poll_error = "上一轮补拉（可能为定时任务）正在进行，本轮已跳过"
@@ -108,3 +119,29 @@ async def poll_status(request: Request) -> PollStatus:
         error=getattr(request.app.state, "poll_error", None),
         progress=progress,
     )
+
+
+@tenant_router.post("/poll/workspace", response_model=PollStatus)
+async def start_workspace_poll(
+    request: Request,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_db),
+) -> PollStatus:
+    """租户自助补拉（多租户阶段 B）：只扫**自己 workspace 内**的启用项目。
+
+    - 超管/全项目角色：全量（与运营者手动补拉等价）；
+    - 非超管：限定在用户**拥有(owner)**的 workspace 内；无自有空间 → 403。
+    与全局补拉共用 `_run_lock` 互斥与 `app.state.poll_*` 状态（一轮在跑则 409/跳过）。
+    """
+    _poller_or_503(request)
+    if getattr(request.app.state, "poll_running", False):
+        raise HTTPException(409, "上一轮补拉仍在后台进行，请稍候查看状态")
+    is_all, ws_ids = await user_owned_workspace_ids(session, user)
+    scope: set[int] | None = None if is_all else ws_ids
+    if scope is not None and not scope:
+        raise HTTPException(403, "您没有可补拉的工作区")
+    task = asyncio.create_task(
+        _background_poll(request.app, request.app.state.poller, scope)
+    )
+    request.app.state.poll_run_task = task
+    return PollStatus(running=True)

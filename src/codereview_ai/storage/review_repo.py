@@ -248,6 +248,14 @@ class ReviewRepository:
                 return None
             return int(task.id)
 
+    async def task_project_id(self, task_id: int) -> int | None:
+        """读任务的归属 project_id（通知租户收口要用：决定全局默认渠道是否跳过）。"""
+        session = session_factory(self._engine)
+        async with session() as s:
+            return (await s.execute(
+                select(ReviewTask.project_id).where(ReviewTask.id == task_id)
+            )).scalar_one_or_none()
+
     async def mark_state(
         self,
         task_id: int,

@@ -143,3 +143,52 @@ async def test_backfill_idempotent_and_assigns_existing_projects(tmp_path):
         count = (await s.execute(select(func.count()).select_from(Workspace))).scalar_one()
         assert count == 1
     await engine.dispose()
+
+
+class _FakePoller:
+    """抓取传入的自助补拉 scope（workspace_ids），返回空报告，供端点测试断言圈定。"""
+
+    def __init__(self) -> None:
+        self.scope: set[int] | None = None
+
+    async def run_once(self, workspace_ids=None) -> dict:
+        self.scope = workspace_ids
+        return {"projects": 0, "prs": 0, "new": 0, "skipped": 0, "errors": []}
+
+
+async def test_tenant_workspace_poll_scopes_to_own_workspace(tmp_path):
+    """租户自助补拉端点：非超管只扫自己 workspace 内项目，captured scope == 自己的空间。"""
+    from codereview_ai.api.admin.pull import tenant_router
+
+    async def _extra_seed(session) -> None:
+        await ensure_member_role(session)
+        await ensure_workspace_backfill(session)
+
+    fast, _token, _admin, engine = await make_admin_app(
+        tmp_path, db_name="ws_pull.db",
+        routers=[projects_mod.router, tenant_router], seed=_extra_seed,
+    )
+    fast.state.config_repository = None
+    fake = _FakePoller()
+    fast.state.poller = fake
+    fast.state.poll_running = False
+    fast.state.poll_run_task = None
+    fast.state.poll_last = None
+    fast.state.poll_error = None
+    try:
+        with TestClient(fast) as c:
+            regA = _reg(c, "ada")
+            regB = _reg(c, "bob")
+            hA = {"Authorization": f"Bearer {_login(c, 'ada', 'pass1234')}"}
+            hB = {"Authorization": f"Bearer {_login(c, 'bob', 'pass1234')}"}
+            c.post("/api/projects", json={
+                "provider": "gitlab", "repo_id": "300", "repo_full_name": "ada/app",
+            }, headers=hA)
+            r = c.post("/api/pulls/poll/workspace", headers=hA)
+            assert r.status_code == 200, r.text
+            assert fake.scope == {regA["workspace"]["id"]}  # 只扫自己的空间
+            # B 同端点 → 只扫 B 的空间，互不越界
+            c.post("/api/pulls/poll/workspace", headers=hB)
+            assert fake.scope == {regB["workspace"]["id"]}
+    finally:
+        await engine.dispose()

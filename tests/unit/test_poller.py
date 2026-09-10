@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from codereview_ai.ops.poller import PRPoller
 from codereview_ai.storage.db import create_engine, init_db, session_factory
-from codereview_ai.storage.models import Project, ReviewTask
+from codereview_ai.storage.models import Project, ReviewTask, Workspace
 
 
 class FakeRegistry:
@@ -256,3 +256,42 @@ async def test_run_once_conflicts_when_another_running(engine):
     assert res1["new"] == 1
     # 逐条进度已累计（含 total/done），供 /status 展示
     assert poller.progress == {"done": 1, "total": 1, "new": 1, "skipped": 0}
+
+
+async def test_run_once_scoped_to_workspaces(engine, tmp_path):
+    """多租户自助补拉：`run_once({ws})` 只扫该 workspace 内启用项目，不越界扫其它租户。"""
+    # 两个 workspace，各挂一个启用项目（provider 不同避免平台/项目口径混淆）
+    session = session_factory(engine)
+    async with session() as s:
+        w1 = Workspace(name="租户A", slug="a")
+        w2 = Workspace(name="租户B", slug="b")
+        s.add_all([w1, w2])
+        await s.flush()
+        p1 = Project(provider="github", repo_id="repo/1", enabled=True, workspace_id=w1.id)
+        p2 = Project(provider="gitlab", repo_id="repo/2", enabled=True, workspace_id=w2.id)
+        s.add_all([p1, p2])
+        await s.commit()
+        ws_a, ws_b = w1.id, w2.id
+
+    enqueuer = FakeEnqueuer()
+    registry = FakeRegistry({
+        "github": FakeForge([_pr(1, "h1")]),
+        "gitlab": FakeForge([_pr(2, "h2")]),
+    })
+    poller = PRPoller(engine, registry, enqueuer)
+
+    # 只扫租户 A：github 项目入队，租户 B 的 gitlab 项目不被扫
+    report = await poller.run_once({ws_a})
+    assert report["projects"] == 1
+    assert report["prs"] == 1
+    assert [c[0] for c in enqueuer.calls] == ["github"]
+    assert [c[1].pr_number for c in enqueuer.calls] == [1]
+    # 扫租户 B（独立一轮）：只 gitlab
+    report_b = await poller.run_once({ws_b})
+    assert report_b["projects"] == 1
+    assert [c[0] for c in enqueuer.calls] == ["github", "gitlab"]
+    # 无 workspace（空集/None）语义：{} → 不扫任何项目；None → 全量
+    report_empty = await poller.run_once(set())
+    assert report_empty["projects"] == 0
+    report_all = await poller.run_once(None)
+    assert report_all["projects"] == 2
