@@ -376,6 +376,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="codereview_ai.bench_review", description="AACR-Bench 无头评审"
     )
+    # 外壳契约常带 `review` 子命令词（aacr adapter 传 `CODEREVIEW_COMMAND review ...`）；
+    # 也允许省略（`... --repo ...` 直接用）。二者等价，忽略其取值即可。
+    parser.add_argument(
+        "cmd", nargs="?", default="review", choices=["review"], help=argparse.SUPPRESS
+    )
     parser.add_argument("--version", action="store_true", help="打印版本后退出")
     parser.add_argument("--offline", action="store_true", help="不联网自测（合成一条 finding）")
     parser.add_argument(
