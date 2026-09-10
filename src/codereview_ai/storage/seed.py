@@ -140,3 +140,24 @@ async def prune_obsolete_permissions(session: AsyncSession) -> int:
     logger.info("清理失效权限 %d 条：%s",
                 len(obsolete), ", ".join(p.code for p in obsolete))
     return len(obsolete)
+
+
+async def sync_permission_catalog(session: AsyncSession) -> int:
+    """对账权限目录与 permission 表（幂等，每次启动调用）。
+
+    `seed_rbac` 只在空库播种，存量库新增某个权限码（如 caches:manage）时 Permission 行不会自动
+    出现；角色分配按 permission_codes 去匹配 DB 行（`set_role_permissions`），匹配不到就静默丢弃，
+    表现为「勾上刷新又没了」。此函数把目录里有、表里缺的行补上，返回新建条数。新库无缺时 no-op。
+    与 `prune_obsolete_permissions` 一增一删，共同把 DB 对账到与目录一致。
+    """
+    existing = {p.code for p in (await session.execute(select(Permission))).scalars()}
+    added: list[str] = []
+    for code, name, scope, desc in PERMISSION_CATALOG:
+        if code not in existing:
+            session.add(Permission(code=code, name=name, scope=scope,
+                                   description=desc, is_system=True))
+            added.append(code)
+    if added:
+        await session.commit()
+        logger.info("补齐权限目录 %d 条：%s", len(added), ", ".join(added))
+    return len(added)

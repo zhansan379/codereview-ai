@@ -65,6 +65,29 @@ class RolePermissionsWrite(BaseModel):
     permission_codes: list[str] = []
 
 
+async def _resolve_perms(session: AsyncSession, codes: set[str]) -> list[Permission]:
+    """把请求的权限码解析成 Permission 行；目录里有、DB 表里缺的行即时补建（自愈）。
+
+    角色分配按 `Permission.code` 匹配 DB 行，存量库若缺某目录行的码会被静默丢弃（表现为
+    「勾上刷新又没了」，如新加的 caches:manage）。这里对在目录里但无行的码即时建行，保证
+    分配持久。
+    """
+    rows: dict[str, Permission] = {
+        p.code: p for p in (await session.execute(
+            select(Permission).where(Permission.code.in_(codes))
+        )).scalars()
+    }
+    catalog = {c: (n, s, d) for c, n, s, d in PERMISSION_CATALOG}
+    for code in codes:
+        if code not in rows and code in catalog:
+            n, s, d = catalog[code]
+            p = Permission(code=code, name=n, scope=s, description=d, is_system=True)
+            session.add(p)
+            rows[code] = p
+    # 新补的行留待 commit 时按表依赖顺序自动 flush（先 Permission 后 junction）
+    return list(rows.values())
+
+
 def _to_out(row: Role, member_count: int) -> RoleOut:
     return RoleOut(
         id=row.id, name=row.name, description=row.description,
@@ -121,10 +144,7 @@ async def create_role(body: RoleCreate, session: AsyncSession = Depends(get_db))
         raise HTTPException(status.HTTP_409_CONFLICT, "角色名已存在") from None
     await session.refresh(role)
     if body.permission_codes:
-        codes = set(body.permission_codes)
-        perms = (await session.execute(
-            select(Permission).where(Permission.code.in_(codes))
-        )).scalars().all()
+        perms = await _resolve_perms(session, set(body.permission_codes))
         for p in perms:
             session.add(RolePermission(role_id=role.id, permission_id=p.id))
         await session.commit()
@@ -153,11 +173,8 @@ async def set_role_permissions(
 ) -> RoleOut:
     """全量替换角色权限（`permission_codes`）。内置角色可改权限（保留删结构限制）。"""
     row = await _get_role(session, role_id)
-    codes = set(body.permission_codes)
-    perms = (await session.execute(
-        select(Permission).where(Permission.code.in_(codes))
-    )).scalars().all()
     # 全量替换：走 relationship 保持内存集合一致（避免 bulk delete 后读旧关系）
+    perms = await _resolve_perms(session, set(body.permission_codes))
     row.permissions.clear()
     row.permissions = list(perms)
     await session.commit()
