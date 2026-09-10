@@ -9,7 +9,7 @@ import base64
 from collections.abc import AsyncIterator
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from codereview_ai.security import verify_password
 from codereview_ai.storage.db import create_engine, init_db, session_factory
@@ -25,6 +25,7 @@ from codereview_ai.storage.seed import (
     PERMISSION_CATALOG,
     prune_obsolete_permissions,
     seed_rbac,
+    sync_permission_catalog,
 )
 
 
@@ -146,3 +147,37 @@ async def test_prune_obsolete_permissions(engine):
     # 幂等：再跑是 no-op
     async with session_factory(engine)() as s:
         assert await prune_obsolete_permissions(s) == 0
+
+
+async def test_sync_catalog_materializes_missing_permission_rows(engine):
+    """存量库缺某个目录权限行时，sync 补上行；此后角色分配该码能匹配到行（不再静默丢弃）。"""
+    async with session_factory(engine)() as s:
+        await seed_rbac(s, "hunter2")
+        # 模拟旧库漏了 caches:manage 这一行（seed 在线程跑前就种了更早的目录）
+        await s.execute(delete(Permission).where(Permission.code == "caches:manage"))
+        await s.commit()
+
+    # 补缺：应新建 1 条 caches:manage
+    async with session_factory(engine)() as s:
+        assert await sync_permission_catalog(s) == 1
+
+    async with session_factory(engine)() as s:
+        row = (await s.execute(
+            select(Permission).where(Permission.code == "caches:manage")
+        )).scalar_one_or_none()
+        assert row is not None
+        # 现在按 code 分配能匹配到行，可挂到角色并持久
+        dev = (await s.execute(
+            select(Role).where(Role.builtin_code == "developer")
+        )).scalar_one()
+        s.add(RolePermission(role_id=dev.id, permission_id=row.id))
+        await s.commit()
+        joined = (await s.execute(
+            select(Permission).join(RolePermission, RolePermission.permission_id == Permission.id)
+            .where(RolePermission.role_id == dev.id, Permission.code == "caches:manage")
+        )).scalar_one_or_none()
+        assert joined is not None
+
+    # 幂等：再跑是 no-op
+    async with session_factory(engine)() as s:
+        assert await sync_permission_catalog(s) == 0
