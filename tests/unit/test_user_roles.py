@@ -112,8 +112,8 @@ def test_create_custom_role_and_assign_permissions(ctx):
     assert set(r.json()["permissions"]) == {"projects:view", "reviews:view"}
 
     r = c.put(f"/api/roles/{rid}/permissions",
-              json={"permission_codes": ["reviews:update"]})
-    assert set(r.json()["permissions"]) == {"reviews:update"}
+              json={"permission_codes": ["reviews:manage"]})
+    assert set(r.json()["permissions"]) == {"reviews:manage"}
 
     # 建个引用它的用户后再删 → 409
     assert c.post("/api/users", json={

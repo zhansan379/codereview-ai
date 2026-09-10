@@ -219,7 +219,9 @@ onMounted(load)
 }
 .perm-panel {
   width: 100%;
-  max-height: 380px;
+  max-width: 100%;
+  box-sizing: border-box;
+  max-height: 480px;
   overflow: auto;
   border: 1px solid #ebeef5;
   border-radius: 6px;
@@ -235,6 +237,24 @@ onMounted(load)
   font-weight: 600;
   margin-bottom: 8px;
   color: #303133;
+}
+/* 权限多选默认 white-space:nowrap 且横向排布，标签长时会撑破对话框。
+   改用 flex 换行 + 标签可断词，保证面板宽度恒不超出容器。 */
+.perm-panel :deep(.el-checkbox-group) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 20px;
+}
+.perm-panel :deep(.el-checkbox) {
+  margin-right: 0;
+  min-width: 0;
+  white-space: normal;
+}
+.perm-panel :deep(.el-checkbox__label) {
+  white-space: normal;
+  word-break: break-word;
+  line-height: 20px;
+  min-width: 0;
 }
 .muted {
   color: #909399;

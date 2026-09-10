@@ -20,7 +20,12 @@ from codereview_ai.storage.models import (
     RolePermission,
     User,
 )
-from codereview_ai.storage.seed import DEFAULT_ROLES, PERMISSION_CATALOG, seed_rbac
+from codereview_ai.storage.seed import (
+    DEFAULT_ROLES,
+    PERMISSION_CATALOG,
+    prune_obsolete_permissions,
+    seed_rbac,
+)
 
 
 def _fernet_key() -> str:
@@ -102,3 +107,42 @@ async def test_project_member_table_exists(engine):
     """project_member 表存在且可查（隔离用）。空库无成员。"""
     async with session_factory(engine)() as s:
         assert (await s.execute(select(func.count()).select_from(ProjectMember))).scalar_one() == 0
+
+
+async def test_prune_obsolete_permissions(engine):
+    """目录删码后，存量角色的失效权限关联与孤儿 Permission 行会被清掉（幂等）。"""
+    async with session_factory(engine)() as s:
+        await seed_rbac(s, "hunter2")
+
+    # 模拟旧库存量：造一个不在目录里的权限，并挂到 developer 角色上
+    async with session_factory(engine)() as s:
+        stale = Permission(code="reviews:update", name="更新审查意见", scope="project",
+                           description="旧码", is_system=False)
+        s.add(stale)
+        await s.flush()
+        dev = (await s.execute(
+            select(Role).where(Role.builtin_code == "developer")
+        )).scalar_one()
+        s.add(RolePermission(role_id=dev.id, permission_id=stale.id))
+        await s.commit()
+
+    # 首次清理应删掉 1 条
+    async with session_factory(engine)() as s:
+        cleaned = await prune_obsolete_permissions(s)
+        assert cleaned == 1
+
+    async with session_factory(engine)() as s:
+        assert (await s.execute(
+            select(func.count()).select_from(Permission)
+            .where(Permission.code == "reviews:update")
+        )).scalar_one() == 0
+        # junction 里不再有指向它的行
+        assert (await s.execute(
+            select(func.count()).select_from(RolePermission)
+            .join(Permission, Permission.id == RolePermission.permission_id)
+            .where(Permission.code == "reviews:update")
+        )).scalar_one() == 0
+
+    # 幂等：再跑是 no-op
+    async with session_factory(engine)() as s:
+        assert await prune_obsolete_permissions(s) == 0

@@ -7,7 +7,7 @@
         router
         class="menu"
       >
-        <el-menu-item v-if="auth.hasPerm('projects:view')" index="/dashboard">
+        <el-menu-item v-if="auth.hasPerm('stats:view')" index="/dashboard">
           <el-icon><DataBoard /></el-icon>
           <span>仪表盘</span>
         </el-menu-item>
@@ -31,7 +31,7 @@
           <el-icon><Timer /></el-icon>
           <span>定时任务</span>
         </el-menu-item>
-        <el-menu-item index="/clone-caches">
+        <el-menu-item v-if="auth.hasPerm('caches:manage')" index="/clone-caches">
           <el-icon><Box /></el-icon>
           <span>拉取缓存</span>
         </el-menu-item>

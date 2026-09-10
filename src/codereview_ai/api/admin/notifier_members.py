@@ -13,10 +13,14 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
-from codereview_ai.api.deps import get_current_user, get_db
+from codereview_ai.api.deps import get_db, require_permission
 from codereview_ai.storage.models import NotifierMember, NotifierRouteMember
 
-router = APIRouter(prefix="/notifiers/members", dependencies=[Depends(get_current_user)])
+# IM 成员目录含手机号/企微/飞书 ID 等敏感数据，增删改（含读）须 `notifiers:manage`，
+# 不能仅登录即可。require_permission 已含登录鉴权。
+router = APIRouter(prefix="/notifiers/members", dependencies=[
+    Depends(require_permission("notifiers:manage")),
+])
 
 
 class MemberOut(BaseModel):

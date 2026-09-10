@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from codereview_ai.security import hash_password
@@ -26,16 +26,15 @@ PERMISSION_CATALOG: list[tuple[str, str, str, str]] = [
     ("models:manage", "模型配置", "global", "LLM 模型与 API Key"),
     ("notifiers:manage", "IM 通知配置", "global", "钉钉/飞书/企微渠道与路由"),
     ("schedules:manage", "定时任务", "global", "补拉/日报调度任务"),
-    ("tasks:manage", "任务监控", "global", "任务列表与手动重试"),
     ("users:manage", "用户管理", "global", "增删改用户、重置密码"),
     ("roles:manage", "角色管理", "global", "增删改角色与权限分配"),
     ("pulls:manage", "手动补拉", "global", "触发主动补拉 PR/MR"),
+    ("caches:manage", "拉取缓存管理", "global", "查看/删除本地拉取缓存与清除策略"),
     # —— 项目（经成员关系/全项目角色生效）——
     ("projects:view", "查看项目", "project", "查看项目及其配置"),
     ("projects:manage", "管理项目", "project", "创建/修改/删除项目、成员"),
     ("reviews:view", "查看审查记录", "project", "查看审查列表/详情/对话"),
     ("reviews:manage", "管理审查记录", "project", "删除审查记录、手动重试"),
-    ("reviews:update", "更新审查意见", "project", "人工更新 finding 状态（waived/active）"),
 ]
 
 #: code → (name, is_super, all_projects, [perm_codes])。is_super 仅 admin 预留。
@@ -43,10 +42,10 @@ DEFAULT_ROLES: dict[str, tuple[str, bool, bool, list[str]]] = {
     "admin": ("管理员", True, True, [c for c, _, _, _ in PERMISSION_CATALOG]),
     "tech_lead": ("技术负责人", False, True, [
         "projects:view", "projects:manage", "reviews:view", "reviews:manage",
-        "reviews:update", "pulls:manage", "stats:view",
+        "pulls:manage", "caches:manage", "stats:view",
     ]),
     "developer": ("开发", False, False, [
-        "projects:view", "reviews:view", "reviews:update",
+        "projects:view", "reviews:view",
     ]),
     "viewer": ("观察者", False, False, [
         "projects:view", "reviews:view", "stats:view",
@@ -115,3 +114,29 @@ async def seed_rbac(session: AsyncSession, admin_password: str) -> list[str]:
     await session.commit()
     logger.info("RBAC 种子完成，新建角色：%s", created or ["（复用内置）"])
     return created
+
+
+async def prune_obsolete_permissions(session: AsyncSession) -> int:
+    """清理不在权限目录里、已失效的权限（幂等，每次启动调用）。
+
+    目录删掉某个权限码（如 tasks:manage / reviews:update）后，seed 只在空库播种、不会覆盖
+    存量库；旧的角色仍可能残留指向旧 Permission 行的 role_permission 关联与孤儿的 Permission 行。
+    这里把两者一并清除，返回清理条数。新库无残留时是纯 no-op。
+    """
+    valid = {c for c, _n, _s, _d in PERMISSION_CATALOG}
+    obsolete = list((await session.execute(
+        select(Permission).where(Permission.code.notin_(valid))
+    )).scalars().all())
+    if not obsolete:
+        return 0
+    obsolete_ids = [p.id for p in obsolete]
+    # 先清 junction 避免外键残留，再删权限行
+    await session.execute(
+        delete(RolePermission).where(RolePermission.permission_id.in_(obsolete_ids))
+    )
+    for p in obsolete:
+        await session.delete(p)
+    await session.commit()
+    logger.info("清理失效权限 %d 条：%s",
+                len(obsolete), ", ".join(p.code for p in obsolete))
+    return len(obsolete)
