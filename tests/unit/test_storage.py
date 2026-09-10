@@ -80,6 +80,32 @@ async def test_schema_backfill_adds_new_columns_idempotently(tmp_path):
     await engine.dispose()
 
 
+async def test_schema_backfill_adds_user_email_columns(tmp_path):
+    """存量库缺阶段的 `user.email`/`email_verified`（阶段 D 加列未在旧 schema）→ 启动补列幂等。
+
+    回归：open-registration 的 register 会 INSERT 含 email 的行，存量库缺该列即 500。
+    """
+    from codereview_ai.storage.db import _ensure_latest_schema
+
+    engine = create_engine(f"sqlite:///{tmp_path}/old_user.db")
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "CREATE TABLE user (id INTEGER PRIMARY KEY, username VARCHAR(64), "
+            "password_hash VARCHAR(255), display_name VARCHAR(128) DEFAULT '',"
+            "enabled BOOLEAN DEFAULT 1, role_id INTEGER NOT NULL)"))
+
+    async def _cols(table: str) -> set[str]:
+        async with engine.connect() as conn:
+            rows = (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()
+            return {r[1] for r in rows}
+
+    assert not ({"email", "email_verified"} & await _cols("user"))
+    await _ensure_latest_schema(engine)
+    await _ensure_latest_schema(engine)  # 幂等
+    assert {"email", "email_verified"} <= await _cols("user")
+    await engine.dispose()
+
+
 async def test_model_config_insert_read(engine):
     session = session_factory(engine)
     async with session() as s:

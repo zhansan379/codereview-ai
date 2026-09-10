@@ -110,6 +110,11 @@ _COLUMN_FALLBACKS: dict[str, list[tuple[str, str, str]]] = {
         # BYOK 豁免开关：存量行 0=False=必须自带 key（保守默认，不主动回落平台全局）
         ("platform_fallback", "BOOLEAN", "DEFAULT 0"),
     ],
+    "user": [
+        # 阶段 D 开放安全加固新增：存量库（email 验证前置）缺该列会 500（register/user 读列）。
+        ("email", "VARCHAR(255)", "DEFAULT ''"),
+        ("email_verified", "BOOLEAN", "DEFAULT 0"),
+    ],
 }
 
 
@@ -120,7 +125,17 @@ async def _ensure_latest_schema(engine: AsyncEngine) -> None:
     from sqlalchemy import text
 
     async with engine.begin() as conn:
+        # sqlite_master 判定表是否存在：不存在直接跳过补列（create_all 未建出的表补列无意义，
+        # 且部分 schema 下 ALTER 会 500——见 test_schema_backfill 的合成旧库只建了部分表）。
+        present = {
+            r[0]
+            for r in (await conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            )).fetchall()
+        }
         for table, cols in _COLUMN_FALLBACKS.items():
+            if table not in present:
+                continue
             existing = {
                 row[1]
                 for row in (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()
