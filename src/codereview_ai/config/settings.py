@@ -107,6 +107,22 @@ class Settings(BaseSettings):
     github_token: str = ""
     llm_model: str = ""
 
+    # —— 开放安全加固（阶段 D）：令牌 TTL / 登录限速 / 验证码 ———
+    auth_access_ttl_seconds: int = 1800  # access token 有效期（短命；前端静默 refresh 续期）
+    auth_refresh_ttl_seconds: int = 14 * 86400  # refresh 令牌（会话）有效期 14 天
+    login_rate_limit_attempts: int = 10  # 窗口内最大登录尝试（按 IP 与 ip:username 双维度）
+    login_rate_limit_window_seconds: int = 900  # 限速窗口 15 分钟
+    captcha_threshold_attempts: int = 3  # 失败达此值 → 下一次须验证码；0=恒开；-1=关闭
+    captcha_ttl_seconds: int = 300  # 验证码有效期 5 分钟
+
+    # —— 邮箱（阶段 D：验证邮件，可选；不配 smtp_host 则邮箱验证关闭、注册照常）——
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_starttls: bool = True
+
     @model_validator(mode="after")
     def _fail_fast(self) -> Settings:
         """校验必备密钥存在、Fernet 密钥格式合法，缺失/非法直接退出。"""

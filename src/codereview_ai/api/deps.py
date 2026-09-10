@@ -20,7 +20,14 @@ from sqlalchemy.orm import selectinload
 from starlette import status
 
 from codereview_ai.storage.db import session_factory
-from codereview_ai.storage.models import Project, ProjectMember, ReviewTask, Role, User
+from codereview_ai.storage.models import (
+    AuthSession,
+    Project,
+    ProjectMember,
+    ReviewTask,
+    Role,
+    User,
+)
 from codereview_ai.storage.seed import PERMISSION_CATALOG, user_owned_workspace_ids
 
 _bearer = HTTPBearer(auto_error=False)
@@ -75,6 +82,15 @@ async def get_current_user(
         uid = int(sub)
     except (TypeError, ValueError):
         _reject()
+    # —— 阶段 D：access token 带 sid → 做服务端会话校验（撤销即失效）。
+    #    无 sid（存量/测试签发的旧 token）→ 退回只 decode+查 user，迁移期兼容。 ——
+    sid = payload.get("sid")
+    if sid is not None:
+        sess = (await session.execute(
+            select(AuthSession).where(AuthSession.id == str(sid))
+        )).scalar_one_or_none()
+        if sess is None or sess.user_id != uid or sess.revoked_at is not None:
+            _reject()
     user = (await session.execute(
         select(User)
         .where(User.id == uid)
