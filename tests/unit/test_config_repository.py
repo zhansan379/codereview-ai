@@ -27,6 +27,10 @@ from codereview_ai.storage.models import (
     NotifierConfig,
     NotifierMember,
     NotifierRouteMember,
+    Project,
+    Role,
+    User,
+    Workspace,
 )
 
 
@@ -134,6 +138,60 @@ async def test_notifier_routes_filter_by_project_and_decrypt(engine, monkeypatch
     resolved = await repo.resolve_member_by_git_username("bob")
     assert resolved is not None and resolved.wecom_userid == "wbob"
     assert await repo.resolve_member_by_git_username("nobody") is None
+
+
+async def _seed_owner_project(engine: AsyncEngine, *, is_super: bool, idx: int) -> tuple[int, int]:
+    """造一层 owner=用户 / workspace / project，返回 (user_id, project_id)。"""
+    session = session_factory(engine)
+    async with session() as s:
+        role = Role(name="超" if is_super else "成员", is_super=is_super,
+                    is_system=True, builtin_code="admin" if is_super else "member")
+        s.add(role)
+        await s.flush()
+        user = User(username=f"user{idx}", password_hash="x", display_name="",
+                    enabled=True, role_id=role.id)
+        s.add(user)
+        await s.flush()
+        ws = Workspace(name="ws", slug=f"ws{idx}", owner_id=user.id)
+        s.add(ws)
+        await s.flush()
+        proj = Project(provider="gh", repo_id=f"{idx}", workspace_id=ws.id)
+        s.add(proj)
+        await s.commit()  # 必须落库：跨会话的路由创建需要看到这些行
+        return user.id, proj.id
+
+
+async def test_notifier_tenant_gate_withholds_global_default(engine):
+    """阶段 B 保守收口：租户所有（workspace owner 非超管）项目跳过全局默认渠道。
+
+    只发该项目显式配置的路由（无路由则静默）；运营者自己的项目照旧全局默认 + 项目级覆盖。
+    """
+    key = _fernet_key()
+    await _seed_model(engine, name="m", model="m")
+    _tuser, tenant_proj = await _seed_owner_project(engine, is_super=False, idx=1)
+    _auser, admin_proj = await _seed_owner_project(engine, is_super=True, idx=2)
+
+    session = session_factory(engine)
+    async with session() as s:
+        # 全局默认渠道（project_id 空）+ 两条项目级路由（分别绑租户项目 / 运营者项目）
+        s.add(NotifierConfig(channel="dingtalk", enabled=True,
+                             webhook_encrypted=encrypt("https://w-global", key),
+                             secret_encrypted="", project_id=None, at_threshold=0))
+        s.add(NotifierConfig(channel="feishu", enabled=True,
+                             webhook_encrypted=encrypt("https://w-tenant", key),
+                             secret_encrypted="", project_id=tenant_proj, at_threshold=0))
+        s.add(NotifierConfig(channel="wecom", enabled=True,
+                             webhook_encrypted=encrypt("https://w-admin", key),
+                             secret_encrypted="", project_id=admin_proj, at_threshold=0))
+        await s.commit()
+
+    repo = ConfigRepository(engine, encryption_key=key)
+    # 租户项目：只发显式项目路由，全局默认被收口不发
+    tenant_routes = await repo.notifier_routes(project_id=tenant_proj)
+    assert [r.channel for r in tenant_routes] == ["feishu"]
+    # 运营者（超管）项目：全局默认 + 项目级覆盖照旧
+    admin_routes = await repo.notifier_routes(project_id=admin_proj)
+    assert {r.channel for r in admin_routes} == {"dingtalk", "wecom"}
 
 
 

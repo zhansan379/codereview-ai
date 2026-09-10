@@ -43,13 +43,20 @@ class ProjectRepository:
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
 
-    async def list_enabled(self) -> list[Project]:
-        """返回全部**启用**项目行（主动补拉 PR/MR 的扫描范围，DESIGN §9 补拉通道）。"""
+    async def list_enabled(
+        self, workspace_ids: set[int] | None = None
+    ) -> list[Project]:
+        """返回**启用**项目行（主动补拉 PR/MR 的扫描范围，DESIGN §9 补拉通道）。
+
+        `workspace_ids` 给定（租户自助补拉）→ 只扫落在该 workspace 集内的项目，用于多租户
+        隔离；None（运营者手动/定时补拉）→ 全量启用项目，行为不变。
+        """
         session = session_factory(self._engine)
+        stmt = select(Project).where(Project.enabled.is_(True))
+        if workspace_ids is not None:
+            stmt = stmt.where(Project.workspace_id.in_(list(workspace_ids)))
         async with session() as s:
-            return list((await s.execute(
-                select(Project).where(Project.enabled.is_(True)).order_by(Project.id)
-            )).scalars().all())
+            return list((await s.execute(stmt.order_by(Project.id))).scalars().all())
 
     async def config_for(self, provider: str, repo_id: str) -> ProjectConfig | None:
         session = session_factory(self._engine)

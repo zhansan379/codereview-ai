@@ -52,20 +52,22 @@ class PRPoller:
         # 仅在一轮补拉进行中有效；结束后保留终值但不展示。
         self.progress: dict[str, int] = {"done": 0, "total": 0, "new": 0, "skipped": 0}
 
-    async def run_once(self) -> dict[str, Any]:
+    async def run_once(
+        self, workspace_ids: set[int] | None = None
+    ) -> dict[str, Any]:
         """跑一轮补拉：与在跑的一轮（手动/定时）互斥，撞车则返回 conflict。
 
-        `_run_lock` 未锁 → 抢占并委托 `_run_once_locked`；已锁（另一轮进行中）→ 立即返回
-        `conflict=True` 的空报告，不等待不重叠。手动插口仍保留其 `poll_running` 409 快速
-        拒绝（手动-手动），此处兜底手动与定时之间的互斥。
+        `workspace_ids` 给定（租户自助补拉）→ 只扫该 workspace 集内启用项目（多租户隔离）；
+        None → 运营者全量。所有入口共用 `_run_lock`（互斥，撞上一轮在跑 → conflict）。
+        手动插口仍保留其 `poll_running` 409 快速拒绝。
         """
         if not self._run_lock.locked():
             async with self._run_lock:
-                return await self._run_once_locked()
+                return await self._run_once_locked(workspace_ids)
         return {"conflict": True, "projects": 0, "prs": 0, "new": 0, "skipped": 0, "errors": []}
 
-    async def _run_once_locked(self) -> dict[str, Any]:
-        """扫全部启用项目一轮：列打开 PR → 逐条（跳过已审 + 落 queued 行 + 入队），返回汇总。
+    async def _run_once_locked(self, workspace_ids: set[int] | None = None) -> dict[str, Any]:
+        """扫（可限定 workspace 集）启用项目一轮：列打开 PR → 逐条跳过已审为【跳过 + 落 queued + 入队】。
 
         报告字段：`projects`（成功扫描的项目数）、`prs`（打开 PR 总数）、`new`（本次新入队待审）、
         `skipped`（同 head 已审过跳过）、`errors`（每项/每 PR 的失败描述，单向隔离）。
@@ -73,7 +75,7 @@ class PRPoller:
         """
         report: dict[str, Any] = {"projects": 0, "prs": 0, "new": 0, "skipped": 0, "errors": []}
         self.progress = {"done": 0, "total": 0, "new": 0, "skipped": 0}
-        projects = await self._project_repo.list_enabled()
+        projects = await self._project_repo.list_enabled(workspace_ids)
         if not projects:
             return report
         review_repo = ReviewRepository(self._engine)

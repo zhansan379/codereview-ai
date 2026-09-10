@@ -33,6 +33,10 @@ from codereview_ai.storage.models import (
     NotifierConfig,
     NotifierMember,
     NotifierRouteMember,
+    Project,
+    Role,
+    User,
+    Workspace,
 )
 
 logger = logging.getLogger("codereview_ai.config_repository")
@@ -236,13 +240,50 @@ class ConfigRepository:
             ))
         return chain
 
+    async def _project_is_tenant_owned(self, project_id: int) -> bool:
+        """项目是否「租户所有」：其归属 workspace 的 owner 是**非超管**用户。
+
+        多租户收口（阶段 B）：自助注册用户（`member`，私有 workspace owner=本人）建的项目
+        属租户所有；超管/管理端空间（默认工作区 owner=admin is_super）的项目是运营者自己的。
+        无归属 workspace / owner 为空 → False（服务端管理空间，走全局默认）。
+        """
+        session = session_factory(self._engine)
+        async with session() as s:
+            ws_id = (await s.execute(
+                select(Project.workspace_id).where(Project.id == project_id)
+            )).scalar_one_or_none()
+            if ws_id is None:
+                return False
+            owner_id = (await s.execute(
+                select(Workspace.owner_id).where(Workspace.id == ws_id)
+            )).scalar_one_or_none()
+            if owner_id is None:
+                return False
+            is_super = (await s.execute(
+                select(Role.is_super)
+                .join(User, User.role_id == Role.id)
+                .where(User.id == owner_id)
+            )).scalar_one_or_none()
+        return bool(is_super) is False
+
     async def notifier_routes(self, project_id: int | None = None) -> list[NotifierRoute]:
-        """给出项目的通知路由（无项目号时含全局默认）；隐式密钥解密，日志只记 channel。"""
+        """给出项目的通知路由（无项目号时含全局默认）；隐式密钥解密，日志只记 channel。
+
+        **多租户收口（阶段 B）**：项目归属**租户所有**（workspace owner 非超管）时，跳过
+        `project_id IS NULL` 的全局默认渠道——租户审查内容不再被推到运营者的全局/共享渠道，
+        只发该项目显式配置的路由（保守默认：未配置即静默，不外泄）。运营者自己的项目照旧
+        走全局默认 + 项目级覆盖。
+        """
         await self._fetch()
+        tenant_owned = (
+            project_id is not None and await self._project_is_tenant_owned(project_id)
+        )
         routes: list[NotifierRoute] = []
         for n in self._notifiers:
             if n.project_id is not None and n.project_id != project_id:
                 continue  # 项目级路由不匹配 → 跳过；NULL 全局默认始终适用
+            if tenant_owned and n.project_id is None:
+                continue  # 保守收口：租户项目不发全局默认渠道
             routes.append(NotifierRoute(
                 channel=n.channel,
                 webhook=decrypt(n.webhook_encrypted, self._enc) if n.webhook_encrypted else "",

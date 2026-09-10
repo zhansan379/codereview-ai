@@ -231,6 +231,9 @@ async def test_process_persists_then_marks_writeback_failed_on_post_error():
         async def mark_writeback(self, task_id, failed):
             self.writeback.append(failed)
 
+        async def task_project_id(self, task_id):
+            return None
+
     class _Notifier:
         def __init__(self) -> None:
             self.send_markdown_titles: list[str] = []

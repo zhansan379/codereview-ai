@@ -680,7 +680,7 @@ def test_pull_poll_background_and_status(app, monkeypatch):
     fast, token = app
 
     class FakePoller:
-        async def run_once(self):
+        async def run_once(self, workspace_ids=None):
             await asyncio.sleep(0.01)
             return {"projects": 1, "prs": 2, "new": 1, "skipped": 1, "errors": []}
 
