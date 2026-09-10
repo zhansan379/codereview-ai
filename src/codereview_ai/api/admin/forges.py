@@ -22,7 +22,7 @@ from starlette import status
 
 import httpx
 
-from codereview_ai.api.deps import get_current_user, get_db
+from codereview_ai.api.deps import get_current_user, get_db, require_permission
 from codereview_ai.config.repository import DEFAULT_FORGE_URLS
 from codereview_ai.crypto import MASK, encrypt, is_masked
 from codereview_ai.forges.base import repo_path_from_url
@@ -81,7 +81,10 @@ class ResolveRepoOut(BaseModel):
     web_url: str = ""
 
 
-router = APIRouter(prefix="/forges", dependencies=[Depends(get_current_user)])
+router = APIRouter(
+    prefix="/forges",
+    dependencies=[Depends(get_current_user), Depends(require_permission("forges:manage"))],
+)
 
 
 @router.get("", response_model=list[ForgeOut])

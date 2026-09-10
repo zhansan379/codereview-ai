@@ -20,10 +20,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from codereview_ai.api.deps import get_current_user, get_db
+from codereview_ai.api.deps import get_current_user, get_db, require_permission
 from codereview_ai.storage.models import ScheduleJob
 
-router = APIRouter(prefix="/schedules", dependencies=[Depends(get_current_user)])
+router = APIRouter(
+    prefix="/schedules",
+    dependencies=[Depends(get_current_user), Depends(require_permission("schedules:manage"))],
+)
 
 _JOB_TYPES: set[str] = {"poll", "daily"}
 

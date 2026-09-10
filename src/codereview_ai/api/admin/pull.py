@@ -18,9 +18,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from codereview_ai.api.deps import get_current_user
+from codereview_ai.api.deps import get_current_user, require_permission
 
-router = APIRouter(prefix="/pulls", dependencies=[Depends(get_current_user)])
+router = APIRouter(
+    prefix="/pulls",
+    dependencies=[Depends(get_current_user), Depends(require_permission("pulls:manage"))],
+)
 
 
 class PollReport(BaseModel):

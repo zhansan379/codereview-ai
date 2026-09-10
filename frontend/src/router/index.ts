@@ -75,13 +75,25 @@ const router = createRouter({
           name: 'Settings',
           component: () => import('../views/SettingsView.vue'),
         },
+        {
+          path: '/users',
+          name: 'Users',
+          component: () => import('../views/UsersView.vue'),
+          meta: { permission: 'users:manage' },
+        },
+        {
+          path: '/roles',
+          name: 'Roles',
+          component: () => import('../views/RolesView.vue'),
+          meta: { permission: 'roles:manage' },
+        },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/dashboard' },
   ],
 })
 
-// 全局守卫：无 token 时除 /login 外重定向到 /login
+// 全局守卫：无 token 时除 /login 外重定向到 /login；有 token 但命中需权限路由且无该权限 → /dashboard
 router.beforeEach((to) => {
   const token = sessionStorage.getItem('cr_token')
   if (!token && to.path !== '/login') {
@@ -89,6 +101,12 @@ router.beforeEach((to) => {
   }
   if (token && to.path === '/login') {
     return { path: '/dashboard' }
+  }
+  if (token && to.meta?.permission) {
+    const perms: string[] = JSON.parse(sessionStorage.getItem('cr_perms') || '[]')
+    if (!perms.includes(to.meta.permission as string)) {
+      return { path: '/dashboard' }
+    }
   }
   return true
 })

@@ -25,6 +25,7 @@ from codereview_ai.storage.models import (
     ReviewFinding,
     ReviewTask,
 )
+from tests.unit.helpers import make_admin_app
 
 
 def _fernet_key() -> str:
@@ -33,10 +34,7 @@ def _fernet_key() -> str:
 
 @pytest.fixture
 async def app(tmp_path) -> AsyncIterator[tuple[FastAPI, str]]:
-    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'stats.db'}")
-    await init_db(engine)
-    settings = type("S", (), {"secret_key": "s", "encryption_key": _fernet_key()})()
-    async with session_factory(engine)() as s:
+    async def seed(s):
         s.add_all([
             # 两个状态分布
             ReviewTask(provider="gitlab", repo_id="1", pr_number=1, event_type="mr",
@@ -70,12 +68,9 @@ async def app(tmp_path) -> AsyncIterator[tuple[FastAPI, str]]:
         ])
         await s.commit()
 
-    fast = FastAPI()
-    fast.state.engine = engine
-    fast.state.settings = settings
-    fast.include_router(auth_router, prefix="/api")
-    fast.include_router(stats.router, prefix="/api")
-    token = issue_token(settings.secret_key)
+    fast, token, _admin, engine = await make_admin_app(
+        tmp_path, db_name="stats.db", routers=[stats.router], seed=seed,
+    )
     try:
         yield fast, token
     finally:

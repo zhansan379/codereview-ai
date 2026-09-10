@@ -18,7 +18,13 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from codereview_ai.api.deps import get_current_user, get_db
+from codereview_ai.api.deps import (
+    CurrentUser,
+    allowed_project_ids,
+    get_current_user,
+    get_db,
+    review_scope_clause,
+)
 from codereview_ai.storage.models import (
     ModelUsage,
     ReviewConversation,
@@ -142,15 +148,21 @@ def _mode(vals: list[int]) -> int:
     return min(v for v, n in freq.items() if n == top)
 
 
-async def phase_box_stats(session: AsyncSession) -> list[PhaseBoxItem]:
+async def phase_box_stats(
+    session: AsyncSession,
+    task_filter: Any | None = None,
+) -> list[PhaseBoxItem]:
     """Agent 各阶段单次审查调用次数分布（diff 无对话，天然只含 agent）。
 
     按 `(task_id, phase)` 分组数 conversation 行数固着（一条 conversation = 一次
     `llm.chat()`），再在每个 phase 内聚合 min/q1/median/q3/max/mean/mode。
+    `task_filter`（RBAC 项目隔离）经 task 关联过滤，None = 全量。
     """
+    box = select(ReviewConversation.task_id, ReviewConversation.phase, func.count())
+    if task_filter is not None:
+        box = box.join(ReviewTask, ReviewTask.id == ReviewConversation.task_id).where(task_filter)
     rows = (await session.execute(
-        select(ReviewConversation.task_id, ReviewConversation.phase, func.count())
-        .group_by(ReviewConversation.task_id, ReviewConversation.phase)
+        box.group_by(ReviewConversation.task_id, ReviewConversation.phase)
     )).all()
     by_phase: dict[str, list[int]] = {}
     for _tid, phase, n in rows:
@@ -176,21 +188,39 @@ async def phase_box_stats(session: AsyncSession) -> list[PhaseBoxItem]:
     return out
 
 
-async def aggregate_stats(session: AsyncSession, mode: str = "all") -> StatsOut:
+async def aggregate_stats(
+    session: AsyncSession,
+    mode: str = "all",
+    task_filter: Any | None = None,
+) -> StatsOut:
     """聚合全部看板指标；`mode` 按 exec_mode 过滤通用图（all/agentic/diff）。
 
-    agent 专属度量（散点/平均轮数/阶段管线/模式饼）不受 `mode` 影响：散点与管线
-    本就只含 agent，模式饼是拆分本身；`mode` 只作用于其余通用图+KPI 计数。
+    `task_filter`（RBAC 项目隔离）为可作用于 ReviewTask 的谓词；None = 全量。
+    agent 专属度量（散点/平均轮数/阶段管线/模式饼）不受 `mode` 影响，但受 `task_filter` 过滤。
     """
-    task_clause, task_subq = _mode_clause(mode)
+    task_clause, mode_subq = _mode_clause(mode)
+
+    # RBAC 项目隔离：task 直接过滤；findings/usage 经 task_id 子查询过滤
+    task_subq = (select(ReviewTask.id).where(task_filter) if task_filter is not None else None)
 
     def finding_where(*cond: Any) -> tuple[Any, ...]:
-        """组装 ReviewFinding 过滤：恒追加 exec_mode（经 task 子查询）。"""
-        return cond + ((ReviewFinding.task_id.in_(task_subq),) if task_subq is not None else ())
+        out = list(cond)
+        if mode_subq is not None:
+            out.append(ReviewFinding.task_id.in_(mode_subq))
+        if task_subq is not None:
+            out.append(ReviewFinding.task_id.in_(task_subq))
+        return tuple(out)
+
+    def task_filters() -> list[Any]:
+        return [c for c in (task_clause, task_filter) if c is not None]
+
+    def rbac_filters() -> list[Any]:
+        # agent 专属度量只受 RBAC 项目隔离，不受 mode 影响
+        return [task_filter] if task_filter is not None else []
 
     base_task = select(func.count()).select_from(ReviewTask)
-    if task_clause is not None:
-        base_task = base_task.where(task_clause)
+    for w in task_filters():
+        base_task = base_task.where(w)
     total_tasks = int((await session.execute(base_task)).scalar_one() or 0)
 
     total_findings = int((await session.execute(
@@ -208,41 +238,42 @@ async def aggregate_stats(session: AsyncSession, mode: str = "all") -> StatsOut:
         )
     )).scalar_one() or 0)
 
-    tasks_by_state = await _counts(session, ReviewTask.state, task_clause)
+    tasks_by_state = await _counts(session, ReviewTask.state, *task_filters())
     findings_by_severity = await _counts(session, ReviewFinding.severity, *finding_where())
     findings_by_category = await _counts(session, ReviewFinding.category, *finding_where())
-    provider_split = await _counts(session, ReviewTask.provider, task_clause)
+    provider_split = await _counts(session, ReviewTask.provider, *task_filters())
     tasks_by_mode = await _counts(
-        session, ReviewTask.exec_mode, ReviewTask.exec_mode.isnot(None)
-    )  # 拆分本身恒全量；排除未执行审查（NULL）
+        session, ReviewTask.exec_mode, ReviewTask.exec_mode.isnot(None), *task_filters()
+    )  # 模式饼恒排除 NULL；项目隔离下仅算成员项目
 
-    # Agent 阶段管线分布：diff 无对话，天然只含 agent，不经 mode 开关过滤
-    phase_box = await phase_box_stats(session)
+    # Agent 阶段管线分布：diff 无对话，天然只含 agent；项目隔离下仅成员项目
+    phase_box = await phase_box_stats(session, task_filter=task_filter)
 
-    # agent 实际执行任务数 + 平均对话轮数（KPI 用；恒 agent）
-    agent_row = (await session.execute(
-        select(
-            func.count(),
-            func.coalesce(func.avg(ReviewTask.chat_rounds), 0),
-        ).where(ReviewTask.exec_mode == "agentic")
-    )).one()
+    # agent 实际执行任务数 + 平均对话轮数（KPI；恒 agent）
+    agr = select(
+        func.count(),
+        func.coalesce(func.avg(ReviewTask.chat_rounds), 0),
+    ).where(ReviewTask.exec_mode == "agentic")
+    for w in rbac_filters():
+        agr = agr.where(w)
+    agent_row = (await session.execute(agr)).one()
     agent_task_count = int(agent_row[0] or 0)
     avg_chat_rounds = round(float(agent_row[1] or 0), 2)
 
     # 复杂度×成本散点：恒 agent（完成、时间戳齐全；duration 不含排队）
+    scatter = select(
+        ReviewTask.diff_lines, ReviewTask.started_at, ReviewTask.finished_at,
+        ReviewTask.chat_rounds, ReviewTask.tool_calls,
+    ).where(
+        ReviewTask.exec_mode == "agentic",
+        ReviewTask.state == "completed",
+        ReviewTask.started_at.isnot(None),
+        ReviewTask.finished_at.isnot(None),
+    )
+    for w in rbac_filters():
+        scatter = scatter.where(w)
     scatter_rows = (await session.execute(
-        select(
-            ReviewTask.diff_lines, ReviewTask.started_at, ReviewTask.finished_at,
-            ReviewTask.chat_rounds, ReviewTask.tool_calls,
-        )
-        .where(
-            ReviewTask.exec_mode == "agentic",
-            ReviewTask.state == "completed",
-            ReviewTask.started_at.isnot(None),
-            ReviewTask.finished_at.isnot(None),
-        )
-        .order_by(ReviewTask.id.desc())
-        .limit(200)
+        scatter.order_by(ReviewTask.id.desc()).limit(200)
     )).all()
     agent_scatter = [
         AgentScatterItem(
@@ -255,12 +286,12 @@ async def aggregate_stats(session: AsyncSession, mode: str = "all") -> StatsOut:
         if r[1] is not None and r[2] is not None and (r[2] - r[1]).total_seconds() >= 0
     ]
 
-    # 近 14 天每日审查量（服务端补零，缺失日期填 0；mode 可过滤）
+    # 近 14 天每日审查量（服务端补零，缺失日期填 0；mode/RBAC 可过滤）
     today = datetime.now(UTC).date()
     start_day = today - timedelta(days=13)
     by_day_stmt = select(func.date(ReviewTask.queued_at), func.count().label("n"))
-    if task_clause is not None:
-        by_day_stmt = by_day_stmt.where(task_clause)
+    for w in task_filters():
+        by_day_stmt = by_day_stmt.where(w)
     by_day_rows = (await session.execute(
         by_day_stmt.where(ReviewTask.queued_at >= start_day)
         .group_by(func.date(ReviewTask.queued_at))
@@ -272,10 +303,10 @@ async def aggregate_stats(session: AsyncSession, mode: str = "all") -> StatsOut:
         for i in range(14)
     ]
 
-    # 近 14 天单任务平均耗时（按完成日分桶；mode 可过滤）
+    # 近 14 天单任务平均耗时（按完成日分桶；mode/RBAC 可过滤）
     dur_stmt = select(ReviewTask.started_at, ReviewTask.finished_at)
-    if task_clause is not None:
-        dur_stmt = dur_stmt.where(task_clause)
+    for w in task_filters():
+        dur_stmt = dur_stmt.where(w)
     dur_rows = (await session.execute(
         dur_stmt.where(
             ReviewTask.state == "completed",
@@ -303,8 +334,8 @@ async def aggregate_stats(session: AsyncSession, mode: str = "all") -> StatsOut:
             avg_seconds=round(sum(arr) / len(arr), 1) if arr else 0.0,
         ))
 
-    # 模型 token 用量（mode 经 task 关联过滤）
-    usage_stmt = select(
+    # 模型 token 用量（mode 经 task 关联过滤；RBAC 同）
+    usage = select(
         ModelUsage.model,
         func.count().label("reqs"),
         func.coalesce(func.sum(ModelUsage.prompt_tokens), 0),
@@ -312,9 +343,11 @@ async def aggregate_stats(session: AsyncSession, mode: str = "all") -> StatsOut:
         func.coalesce(func.sum(ModelUsage.total_tokens), 0),
         func.coalesce(func.sum(ModelUsage.cost), 0),
     )
+    if mode_subq is not None:
+        usage = usage.where(ModelUsage.task_id.in_(mode_subq))
     if task_subq is not None:
-        usage_stmt = usage_stmt.where(ModelUsage.task_id.in_(task_subq))
-    usage_rows = (await session.execute(usage_stmt.group_by(ModelUsage.model))).all()
+        usage = usage.where(ModelUsage.task_id.in_(task_subq))
+    usage_rows = (await session.execute(usage.group_by(ModelUsage.model))).all()
     model_usage = [
         ModelUsageItem(model=str(r[0] or "未知"), requests=int(r[1]),
                        prompt_tokens=int(r[2]), completion_tokens=int(r[3]),
@@ -322,11 +355,13 @@ async def aggregate_stats(session: AsyncSession, mode: str = "all") -> StatsOut:
         for r in usage_rows
     ]
 
-    # 近 14 天每日成本趋势（服务端补零；mode 经 task 关联过滤）
+    # 近 14 天每日成本趋势（服务端补零；mode 经 task 关联过滤；RBAC 同）
     cost_stmt = select(
         func.date(ModelUsage.ts),
         func.coalesce(func.sum(ModelUsage.cost), 0),
     )
+    if mode_subq is not None:
+        cost_stmt = cost_stmt.where(ModelUsage.task_id.in_(mode_subq))
     if task_subq is not None:
         cost_stmt = cost_stmt.where(ModelUsage.task_id.in_(task_subq))
     cost_rows = (await session.execute(
@@ -352,8 +387,15 @@ async def aggregate_stats(session: AsyncSession, mode: str = "all") -> StatsOut:
 
 
 @router.get("", response_model=StatsOut)
-async def get_stats(mode: str = "all", session: AsyncSession = Depends(get_db)) -> StatsOut:
-    """聚合全部看板指标；`mode` 按 exec_mode 过滤通用图（all/agentic/diff，非法归 all）。"""
+async def get_stats(
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_db),
+    mode: str = "all",
+) -> StatsOut:
+    """聚合全部看板指标；`mode` 按 exec_mode 过滤（all/agentic/diff）；按用户成员关系做项目隔离。"""
     if mode not in ("all", "agentic", "diff"):
         mode = "all"
-    return await aggregate_stats(session, mode=mode)
+    is_global, ids = await allowed_project_ids(session, user)
+    task_filter = review_scope_clause(is_global, ids)
+    return await aggregate_stats(session, mode=mode, task_filter=task_filter)
+

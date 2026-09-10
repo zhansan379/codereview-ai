@@ -15,6 +15,7 @@ from codereview_ai.review.increments import finding_fingerprint
 from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.models import ReviewFinding, ReviewTask
 from codereview_ai.storage.review_repo import ReviewRepository
+from tests.unit.helpers import make_admin_app
 
 MR = dict(provider="gitlab", repo_id="9", pr_number=7, event_type="mr", branch="f")
 

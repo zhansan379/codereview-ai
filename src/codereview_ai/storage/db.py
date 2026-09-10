@@ -96,6 +96,7 @@ _COLUMN_FALLBACKS: dict[str, list[tuple[str, str, str]]] = {
         ("diff_lines", "INTEGER", "DEFAULT 0"),
         ("chat_rounds", "INTEGER", "DEFAULT 0"),
         ("tool_calls", "INTEGER", "DEFAULT 0"),
+        ("project_id", "INTEGER", ""),  # RBAC 项目级隔离：存量行 NULL，读侧按 provider+repo_id 兜底
     ],
     "notifier_config": [
         ("at_all", "BOOLEAN", "DEFAULT 0"),     # 评分低于阈值时是否 @全员

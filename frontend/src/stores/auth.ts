@@ -1,33 +1,61 @@
 import { defineStore } from 'pinia'
-import { login as apiLogin } from '../api'
+import { login as apiLogin, me as apiMe, type User } from '../api'
 
 const TOKEN_KEY = 'cr_token'
+const PERMS_KEY = 'cr_perms'
 
 interface AuthState {
   token: string
-  user: any
+  user: User | null
+  permissions: string[]
 }
 
-// 认证状态：JWT 存 sessionStorage（非 localStorage）
+// 认证状态：JWT + 权限集存 sessionStorage（非 localStorage）
 export const useAuthStore = defineStore('auth', {
   state: (): AuthState => ({
     token: sessionStorage.getItem(TOKEN_KEY) || '',
     user: null,
+    permissions: JSON.parse(sessionStorage.getItem(PERMS_KEY) || '[]'),
   }),
   getters: {
     isAuthed: (state) => !!state.token,
+    role: (state) => state.user?.role_name || '',
+    // 超管由后端在 permissions 里返回全量目录 → hasPerm 恒真
+    hasPerm: (state) => (code: string) => state.permissions.includes(code),
   },
   actions: {
-    async login(password: string) {
-      const res = await apiLogin(password)
+    async login(username: string, password: string) {
+      const res = await apiLogin(username, password)
       this.token = res.access_token
       this.user = res.user
+      this.permissions = res.permissions
       sessionStorage.setItem(TOKEN_KEY, res.access_token)
+      sessionStorage.setItem(PERMS_KEY, JSON.stringify(res.permissions))
+      return res
+    },
+    // 硬刷新后重同步用户与权限
+    async refresh() {
+      if (!this.token) return null
+      const res = await apiMe()
+      this.user = res.user
+      this.permissions = res.permissions
+      sessionStorage.setItem(PERMS_KEY, JSON.stringify(res.permissions))
+      return res
+    },
+    async ensurePermissions() {
+      // 无缓存权限集时补齐（登录后或权限被他人改名时）
+      if (!this.permissions.length) {
+        try {
+          await this.refresh()
+        } catch { /* 401 由 client 拦截器跳登录 */ }
+      }
     },
     logout() {
       this.token = ''
       this.user = null
+      this.permissions = []
       sessionStorage.removeItem(TOKEN_KEY)
+      sessionStorage.removeItem(PERMS_KEY)
     },
   },
 })

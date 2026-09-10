@@ -14,12 +14,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
-from codereview_ai.api.deps import get_current_user, get_db
+from codereview_ai.api.deps import get_current_user, get_db, require_permission
 from codereview_ai.crypto import MASK, decrypt, encrypt, is_masked
 from codereview_ai.review.llm_gateway import LLMGateway
 from codereview_ai.storage.models import ModelConfig
 
-router = APIRouter(prefix="/models", dependencies=[Depends(get_current_user)])
+router = APIRouter(
+    prefix="/models",
+    dependencies=[Depends(get_current_user), Depends(require_permission("models:manage"))],
+)
 
 
 class ModelOut(BaseModel):

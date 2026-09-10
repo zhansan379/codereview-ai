@@ -20,7 +20,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 from starlette.responses import StreamingResponse
 
-from codereview_ai.api.deps import get_current_user, get_db
+from codereview_ai.api.deps import (
+    CurrentUser,
+    allowed_project_ids,
+    get_current_user,
+    get_db,
+    review_scope_clause,
+    review_task_allowed,
+    review_task_project_id,
+    user_can,
+)
 from codereview_ai.review.pr_compare import group_pr_deltas
 from codereview_ai.storage.models import ReviewConversation, ReviewFinding, ReviewTask
 
@@ -150,6 +159,7 @@ class ReviewPrPage(BaseModel):
 
 @router.get("", response_model=ReviewPage)
 async def list_reviews(
+    user: CurrentUser,
     session: AsyncSession = Depends(get_db),
     state: str | None = None,
     event_type: str | None = None,
@@ -163,16 +173,22 @@ async def list_reviews(
 ) -> ReviewPage:
     limit = max(1, min(limit, 100))
     offset = max(0, offset)
+    is_global, ids = await allowed_project_ids(session, user)
+    scope_clause = review_scope_clause(is_global, ids)
     stmt = _apply_review_filters(
         select(ReviewTask),
         state=state, event_type=event_type, provider=provider,
         score_min=score_min, score_max=score_max,
         finished_from=finished_from, finished_to=finished_to,
     )
+    if scope_clause is not None:
+        stmt = stmt.where(scope_clause)
     count_stmt = _apply_review_filters(select(ReviewTask.id), state=state,
                                        event_type=event_type, provider=provider,
                                        score_min=score_min, score_max=score_max,
                                        finished_from=finished_from, finished_to=finished_to)
+    if scope_clause is not None:
+        count_stmt = count_stmt.where(scope_clause)
     total = (await session.execute(
         select(func.count()).select_from(count_stmt.subquery())
     )).scalar_one()
@@ -281,6 +297,7 @@ def _cell_value(key: str, review: ReviewTask, finding: ReviewFinding) -> object:
 
 @router.get("/export")
 async def export_reviews(
+    user: CurrentUser,
     session: AsyncSession = Depends(get_db),
     state: str | None = None,
     event_type: str | None = None,
@@ -297,6 +314,8 @@ async def export_reviews(
     `severities` / `statuses` 用于过滤要导出的问题条目；其余顶层筛选与列表一致，
     保证「所见即所导」。沿用 get_current_user 鉴权（router 级依赖）。
     """
+    is_global, ids = await allowed_project_ids(session, user)
+    scope_clause = review_scope_clause(is_global, ids)
     stmt = _apply_review_filters(
         select(ReviewTask, ReviewFinding)
         .join(ReviewFinding, ReviewFinding.task_id == ReviewTask.id)
@@ -305,6 +324,8 @@ async def export_reviews(
         score_min=score_min, score_max=score_max,
         finished_from=finished_from, finished_to=finished_to,
     )
+    if scope_clause is not None:
+        stmt = stmt.where(scope_clause)
     if severities:
         stmt = stmt.where(ReviewFinding.severity.in_(severities))
     if statuses:
@@ -402,9 +423,11 @@ async def list_review_prs(
 
 
 @router.get("/{review_id}", response_model=ReviewDetail)
-async def get_review(review_id: int, session: AsyncSession = Depends(get_db)) -> ReviewDetail:
+async def get_review(review_id: int, user: CurrentUser, session: AsyncSession = Depends(get_db)) -> ReviewDetail:
     row = (await session.execute(select(ReviewTask).where(ReviewTask.id == review_id))).scalar_one_or_none()  # noqa: E501
     if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "审查记录不存在")
+    if not await review_task_allowed(session, user, row):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "审查记录不存在")
     findings = (await session.execute(
         select(ReviewFinding).where(ReviewFinding.task_id == review_id).order_by(
@@ -430,7 +453,7 @@ async def get_review(review_id: int, session: AsyncSession = Depends(get_db)) ->
 
 
 @router.delete("/{review_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_review(review_id: int, session: AsyncSession = Depends(get_db)) -> None:
+async def delete_review(review_id: int, user: CurrentUser, session: AsyncSession = Depends(get_db)) -> None:
     """删除一条审查记录（含其 findings，级联）。管理员清理脏数据用。
 
     `review_finding.task_id` 为 `ondelete="CASCADE"`（SQLite 已开 foreign_keys），
@@ -440,6 +463,11 @@ async def delete_review(review_id: int, session: AsyncSession = Depends(get_db))
     row = (await session.execute(select(ReviewTask).where(ReviewTask.id == review_id))).scalar_one_or_none()  # noqa: E501
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "审查记录不存在")
+    if not await review_task_allowed(session, user, row):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "审查记录不存在")
+    pid = await review_task_project_id(session, row)
+    if not await user_can(session, user, "reviews:manage", project_id=pid):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "无权限删除该审查记录")
     await session.delete(row)
     await session.commit()
 
@@ -478,6 +506,7 @@ async def _task_or_404(review_id: int, session: AsyncSession) -> ReviewTask:
 @router.get("/{review_id}/conversation")
 async def get_conversation(
     review_id: int,
+    user: CurrentUser,
     offset: int = Query(0, ge=0),
     limit: int = Query(30, ge=1, le=200),
     session: AsyncSession = Depends(get_db),
@@ -494,7 +523,9 @@ async def get_conversation(
       `ts` 预编码 ISO 规避 jsonable_encoder 逐值探测。
     - `_truncate_inplace` 把超大 content 压到头部，读取/loads/编码同步下降。
     """
-    await _task_or_404(review_id, session)
+    task = await _task_or_404(review_id, session)
+    if not await review_task_allowed(session, user, task):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "审查记录不存在")
     total = (await session.execute(
         select(func.count()).select_from(ReviewConversation)
         .where(ReviewConversation.task_id == review_id)

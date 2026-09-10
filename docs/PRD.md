@@ -137,7 +137,7 @@ IM 群收到通知 → 开发按建议修改并追加 commit → bot 只审查�
 | F5.8 | **日志查询**：按 trace_id 检索一次审查的完整链路 | P1 |
 | F5.9 | 深色模式 | P2 |
 | F5.10 | i18n（中/英） | P2 |
-| F5.11 | 多用户 + RBAC | P2 |
+| F5.11 | **多用户 + RBAC（角色权限 + 项目级数据隔离，见 DESIGN §14.3/§14.5）** | P1 |
 
 ### F6 报告
 
@@ -230,7 +230,7 @@ IM 群收到通知 → 开发按建议修改并追加 commit → bot 只审查�
 
 ### 5.3 Out of Scope
 
-❌ 多用户 RBAC ❌ Gitee/Gitea ❌ RAG 知识库 ❌ @bot 对话
+❌ Gitee/Gitea ❌ RAG 知识库 ❌ @bot 对话
 ❌ CI status check 卡合并 ❌ 周报月报 ❌ HTML 报告导出 ❌ i18n
 
 ---
