@@ -20,6 +20,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -260,6 +261,52 @@ class ForgeConfig(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class WorkspaceModelConfig(Base):
+    """租户（workspace）自带的 LLM 模型配置（BYOK：必须自带 key）。
+
+    与平台全局 `ModelConfig` 分表存储，按 `workspace_id` 归属；api_key 同以 Fernet 密文
+    落库。租户项目审查优先用本表解析，缺配置除非豁免否则降级（见 `repository.resolve_*`）。
+    """
+
+    __tablename__ = "workspace_model_config"
+    __table_args__ = (UniqueConstraint("workspace_id", "name", name="uq_ws_model_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(128))
+    provider: Mapped[str] = mapped_column(String(64), default="")
+    model: Mapped[str] = mapped_column(String(128), default="")
+    api_key_encrypted: Mapped[str] = mapped_column(Text, default="")  # Fernet 密文
+    base_url: Mapped[str] = mapped_column(String(1024), default="")
+    temperature: Mapped[float] = mapped_column(default=0.0)
+    max_tokens: Mapped[int] = mapped_column(Integer, default=4096)
+    capabilities: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class WorkspaceForgeConfig(Base):
+    """租户（workspace）自带的 platform 接入凭据（BYOK：必须自带 key，PAT 本轮）。
+
+    按 `workspace_id` + `provider` 唯一；token 以 Fernet 密文落库。租户项目审查优先用
+    本表解析，缺配置除非豁免否则 forge 跳过（见 `repository.resolve_*`）。
+    """
+
+    __tablename__ = "workspace_forge_config"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "provider", name="uq_ws_forge_provider"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(Integer)
+    provider: Mapped[str] = mapped_column(String(32))  # github | gitlab
+    url: Mapped[str] = mapped_column(String(1024), default="")
+    token_encrypted: Mapped[str] = mapped_column(Text, default="")  # Fernet 密文
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class ProjectRule(Base):
     """path/glob 追加规则，首个匹配者胜（F5.3 规则引擎，DESIGN §12.2）。"""
 
@@ -446,6 +493,8 @@ class Workspace(Base):
     name: Mapped[str] = mapped_column(String(128), default="")
     slug: Mapped[str] = mapped_column(String(64))
     owner_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"), nullable=True)
+    # BYOK 豁免开关：超管置 True → 该空间无自带凭据时回落平台全局凭据；False = 必须自带
+    platform_fallback: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

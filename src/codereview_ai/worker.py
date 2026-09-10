@@ -55,10 +55,11 @@ from codereview_ai.storage.review_repo import ReviewRepository
 
 logger = logging.getLogger("codereview_ai.worker")
 
-#: forge / reviewer 工厂：按 provider 给出对应的审查设施（测试注入 fake）。
-#: forge 可能返回 None（该 provider 未配置适配器），worker 跳过而非报错。
-ForgeFactory = Callable[[str], ForgeAdapter | None]
-ReviewerFactory = Callable[[str], Reviewer]
+#: forge / reviewer 工厂：按 (provider, repo_id) 给出该仓库应使用的审查设施（BYOK 按项目/空间）。
+#: forge 可能返回 None（该 provider 未配置适配器 / 租户无自带），worker 跳过而非报错；
+#: reviewer None → 该任务走 diff 降级。均为异步（解析需读 DB / 构造适配器）。
+ForgeFactory = Callable[[str, str], Awaitable[ForgeAdapter | None]]
+ReviewerFactory = Callable[[str, str], Awaitable[Reviewer | None]]
 #: 项目配置工厂：按 (provider, repo_id) 返回该项目启用行的审查配置（可为 None）。
 ProjectConfigFactory = Callable[[str, str], Awaitable[ProjectConfig | None]]
 
@@ -940,10 +941,23 @@ def make_processor(
         if item is None:
             return  # 无暂存 payload（如直接入队的调试任务），视为已处理
         provider, payload = item
-        forge = forge_factory(provider)
-        reviewer = reviewer_factory(provider)
+        # BYOK：按任务的 (provider, repo_id) 解析该仓库应使用的 forge/reviewer（租户空间自带凭据）
+        repo_id = getattr(payload, "repo_id", None) or ""
+        forge = await forge_factory(provider, repo_id)
+        reviewer = await reviewer_factory(provider, repo_id)
         if forge is None:
-            logger.warning("provider %s 未配置适配器，任务 %s 跳过", provider, task.task_id)
+            logger.warning(
+                "provider %s 未配置适配器（%s），任务 %s 跳过",
+                provider, repo_id or "(unknown)", task.task_id,
+            )
+            return
+        if reviewer is None:
+            # 该仓库的 workspace 未自带 LLM key 且未豁免 → 按「必须自带 key」禁用审查。
+            # 审查各路径（diff/agentic）都必须有 gateway，无 keys 即跳过，与 forge 缺席同语。
+            logger.warning(
+                "该仓库无可用 LLM 凭据（%s/%s），任务 %s 跳过（租户须自带 key 或超管豁免）",
+                provider, repo_id or "(unknown)", task.task_id,
+            )
             return
         if isinstance(payload, PullRequest):
             # 补拉入队的已解析 PR → 直接跑 mr 轨核心（无需再 parse 原始 body）。

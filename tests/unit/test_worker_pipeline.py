@@ -494,7 +494,11 @@ async def test_enqueue_worker_review_succeeds():
     await enqueuer.enqueue("gitlab", _mr_payload())
     task_id = list(store._items)[0]
 
-    processor = make_processor(lambda p: forge, lambda p: _FakeReviewer(forge), store)
+    async def _fs(_p, _r):
+        return forge
+    async def _rs(_p, _r):
+        return _FakeReviewer(forge)
+    processor = make_processor(_fs, _rs, store)
     await run_worker(queue, processor, max_iterations=1)
 
     assert forge.posted_summary  # 回写发生
@@ -526,8 +530,11 @@ async def test_enqueue_scribbles_mr_row_visible_before_process(tmp_path):
     assert row.state == "queued"  # 入队即可见，无需等 worker 开审
     assert row.pr_number == 7 and row.payload  # 身份 + 原始 body 已落，供回放/重试
 
-    processor = make_processor(lambda p: forge, lambda p: _FakeReviewer(forge), store,
-                               review_repo=repo)
+    async def _fs(_p, _r):
+        return forge
+    async def _rs(_p, _r):
+        return _FakeReviewer(forge)
+    processor = make_processor(_fs, _rs, store, review_repo=repo)
     await run_worker(queue, processor, max_iterations=1)
 
     async with session_factory(engine)() as s:
@@ -656,8 +663,11 @@ async def test_enqueue_pr_worker_consumes_and_reviews(tmp_path):
                            base_sha="b", pr_title="poller enqueued", payload="")
     await enqueuer.enqueue_pr("gitlab", pr)
 
-    processor = make_processor(lambda p: forge, lambda p: _FakeReviewer(forge), store,
-                               review_repo=repo)
+    async def _fs(_p, _r):
+        return forge
+    async def _rs(_p, _r):
+        return _FakeReviewer(forge)
+    processor = make_processor(_fs, _rs, store, review_repo=repo)
     await run_worker(queue, processor, max_iterations=1)
 
     assert forge.posted_summary  # 审查执行并回写总结

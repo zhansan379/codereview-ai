@@ -61,6 +61,7 @@ class ForgeRegistry:
         self._repo = repo
         self._http = http
         self._adapters: dict[str, ForgeAdapter] = {}
+        self._repo_adapters: dict[tuple[str, str], ForgeAdapter | None] = {}
 
     async def refresh_all(self) -> None:
         """重解析全部受支持平台，重建适配器表（从 DB / env）。"""
@@ -76,8 +77,30 @@ class ForgeRegistry:
         self._adapters = built
 
     def get(self, provider: str) -> ForgeAdapter | None:
-        """同步读当前已构建的适配器（供 worker 的 ForgeFactory）。"""
+        """同步读当前已构建的全局适配器（enqueue/poller 等用）。"""
         return self._adapters.get(provider)
+
+    async def get_for_repo(self, provider: str, repo_id: str) -> ForgeAdapter | None:
+        """worker 工厂：按 (provider, repo_id) 解析并构造适配器（BYOK 决策在 repo）。
+
+        惰性缓存 key=(provider, repo_id)；配置保存后 `invalidate` 全清，下次实时重建。
+        """
+        key = (provider, repo_id)
+        if key in self._repo_adapters:
+            return self._repo_adapters[key]
+        resolved = await self._repo.resolve_forge_for_repo(provider, repo_id)
+        if resolved is None:
+            self._repo_adapters[key] = None
+            return None
+        adapter = build_adapter(
+            provider, resolved.url, resolved.token, self._http
+        )
+        self._repo_adapters[key] = adapter
+        return adapter
+
+    def invalidate(self) -> None:
+        """清除按仓库的适配器缓存（任何凭据/模型配置保存后调用）。"""
+        self._repo_adapters.clear()
 
     def available(self) -> bool:
         """是否有至少一个可用适配器（决定是否启动内置 worker）。"""

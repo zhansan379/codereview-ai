@@ -171,9 +171,11 @@ async def _wired_harness(tmp_path, head: str = "h"):
     forge = _FakeForge(head=head)
     reviewer = _FakeReviewer(forge)  # 共享同一实例 → 跨任务累计 calls
 
-    processor = make_processor(
-        lambda p: forge, lambda p: reviewer, store, review_repo=repo,
-    )
+    async def _fs(_p, _r):
+        return forge
+    async def _rs(_p, _r):
+        return reviewer
+    processor = make_processor(_fs, _rs, store, review_repo=repo)
     return TestClient(app), queue, processor, forge, reviewer, engine
 
 

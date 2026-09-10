@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { login as apiLogin, me as apiMe, type User } from '../api'
+import { login as apiLogin, me as apiMe, type User, type Workspace } from '../api'
 
 const TOKEN_KEY = 'cr_token'
 const REFRESH_KEY = 'cr_refresh'
@@ -9,6 +9,8 @@ interface AuthState {
   token: string
   user: User | null
   permissions: string[]
+  // BYOK：当前用户作为 owner 的私有 workspace（/auth/me 返回；驱动「工作区设置」入口）
+  workspace: Workspace | null
 }
 
 // 认证状态：JWT + 权限集存 sessionStorage（非 localStorage）
@@ -17,6 +19,7 @@ export const useAuthStore = defineStore('auth', {
     token: sessionStorage.getItem(TOKEN_KEY) || '',
     user: null,
     permissions: JSON.parse(sessionStorage.getItem(PERMS_KEY) || '[]'),
+    workspace: null,
   }),
   getters: {
     isAuthed: (state) => !!state.token,
@@ -41,6 +44,7 @@ export const useAuthStore = defineStore('auth', {
       const res = await apiMe()
       this.user = res.user
       this.permissions = res.permissions
+      this.workspace = res.workspace ?? null
       sessionStorage.setItem(PERMS_KEY, JSON.stringify(res.permissions))
       return res
     },

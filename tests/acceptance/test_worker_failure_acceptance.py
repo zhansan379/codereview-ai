@@ -99,9 +99,11 @@ async def test_c6_bad_api_key_marks_failed_and_no_comments(tmp_path):
     try:
         repo = ReviewRepository(engine)
         forge = _Forge()
-        processor = make_processor(
-            lambda p: forge, lambda p: _BadKeyReviewer(), store, review_repo=repo,
-        )
+        async def _fs(_p, _r):
+            return forge
+        async def _rs(_p, _r):
+            return _BadKeyReviewer()
+        processor = make_processor(_fs, _rs, store, review_repo=repo)
 
         tc = TestClient(app)
         assert tc.post("/webhook", content=_mr_payload(),
