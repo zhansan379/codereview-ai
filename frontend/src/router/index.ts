@@ -19,11 +19,13 @@ const router = createRouter({
           path: '/dashboard',
           name: 'Dashboard',
           component: () => import('../views/DashboardView.vue'),
+          meta: { title: '仪表盘' },
         },
         {
           path: '/reviews',
           name: 'Reviews',
           component: () => import('../views/ReviewTabsView.vue'),
+          meta: { title: '审查记录' },
         },
         {
           // 旧聚合页地址兜底：并入审查记录页的「MR 汇总」tab
@@ -34,37 +36,43 @@ const router = createRouter({
           path: '/reviews/:id',
           name: 'ReviewDetail',
           component: () => import('../views/ReviewDetailView.vue'),
+          meta: { title: '审查详情', parent: 'Reviews' },
         },
         {
           path: '/reviews/:id/conversation',
           name: 'ReviewConversation',
           component: () => import('../views/ConversationView.vue'),
+          meta: { title: '对话过程', parent: 'ReviewDetail' },
         },
         {
           path: '/projects',
           name: 'Projects',
           component: () => import('../views/ProjectsView.vue'),
+          meta: { title: '项目' },
         },
         {
           path: '/models',
           name: 'Models',
           component: () => import('../views/ModelsView.vue'),
+          meta: { title: '模型' },
         },
         {
           path: '/notifiers',
           name: 'Notifiers',
           component: () => import('../views/NotifiersView.vue'),
+          meta: { title: 'IM 通知' },
         },
         {
           path: '/schedules',
           name: 'Schedules',
           component: () => import('../views/SchedulesView.vue'),
+          meta: { title: '定时任务' },
         },
         {
           path: '/clone-caches',
           name: 'CloneCaches',
           component: () => import('../views/CloneCachesView.vue'),
-          meta: { permission: 'caches:manage' },
+          meta: { title: '拉取缓存', permission: 'caches:manage' },
         },
         {
           // 任务页已并入审查记录页，保留旧地址兜底跳转
@@ -75,18 +83,19 @@ const router = createRouter({
           path: '/settings',
           name: 'Settings',
           component: () => import('../views/SettingsView.vue'),
+          meta: { title: '设置' },
         },
         {
           path: '/users',
           name: 'Users',
           component: () => import('../views/UsersView.vue'),
-          meta: { permission: 'users:manage' },
+          meta: { title: '用户', permission: 'users:manage' },
         },
         {
           path: '/roles',
           name: 'Roles',
           component: () => import('../views/RolesView.vue'),
-          meta: { permission: 'roles:manage' },
+          meta: { title: '角色', permission: 'roles:manage' },
         },
       ],
     },

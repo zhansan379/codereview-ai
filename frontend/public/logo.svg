@@ -1,0 +1,10 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- favicon 版：独立文件里 currentColor 无从解析，所以用主题色实心底 + 白色描边，
+       深浅两种浏览器标签栏下都看得清。图形与 components/AppLogo.vue 保持一致。 -->
+  <rect width="32" height="32" rx="7" fill="#2f54eb"/>
+  <g stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M12.2 10.5 L7.2 16 L12.2 21.5" stroke-width="2" opacity="0.6"/>
+    <path d="M19.8 10.5 L24.8 16 L19.8 21.5" stroke-width="2" opacity="0.6"/>
+    <path d="M13.1 16.3 L15.3 18.6 L18.9 13.8" stroke-width="2.6"/>
+  </g>
+</svg>
