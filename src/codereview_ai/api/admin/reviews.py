@@ -22,7 +22,7 @@ from starlette.responses import StreamingResponse
 
 from codereview_ai.api.deps import (
     CurrentUser,
-    allowed_project_ids,
+    allowed_review_scope,
     get_current_user,
     get_db,
     review_scope_clause,
@@ -173,7 +173,7 @@ async def list_reviews(
 ) -> ReviewPage:
     limit = max(1, min(limit, 100))
     offset = max(0, offset)
-    is_global, ids = await allowed_project_ids(session, user)
+    is_global, ids = await allowed_review_scope(session, user)
     scope_clause = review_scope_clause(is_global, ids)
     stmt = _apply_review_filters(
         select(ReviewTask),
@@ -314,7 +314,7 @@ async def export_reviews(
     `severities` / `statuses` 用于过滤要导出的问题条目；其余顶层筛选与列表一致，
     保证「所见即所导」。沿用 get_current_user 鉴权（router 级依赖）。
     """
-    is_global, ids = await allowed_project_ids(session, user)
+    is_global, ids = await allowed_review_scope(session, user)
     scope_clause = review_scope_clause(is_global, ids)
     stmt = _apply_review_filters(
         select(ReviewTask, ReviewFinding)
@@ -348,6 +348,7 @@ async def export_reviews(
 
 @router.get("/prs", response_model=ReviewPrPage)
 async def list_review_prs(
+    user: CurrentUser,
     session: AsyncSession = Depends(get_db),
     provider: str | None = None,
     pr_number: int | None = None,
@@ -371,15 +372,19 @@ async def list_review_prs(
     limit = max(1, min(limit, 100))
     offset = max(0, offset)
     kw = (q or "").strip().lower()
-    tasks = list((await session.execute(
-        select(ReviewTask)
-        .where(
-            ReviewTask.event_type == "mr",
-            ReviewTask.state == "completed",
-            ReviewTask.pr_number.is_not(None),
-        )
-        .order_by(ReviewTask.id)  # 本 PR 内按 id 升序 ≡ 审查顺序
-    )).scalars().all())
+    # 项目作用域与列表/明细一致：须角色含 reviews:view；超管/全项目角色直达；
+    # 否则仅成员项目（含存量 NULL 兜底）。
+    is_global, ids = await allowed_review_scope(session, user)
+    scope_clause = review_scope_clause(is_global, ids)
+    stmt = select(ReviewTask).where(
+        ReviewTask.event_type == "mr",
+        ReviewTask.state == "completed",
+        ReviewTask.pr_number.is_not(None),
+    )
+    if scope_clause is not None:
+        stmt = stmt.where(scope_clause)
+    stmt = stmt.order_by(ReviewTask.id)  # 本 PR 内按 id 升序 ≡ 审查顺序
+    tasks = list((await session.execute(stmt)).scalars().all())
     tasks = [t for t in tasks
              if (not provider or t.provider == provider)
              and (pr_number is None or t.pr_number == pr_number)

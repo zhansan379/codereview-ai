@@ -64,6 +64,7 @@ const router = createRouter({
           path: '/clone-caches',
           name: 'CloneCaches',
           component: () => import('../views/CloneCachesView.vue'),
+          meta: { permission: 'caches:manage' },
         },
         {
           // 任务页已并入审查记录页，保留旧地址兜底跳转

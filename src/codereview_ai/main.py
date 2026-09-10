@@ -60,7 +60,7 @@ from codereview_ai.storage.clone_cache_repo import CloneCacheRepoRepository
 from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.project_repo import ProjectRepository
 from codereview_ai.storage.review_repo import ReviewRepository
-from codereview_ai.storage.seed import seed_rbac
+from codereview_ai.storage.seed import prune_obsolete_permissions, seed_rbac
 from codereview_ai.storage.setting_repo import SettingRepository
 from codereview_ai.worker import (
     EventStore,
@@ -121,6 +121,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         # —— RBAC 种子（F5.11）：MLP 就绪后播种权限目录 + 内置角色 + 首个 admin ——
         async with session_factory(engine)() as s:
+            await prune_obsolete_permissions(s)  # 清本轮删掉的失效权限（tasks:manage/reviews:update 残留）
             await seed_rbac(s, settings.admin_password)
 
         # —— simple 档队列：webhook 入队即返回 202，worker 异步消费 ——

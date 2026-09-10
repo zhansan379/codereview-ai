@@ -166,12 +166,24 @@ async def review_task_project_id(session: AsyncSession, task: ReviewTask) -> int
 
 
 async def review_task_allowed(session: AsyncSession, user: User, task: ReviewTask) -> bool:
-    """成员可见性：超管/全项目角色直接放行；否则任务归属项目须在成员 id 集合内。"""
-    is_global, ids = await allowed_project_ids(session, user)
+    """单条审查任务可见性：需角色含 `reviews:view`，且（全项目）或任务归属项目在成员集内。"""
+    is_global, ids = await allowed_review_scope(session, user)
     if is_global:
         return True
     pid = await review_task_project_id(session, task)
     return pid is not None and pid in ids
+
+
+async def allowed_review_scope(session: AsyncSession, user: User) -> tuple[bool, set[int]]:
+    """审查记录的可见范围 `(is_global, allowed_ids)`（与 `allowed_project_ids` 类似，但先校验角色）。
+
+    审查列表/详情/汇总等的统一门槛：角色必须含 `reviews:view`（成员身份之外还要查角色权限，
+    防自定义角色只有 projects:view 却能看审查）；再按全项目角色/成员关系定作用域。
+    复用在 `allowed_project_ids` 上，避免重复实现。
+    """
+    if "reviews:view" not in resolved_permission_codes(user):
+        return False, set()
+    return await allowed_project_ids(session, user)
 
 
 def require_permission(*codes: str) -> Any:

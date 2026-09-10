@@ -19,7 +19,7 @@ from starlette import status
 
 from codereview_ai.api.deps import (
     CurrentUser,
-    allowed_project_ids,
+    allowed_review_scope,
     get_current_user,
     get_db,
     review_scope_clause,
@@ -84,7 +84,7 @@ async def list_tasks(
     stmt = select(ReviewTask)
     if state:
         stmt = stmt.where(ReviewTask.state == state)
-    is_global, ids = await allowed_project_ids(session, user)
+    is_global, ids = await allowed_review_scope(session, user)
     scope_clause = review_scope_clause(is_global, ids)
     if scope_clause is not None:
         stmt = stmt.where(scope_clause)

@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from codereview_ai.api.deps import get_current_user, get_db
+from codereview_ai.api.deps import get_db, require_permission
 from codereview_ai.ops.clone_cache import (
     DEFAULT_PRUNE_DAYS,
     PRUNE_DAYS_KEY,
@@ -27,7 +27,11 @@ from codereview_ai.storage.clone_cache_repo import CloneCacheRepoRepository
 from codereview_ai.storage.models import CloneCacheRepo
 from codereview_ai.storage.setting_repo import SettingRepository
 
-router = APIRouter(prefix="/agent/caches", dependencies=[Depends(get_current_user)])
+# 整组为管理操作（删目录/改清除策略/rebuild/prune），须 `caches:manage`，
+# 不能仅登录即可访问。require_permission 已内含鉴权（登录+权限），故无需再挂 get_current_user。
+router = APIRouter(prefix="/agent/caches", dependencies=[
+    Depends(require_permission("caches:manage")),
+])
 
 
 class CacheItem(BaseModel):

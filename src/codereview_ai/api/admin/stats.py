@@ -21,8 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from codereview_ai.api.deps import (
     CurrentUser,
     allowed_project_ids,
-    get_current_user,
     get_db,
+    require_permission,
     review_scope_clause,
 )
 from codereview_ai.storage.models import (
@@ -32,7 +32,11 @@ from codereview_ai.storage.models import (
     ReviewTask,
 )
 
-router = APIRouter(prefix="/stats", dependencies=[Depends(get_current_user)])
+# 统计看板须 `stats:view`（admin/tech_lead/viewer 具备，developer 无）；
+# 数据层另有项目成员隔离（review_scope_clause）。require_permission 已含登录鉴权。
+router = APIRouter(prefix="/stats", dependencies=[
+    Depends(require_permission("stats:view")),
+])
 
 
 class CountItem(BaseModel):
