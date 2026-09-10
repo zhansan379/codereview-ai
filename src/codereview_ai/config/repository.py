@@ -37,6 +37,8 @@ from codereview_ai.storage.models import (
     Role,
     User,
     Workspace,
+    WorkspaceForgeConfig,
+    WorkspaceModelConfig,
 )
 
 logger = logging.getLogger("codereview_ai.config_repository")
@@ -337,6 +339,146 @@ class ConfigRepository:
             return ResolvedForge(provider, f.url or DEFAULT_FORGE_URLS.get(provider, ""), token)
         return None
 
+    # —— BYOK：workspace 自带凭据（必须自带 key；缺失除非豁免否则降级）——
+
+    async def _workspace_fallback_enabled(self, workspace_id: int) -> bool:
+        """该 workspace 是否被超管显式豁免（`platform_fallback`），缺失空间视为 False。"""
+        session = session_factory(self._engine)
+        async with session() as s:
+            val = (await s.execute(
+                select(Workspace.platform_fallback).where(Workspace.id == workspace_id)
+            )).scalar_one_or_none()
+        return bool(val)
+
+    async def _project_workspace_id(self, project_id: int) -> int | None:
+        """返回项目归属的 workspace_id；空/无归属 → None。"""
+        session = session_factory(self._engine)
+        async with session() as s:
+            return (await s.execute(
+                select(Project.workspace_id).where(Project.id == project_id)
+            )).scalar_one_or_none()
+
+    async def resolve_workspace_llm_chain(self, workspace_id: int) -> list[ResolvedLLM]:
+        """返回某 workspace 自带的启用 LLM 链（BYOK，priority 降序）。
+
+        空 = 该空间未自带任何可用模型（由调用方决定降级 or 豁免回落全局）。不 consult env。
+        """
+        session = session_factory(self._engine)
+        rows: list[WorkspaceModelConfig] = []
+        async with session() as s:
+            rows = list((await s.execute(
+                select(WorkspaceModelConfig)
+                .where(
+                    WorkspaceModelConfig.workspace_id == workspace_id,
+                    WorkspaceModelConfig.enabled.is_(True),
+                )
+                .order_by(WorkspaceModelConfig.priority.desc(), WorkspaceModelConfig.id)
+            )).scalars().all())
+        chain: list[ResolvedLLM] = []
+        for m in rows:
+            api_key = decrypt(m.api_key_encrypted, self._enc) if m.api_key_encrypted else ""
+            chain.append(ResolvedLLM(
+                name=m.name,
+                provider=m.provider,
+                model=m.model or m.name,
+                api_key=api_key,
+                base_url=m.base_url,
+                temperature=m.temperature,
+                max_tokens=m.max_tokens,
+            ))
+        return chain
+
+    async def resolve_workspace_forge(
+        self, provider: str, workspace_id: int
+    ) -> ResolvedForge | None:
+        """返回某 workspace 自带的该 provider 凭据（BYOK）。缺权威配置 → None
+        （不回落 env/全局）。"""
+        session = session_factory(self._engine)
+        async with session() as s:
+            row = (await s.execute(
+                select(WorkspaceForgeConfig)
+                .where(
+                    WorkspaceForgeConfig.workspace_id == workspace_id,
+                    WorkspaceForgeConfig.provider == provider,
+                    WorkspaceForgeConfig.enabled.is_(True),
+                )
+            )).scalars().first()
+        if row is None:
+            return None
+        token = decrypt(row.token_encrypted, self._enc) if row.token_encrypted else ""
+        return ResolvedForge(provider, row.url or DEFAULT_FORGE_URLS.get(provider, ""), token)
+
+    async def build_workspace_reviewer(
+        self, workspace_id: int, backend: Any = None
+    ) -> Reviewer | None:
+        """构造某 workspace 的 Reviewer（BYOK：自带链；无自带且豁免 → 回落全局；否则 None 降级）。
+        """
+        chain = await self.resolve_workspace_llm_chain(workspace_id)
+        if not chain:
+            if not await self._workspace_fallback_enabled(workspace_id):
+                return None
+            chain = await self.resolve_llm_chain()
+        if not chain:
+            return None
+        self.apply_env_replay(chain[0])
+        return Reviewer(wrap_fallback(chain, backend=backend))
+
+    # —— BYOK：给定项目/仓库 → 本轮审查应使用的 reviewer / forge（决策统一入口）——
+
+    async def _project_id(self, provider: str, repo_id: str) -> int | None:
+        """按启用项目 (provider, repo_id) 定位 project.id；未注册 → None。"""
+        session = session_factory(self._engine)
+        async with session() as s:
+            return (await s.execute(
+                select(Project.id).where(
+                    Project.provider == provider,
+                    Project.repo_id == repo_id,
+                    Project.enabled.is_(True),
+                )
+            )).scalars().first()
+
+    async def resolve_reviewer_for_project(self, project_id: int) -> Reviewer | None:
+        """按项目挑 Reviewer：非租户 → 全局；租户 → 自带/豁免回落/降级（None）。"""
+        if not await self._project_is_tenant_owned(project_id):
+            return await self.build_reviewer()
+        ws_id = await self._project_workspace_id(project_id)
+        if ws_id is None:
+            return None
+        return await self.build_workspace_reviewer(ws_id)
+
+    async def resolve_forge_for_project(
+        self, provider: str, project_id: int
+    ) -> ResolvedForge | None:
+        """按项目挑 forge 凭据：非租户 → 全局；租户 → 自带/豁免回落/无（None 跳过）。
+        """
+        if not await self._project_is_tenant_owned(project_id):
+            return await self.resolve_forge(provider)
+        ws_id = await self._project_workspace_id(project_id)
+        if ws_id is None:
+            return None
+        forge = await self.resolve_workspace_forge(provider, ws_id)
+        if forge is None and await self._workspace_fallback_enabled(ws_id):
+            forge = await self.resolve_forge(provider)
+        return forge
+
+    async def resolve_reviewer_for_repo(
+        self, provider: str, repo_id: str
+    ) -> Reviewer | None:
+        """worker 工厂：按 (provider, repo_id) 挑 Reviewer；未注册项目 → None（降级）。"""
+        pid = await self._project_id(provider, repo_id)
+        if pid is None:
+            return None
+        return await self.resolve_reviewer_for_project(pid)
+
+    async def resolve_forge_for_repo(
+        self, provider: str, repo_id: str
+    ) -> ResolvedForge | None:
+        """worker 工厂：按 (provider, repo_id) 挑 forge 凭据；未注册项目 → None。"""
+        pid = await self._project_id(provider, repo_id)
+        if pid is None:
+            return None
+        return await self.resolve_forge_for_project(provider, pid)
+
     # —— env 重放（只补缺失，绝不覆盖 host env）——
 
     def apply_env_replay(self, llm: ResolvedLLM | None) -> list[str] | None:
@@ -365,6 +507,7 @@ class ConfigRepository:
         chain = await self.resolve_llm_chain()
         if not chain:
             return None
-        self.apply_env_replay(chain[0])  # 保留 host-env 优先（back-compat，其余链节点显式传 key/url）
+        # 保留 host-env 优先（back-compat；其余链节点显式传 key/url）
+        self.apply_env_replay(chain[0])
         gateway = wrap_fallback(chain, backend=backend)
         return Reviewer(gateway)

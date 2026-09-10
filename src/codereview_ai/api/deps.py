@@ -27,6 +27,7 @@ from codereview_ai.storage.models import (
     ReviewTask,
     Role,
     User,
+    Workspace,
 )
 from codereview_ai.storage.seed import PERMISSION_CATALOG, user_owned_workspace_ids
 
@@ -199,7 +200,7 @@ async def review_task_allowed(session: AsyncSession, user: User, task: ReviewTas
 
 
 async def allowed_review_scope(session: AsyncSession, user: User) -> tuple[bool, set[int]]:
-    """审查记录的可见范围 `(is_global, allowed_ids)`（与 `allowed_project_ids` 类似，但先校验角色）。
+    """审查记录的可见范围 `(is_global, allowed_ids)`（与 `allowed_project_ids` 类似，先校验角色）。
 
     审查列表/详情/汇总等的统一门槛：角色必须含 `reviews:view`（成员身份之外还要查角色权限，
     防自定义角色只有 projects:view 却能看审查）；再按全项目角色/成员关系定作用域。
@@ -223,6 +224,28 @@ def require_permission(*codes: str) -> Any:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "无权限")
 
     return _dep
+
+
+async def require_workspace_owner(
+    workspace_id: int,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_db),
+) -> int:
+    """租户侧秘密管理：超管或该 workspace 的 owner 才能操作，否则 403/404（BYOK）。
+
+    多租户目前无 `workspace_member` 中间表（单用户私有空间），租户身份即 `Workspace.owner_id`。
+    返回 workspace_id 供 path 复用。
+    """
+    if user.role.is_super:
+        return workspace_id
+    ws = (await session.execute(
+        select(Workspace).where(Workspace.id == workspace_id)
+    )).scalar_one_or_none()
+    if ws is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "工作区不存在")
+    if ws.owner_id != user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "不是该工作区的所有者")
+    return workspace_id
 
 
 #: 便于 import：require_any_permission == require_permission（工厂本就接受多码）

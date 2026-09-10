@@ -25,6 +25,14 @@ export interface LoginResult {
 export interface MeResult {
   user: User
   permissions: string[]
+  // BYOK：当前用户作为 owner 的私有 workspace（空间设置页入口；非 owner/超管为 null）
+  workspace: Workspace | null
+}
+
+export interface Workspace {
+  id: number
+  name: string
+  slug: string
 }
 
 export interface RegisterResult {
@@ -267,6 +275,42 @@ export function updateForge(provider: string, data: Partial<ForgeConfig>): Promi
 }
 export function testForge(provider: string, data?: { url?: string; token?: string }): Promise<ForgeProbeResult> {
   return client.post(`/forges/${provider}/test`, data || {}).then((r) => r.data)
+}
+
+// ===== 工作区（BYOK 租户自有凭据）=====
+export interface WorkspaceForge {
+  provider: string
+  url: string
+  token: string
+  enabled: boolean
+}
+
+export function listWorkspaceModels(wsId: number): Promise<ModelItem[]> {
+  return client.get(`/workspaces/${wsId}/models`).then((r) => r.data)
+}
+export function createWorkspaceModel(wsId: number, data: Partial<ModelItem>): Promise<ModelItem> {
+  return client.post(`/workspaces/${wsId}/models`, data).then((r) => r.data)
+}
+export function updateWorkspaceModel(wsId: number, modelId: number, data: Partial<ModelItem>): Promise<ModelItem> {
+  return client.put(`/workspaces/${wsId}/models/${modelId}`, data).then((r) => r.data)
+}
+export function deleteWorkspaceModel(wsId: number, modelId: number): Promise<any> {
+  return client.delete(`/workspaces/${wsId}/models/${modelId}`).then((r) => r.data)
+}
+export function getWorkspaceForge(wsId: number, provider: string): Promise<WorkspaceForge> {
+  return client.get(`/workspaces/${wsId}/forges/${provider}`).then((r) => r.data)
+}
+export function putWorkspaceForge(wsId: number, provider: string, data: Partial<WorkspaceForge>): Promise<WorkspaceForge> {
+  return client.put(`/workspaces/${wsId}/forges/${provider}`, data).then((r) => r.data)
+}
+export function deleteWorkspaceForge(wsId: number, provider: string): Promise<any> {
+  return client.delete(`/workspaces/${wsId}/forges/${provider}`).then((r) => r.data)
+}
+export function getPlatformFallback(wsId: number): Promise<{ workspace_id: number; platform_fallback: boolean }> {
+  return client.get(`/workspaces/${wsId}/platform-fallback`).then((r) => r.data)
+}
+export function setPlatformFallback(wsId: number, enabled: boolean): Promise<{ workspace_id: number; platform_fallback: boolean }> {
+  return client.put(`/workspaces/${wsId}/platform-fallback`, { enabled }).then((r) => r.data)
 }
 
 // ===== 定时任务（主动补拉轮询 / 日报）=====

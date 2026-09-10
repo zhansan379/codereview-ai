@@ -35,6 +35,10 @@
           <el-icon><Box /></el-icon>
           <span>拉取缓存</span>
         </el-menu-item>
+        <el-menu-item v-if="auth.workspace" :index="`/workspaces/${auth.workspace.id}/settings`">
+          <el-icon><OfficeBuilding /></el-icon>
+          <span>工作区设置</span>
+        </el-menu-item>
         <el-menu-item v-if="auth.hasPerm('settings:manage')" index="/settings">
           <el-icon><Setting /></el-icon>
           <span>设置</span>
@@ -90,6 +94,7 @@ import {
   User,
   Key,
   UserFilled,
+  OfficeBuilding,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 

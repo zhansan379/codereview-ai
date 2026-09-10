@@ -123,6 +123,8 @@ class CaptchaRequiredResponse(BaseModel):
 class MeResponse(BaseModel):
     user: UserOut
     permissions: list[str]
+    # BYOK 前端入口：该用户作为 owner 的私有 workspace（导航/空间设置页用；超管可无）
+    workspace: WorkspaceOut | None = None
 
 
 class RegisterRequest(BaseModel):
@@ -327,9 +329,22 @@ async def logout(
 
 
 @router.get("/auth/me", response_model=MeResponse)
-async def me(user: CurrentUser) -> MeResponse:
-    """返回当前用户 + 权限集（前端硬刷新后用它重同步 sessionStorage）。"""
-    return MeResponse(user=_to_out(user), permissions=sorted(resolved_permission_codes(user)))
+async def me(user: CurrentUser, session: AsyncSession = Depends(get_db)) -> MeResponse:
+    """返回当前用户 + 权限集（前端硬刷新后用它重同步 sessionStorage）。
+
+    BYOK：附带 `workspace`（该用户作为 owner 的私有空间，供前端空间设置入口；非 owner
+    /超管为 None）。
+    """
+    workspace: WorkspaceOut | None = None
+    owned = (await session.execute(
+        select(Workspace).where(Workspace.owner_id == user.id),
+    )).scalar_one_or_none()
+    if owned is not None:
+        workspace = WorkspaceOut(id=owned.id, name=owned.name, slug=owned.slug)
+    return MeResponse(
+        user=_to_out(user), permissions=sorted(resolved_permission_codes(user)),
+        workspace=workspace,
+    )
 
 
 # ---------------- 注册 + 邮箱验证 ----------------

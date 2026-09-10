@@ -106,6 +106,10 @@ _COLUMN_FALLBACKS: dict[str, list[tuple[str, str, str]]] = {
         # 文件组标记（组审查并行时逐卡区分所属组）；TEXT 不切片，存全量组 key。
         ("file_group", "TEXT", "DEFAULT ''"),
     ],
+    "workspace": [
+        # BYOK 豁免开关：存量行 0=False=必须自带 key（保守默认，不主动回落平台全局）
+        ("platform_fallback", "BOOLEAN", "DEFAULT 0"),
+    ],
 }
 
 

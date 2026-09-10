@@ -82,6 +82,11 @@ const router = createRouter({
           redirect: '/reviews',
         },
         {
+          path: '/workspaces/:id/settings',
+          name: 'WorkspaceSettings',
+          component: () => import('../views/WorkspaceSettingsView.vue'),
+        },
+        {
           path: '/settings',
           name: 'Settings',
           component: () => import('../views/SettingsView.vue'),

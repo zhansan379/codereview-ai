@@ -42,6 +42,7 @@ from codereview_ai.api.admin import (
 from codereview_ai.api.admin.notifier_members import router as members  # 系统级 @成员名单
 from codereview_ai.api.admin_ui import mount_admin
 from codereview_ai.api.auth import router as auth_router
+from codereview_ai.api.tenant.secrets import router as tenant_secrets_router
 from codereview_ai.api.webhook import router as webhook_router
 from codereview_ai.config import Settings
 from codereview_ai.config.repository import ConfigRepository
@@ -256,7 +257,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     # 全局开关开但无可用 LLM：worker 三条件不满足自动走 diff 降级
                     logger.warning("agent_review_enabled 开启但无可用 LLM，agentic 走 diff 降级")
             processor = make_processor(
-                lambda p: forge_registry.get(p), lambda _: reviewer, store, review_repo=review_repo,
+                forge_registry.get_for_repo, provider_repo.resolve_reviewer_for_repo,
+                store, review_repo=review_repo,
                 notifier=notifier, push_gate=push_gate, static_analyzer=static_analyzer,
                 engine=engine,
                 agent_runtime=agent_runtime, agent_llm_factory=agent_llm_factory,
@@ -362,6 +364,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(tasks.router, prefix="/api")
     app.include_router(stats.router, prefix="/api")
     app.include_router(usage.router, prefix="/api")
+    app.include_router(tenant_secrets_router, prefix="/api")
     app.include_router(users.router, prefix="/api")
     app.include_router(roles.router, prefix="/api")
     app.include_router(webhook_router)
