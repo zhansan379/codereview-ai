@@ -4,6 +4,7 @@
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { pollPulls, pollPullStatus, type PollProgress } from '../api'
+import { t } from '../locales'
 
 /** 是否有补拉正在后台跑（按钮 loading / 页内提示共用，切页回来仍为 true）。 */
 export const pollBusy = ref(false)
@@ -36,15 +37,15 @@ async function watchOnce(): Promise<void> {
   if (resolved) return
   resolved = true
   if (s.error) {
-    ElMessage.error(`补拉失败：${s.error}`)
+    ElMessage.error(t('poll.failed', { error: s.error }))
   } else if (s.report) {
-    const parts = [
-      `扫描 ${s.report.prs} 个打开 PR/MR`,
-      `新入队 ${s.report.new} 条审查`,
-      `已审过跳过 ${s.report.skipped}`,
-    ]
-    if (s.report.errors.length) parts.push(`失败 ${s.report.errors.length}`)
-    ElMessage.success(`补拉完成：${parts.join('，')}，审查在后台进行，可在审查记录页查看`)
+    const args = {
+      prs: s.report.prs,
+      queued: s.report.new,
+      skipped: s.report.skipped,
+      errors: s.report.errors.length,
+    }
+    ElMessage.success(s.report.errors.length ? t('poll.doneWithErrors', args) : t('poll.done', args))
     if (s.report.errors.length) console.warn('补拉失败明细', s.report.errors)
   }
 }
@@ -68,7 +69,7 @@ export async function triggerPoll(): Promise<void> {
       startWatch() // 正好另有一轮在跑 → 跟踪它
       return
     }
-    ElMessage.error(e?.response?.data?.detail || '补拉触发失败')
+    ElMessage.error(e?.response?.data?.detail || t('poll.triggerFailed'))
     return
   }
   pollBusy.value = true

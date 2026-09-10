@@ -1,55 +1,59 @@
 <template>
   <div>
     <el-card>
-      <template #header>平台接入</template>
+      <template #header>{{ $t('settings.forgeTitle') }}</template>
       <p class="intro">
-        配置 GitHub / GitLab 的 Token 与 URL。保存后立即热更生效（无需重启后端）。
-        若对应环境变量（<code>CR_GITHUB_TOKEN</code>/<code>CR_GITLAB_TOKEN</code>）已设置，则以环境变量为准。
+        <i18n-t keypath="settings.forgeIntro" scope="global">
+          <template #githubEnv><code>CR_GITHUB_TOKEN</code></template>
+          <template #gitlabEnv><code>CR_GITLAB_TOKEN</code></template>
+        </i18n-t>
       </p>
 
       <div v-for="prov in providers" :key="prov" class="forge-card">
         <h3>{{ provLabels[prov] }}</h3>
-        <el-form label-width="70px">
+        <el-form label-width="auto">
           <el-form-item label="URL">
             <el-input v-model="form[prov].url" :placeholder="defaults[prov]" />
-            <div class="form-tip">自托管实例请改成你自己的地址；留空则以默认 {{ defaults[prov] }} 为准。</div>
+            <div class="form-tip">{{ $t('settings.urlTip', { url: defaults[prov] }) }}</div>
           </el-form-item>
           <el-form-item label="Token">
             <el-input
               v-model="form[prov].token"
               type="password"
               show-password
-              :placeholder="envActive[prov] ? '环境变量已配置（优先）' : '填写平台 Access Token'"
+              :placeholder="envActive[prov] ? $t('settings.tokenFromEnv') : $t('settings.tokenPlaceholder')"
             />
             <div class="form-tip" v-if="envActive[prov]">
-              检测到环境变量 <code>CR_{{ prov.toUpperCase() }}_TOKEN</code>，运行时以它为准；此处保存的 Token 作为兜底/备用。
+              <i18n-t keypath="settings.envTokenTip" scope="global">
+                <template #env><code>CR_{{ prov.toUpperCase() }}_TOKEN</code></template>
+              </i18n-t>
             </div>
             <div class="form-tip" v-else>
-              页面保存的 Token 会加密存入服务端数据库，读回显示 ******。
+              {{ $t('settings.dbTokenTip') }}
             </div>
           </el-form-item>
         </el-form>
         <el-row :gutter="8" class="test-row">
-          <el-button :loading="testing[prov]" @click="onTest(prov)">测试连接</el-button>
+          <el-button :loading="testing[prov]" @click="onTest(prov)">{{ $t('settings.testConnection') }}</el-button>
         </el-row>
 
         <div v-if="caps[prov]" class="capability-matrix">
           <div class="capability-title">
-            能力矩阵<span class="capability-hint">（本 Token 支持系统哪些能力）</span>
+            {{ $t('settings.capabilityTitle') }}<span class="capability-hint">{{ $t('settings.capabilityHint') }}</span>
           </div>
           <el-table :data="caps[prov]" size="small" border>
-            <el-table-column prop="label" label="能力" min-width="160" />
-            <el-table-column label="状态" width="110">
+            <el-table-column prop="label" :label="$t('settings.capabilityCol')" min-width="160" />
+            <el-table-column :label="$t('common.status')" width="110">
               <template #default="{ row }">
                 <el-tag
                   :type="row.status === 'ok' ? 'success' : row.status === 'missing' ? 'danger' : 'info'"
                   disable-transitions
                 >
-                  {{ row.status === 'ok' ? '可用' : row.status === 'missing' ? '缺权限' : '未知' }}
+                  {{ row.status === 'ok' ? $t('settings.capOk') : row.status === 'missing' ? $t('settings.capMissing') : $t('common.unknown') }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="detail" label="说明" min-width="200">
+            <el-table-column prop="detail" :label="$t('settings.capabilityDetailCol')" min-width="200">
               <template #default="{ row }">
                 <span class="capability-detail">{{ row.detail || '—' }}</span>
               </template>
@@ -59,72 +63,82 @@
       </div>
 
       <div class="save-bar">
-        <el-button type="primary" :loading="saving" @click="onSave">保存配置</el-button>
+        <el-button type="primary" :loading="saving" @click="onSave">{{ $t('settings.saveForge') }}</el-button>
       </div>
     </el-card>
 
     <el-card class="concurrency-card">
-      <template #header>审查并发</template>
+      <template #header>{{ $t('settings.concurrencyTitle') }}</template>
       <p class="intro">
-        同时进行的代码审查条数（1–32，默认 4）。保存后立即热更生效，无需重启后端。
+        {{ $t('settings.concurrencyIntro') }}
       </p>
-      <el-form label-width="110px">
-        <el-form-item label="并发上限">
+      <el-form label-width="auto">
+        <el-form-item :label="$t('settings.concurrencyLimit')">
           <el-input-number v-model="concurrency" :min="1" :max="32" />
-          <span class="form-tip" style="margin-left: 8px">数值越大并行审查越多，占用 LLM 并发越高。</span>
+          <span class="form-tip" style="margin-left: 8px">{{ $t('settings.concurrencyTip') }}</span>
         </el-form-item>
       </el-form>
       <div class="save-bar">
-        <el-button type="primary" :loading="ccSaving" @click="onSaveConcurrency">保存并发</el-button>
-        <span v-if="ccActive" class="form-tip">已生效：当前并发 {{ concurrency }} 条在跑。</span>
-        <span v-else class="hint">运行器未启动，配置将落库，待运行器就绪后按此值生效。</span>
+        <el-button type="primary" :loading="ccSaving" @click="onSaveConcurrency">{{ $t('settings.saveConcurrency') }}</el-button>
+        <span v-if="ccActive" class="form-tip">{{ $t('settings.concurrencyActive', { n: concurrency }) }}</span>
+        <span v-else class="hint">{{ $t('settings.runnerIdle') }}</span>
       </div>
     </el-card>
 
     <el-card class="push-card">
-      <template #header>自动审查触发</template>
+      <template #header>{{ $t('settings.autoTitle') }}</template>
       <p class="intro">
-        有 push / MR 进来时是否自动执行代码审查。保存后即时生效，无需重启后端。
-        push 与 MR <strong>各自独立开关</strong>；覆盖优先级：<strong>项目页该轨开关 > 设置页开关 > 环境变量</strong>。
+        <i18n-t keypath="settings.autoIntro" scope="global">
+          <template #independent><strong>{{ $t('settings.autoIndependent') }}</strong></template>
+          <template #priority><strong>{{ $t('settings.autoPriority') }}</strong></template>
+        </i18n-t>
       </p>
-      <el-form label-width="110px">
-        <el-form-item label="Push 轨">
+      <el-form label-width="auto">
+        <el-form-item :label="$t('settings.pushTrack')">
           <el-switch v-model="pushEnabled" />
           <span class="form-tip" style="margin-left: 8px">
-            push 到达即自动审；默认关避免刷屏。项目「Push 审查」可单独覆盖。
+            {{ $t('settings.pushTip') }}
           </span>
         </el-form-item>
-        <el-form-item v-if="pushSource === 'env'" label="Push 来源">
-          <span class="hint">未落库，由 <code>CR_PUSH_REVIEW_ENABLED</code> 决定；保存后以这里为准。</span>
+        <el-form-item v-if="pushSource === 'env'" :label="$t('settings.pushSourceLabel')">
+          <span class="hint">
+            <i18n-t keypath="settings.envSourceHint" scope="global">
+              <template #env><code>CR_PUSH_REVIEW_ENABLED</code></template>
+            </i18n-t>
+          </span>
         </el-form-item>
         <el-divider class="track-divider" />
-        <el-form-item label="MR 轨">
+        <el-form-item :label="$t('settings.mrTrack')">
           <el-switch v-model="mrEnabled" />
           <span class="form-tip" style="margin-left: 8px">
-            MR 到达即自动审；默认关。项目「MR 审查」可单独覆盖。
+            {{ $t('settings.mrTip') }}
           </span>
         </el-form-item>
-        <el-form-item v-if="mrSource === 'env'" label="MR 来源">
-          <span class="hint">未落库，由 <code>CR_MR_REVIEW_ENABLED</code> 决定；保存后以这里为准。</span>
+        <el-form-item v-if="mrSource === 'env'" :label="$t('settings.mrSourceLabel')">
+          <span class="hint">
+            <i18n-t keypath="settings.envSourceHint" scope="global">
+              <template #env><code>CR_MR_REVIEW_ENABLED</code></template>
+            </i18n-t>
+          </span>
         </el-form-item>
       </el-form>
       <div class="save-bar">
-        <el-button :loading="pushSaving" @click="onSavePushDefault">保存 Push 轨</el-button>
-        <el-button :loading="mrSaving" @click="onSaveMrDefault">保存 MR 轨</el-button>
+        <el-button :loading="pushSaving" @click="onSavePushDefault">{{ $t('settings.savePushTrack') }}</el-button>
+        <el-button :loading="mrSaving" @click="onSaveMrDefault">{{ $t('settings.saveMrTrack') }}</el-button>
       </div>
     </el-card>
 
     <el-card class="note-card">
-      <template #header>安全说明</template>
+      <template #header>{{ $t('settings.securityTitle') }}</template>
       <el-descriptions :column="1" border>
-        <el-descriptions-item label="Webhook 签名密钥">
-          由后端环境变量配置，出于安全考虑不在管理后台展示明文。
+        <el-descriptions-item :label="$t('settings.webhookSecretLabel')">
+          {{ $t('settings.webhookSecretText') }}
         </el-descriptions-item>
-        <el-descriptions-item label="JWT 有效期">
-          登录返回的 access_token 有有效期（expires_in 字段），过期后自动跳转登录页。
+        <el-descriptions-item :label="$t('settings.jwtLabel')">
+          {{ $t('settings.jwtText') }}
         </el-descriptions-item>
-        <el-descriptions-item label="Token 存储">
-          登录凭证保存在浏览器 sessionStorage 中，关闭页面即失效。
+        <el-descriptions-item :label="$t('settings.tokenStoreLabel')">
+          {{ $t('settings.tokenStoreText') }}
         </el-descriptions-item>
       </el-descriptions>
     </el-card>
@@ -134,8 +148,11 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import { listForges, updateForge, testForge, getConcurrency, setConcurrency, getPushReviewDefault, setPushReviewDefault, getMrReviewDefault, setMrReviewDefault } from '../api'
 import type { ForgeCapability } from '../api'
+
+const { t } = useI18n()
 
 const MASK = '******'
 const providers = ['github', 'gitlab'] as const
@@ -191,9 +208,9 @@ async function onSaveMrDefault() {
     const s = await setMrReviewDefault({ enabled: mrEnabled.value })
     mrEnabled.value = s.enabled
     mrSource.value = s.source
-    ElMessage.success(s.enabled ? '已开启 MR 自动审查（即时生效）' : '已关闭 MR 自动审查（即时生效）')
+    ElMessage.success(s.enabled ? t('settings.mrAutoOn') : t('settings.mrAutoOff'))
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '保存失败')
+    ElMessage.error(e?.response?.data?.detail || t('common.saveFailed'))
   } finally {
     mrSaving.value = false
   }
@@ -215,9 +232,9 @@ async function onSavePushDefault() {
     const s = await setPushReviewDefault({ enabled: pushEnabled.value })
     pushEnabled.value = s.enabled
     pushSource.value = s.source
-    ElMessage.success(s.enabled ? '已开启自动审查（即时生效）' : '已关闭自动审查（即时生效）')
+    ElMessage.success(s.enabled ? t('settings.pushAutoOn') : t('settings.pushAutoOff'))
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '保存失败')
+    ElMessage.error(e?.response?.data?.detail || t('common.saveFailed'))
   } finally {
     pushSaving.value = false
   }
@@ -239,9 +256,11 @@ async function onSaveConcurrency() {
     const s = await setConcurrency({ concurrency: Math.max(1, Math.min(32, concurrency.value)) })
     concurrency.value = s.concurrency
     ccActive.value = s.active
-    ElMessage.success(s.applied ? `已热更生效：并发 ${s.concurrency}` : '已保存，运行器就绪后生效')
+    ElMessage.success(
+      s.applied ? t('settings.concurrencySaved', { n: s.concurrency }) : t('settings.concurrencySavedPending'),
+    )
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '保存失败')
+    ElMessage.error(e?.response?.data?.detail || t('common.saveFailed'))
   } finally {
     ccSaving.value = false
   }
@@ -265,9 +284,9 @@ async function onTest(provider: 'github' | 'gitlab') {
     const body = f.token && f.token !== MASK ? { url: f.url, token: f.token } : {}
     const result = await testForge(provider, body)
     caps[provider] = result.capabilities
-    ElMessage.success(`「${provLabels[provider]}」连接正常`)
+    ElMessage.success(t('settings.testOk', { name: provLabels[provider] }))
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || `连接测试失败`)
+    ElMessage.error(e?.response?.data?.detail || t('settings.testFailed'))
   } finally {
     testing[provider] = false
   }
@@ -279,10 +298,10 @@ async function onSave() {
     for (const p of providers) {
       await updateForge(p, { url: form[p].url, token: form[p].token, enabled: true })
     }
-    ElMessage.success('已保存并热更生效')
+    ElMessage.success(t('settings.forgeSaved'))
     load()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '保存失败')
+    ElMessage.error(e?.response?.data?.detail || t('common.saveFailed'))
   } finally {
     saving.value = false
   }

@@ -1,0 +1,36 @@
+// 审查记录 / 仪表盘「最近记录」共用表格(components/ReviewsTable.vue)的列头与行内按钮。
+export default {
+  'zh-CN': {
+    title: '标题',
+    provider: '平台',
+    repoId: '仓库 ID',
+    event: '事件',
+    branch: '分支',
+    attempt: '重试',
+    score: '评分',
+    mode: '模式',
+    state: '状态',
+    queuedAt: '排队时间',
+    finishedAt: '完成时间',
+    retry: '重试',
+    reReview: '补审',
+    resend: '重新发送',
+  },
+  en: {
+    title: 'Title',
+    provider: 'Provider',
+    repoId: 'Repo ID',
+    event: 'Event',
+    branch: 'Branch',
+    attempt: 'Retries',
+    score: 'Score',
+    mode: 'Mode',
+    state: 'Status',
+    queuedAt: 'Queued at',
+    finishedAt: 'Finished at',
+    retry: 'Retry',
+    // 「补审」是给被跳过、从未审过的任务补一次，不是重审，所以不能叫 Re-review
+    reReview: 'Review',
+    resend: 'Resend',
+  },
+}

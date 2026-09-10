@@ -4,18 +4,18 @@
     <el-card class="filter-card">
       <template #header>
         <div class="card-head">
-          <span class="card-title">MR 审查进展</span>
+          <span class="card-title">{{ $t('reviewPrs.title') }}</span>
           <span class="card-actions">
-            <el-button @click="onReset">重置</el-button>
-            <el-button type="primary" @click="onFilterChange">查询</el-button>
+            <el-button @click="onReset">{{ $t('common.reset') }}</el-button>
+            <el-button type="primary" @click="onFilterChange">{{ $t('reviewPrs.search') }}</el-button>
           </span>
         </div>
       </template>
       <el-form inline class="filter-form" @submit.prevent>
-        <el-form-item label="平台">
+        <el-form-item :label="$t('reviewPrs.provider')">
           <el-select
             v-model="query.provider"
-            placeholder="全部平台"
+            :placeholder="$t('reviewPrs.allProviders')"
             clearable
             filterable
             allow-create
@@ -26,33 +26,33 @@
             <el-option v-for="o in providerOptions" :key="o" :label="o" :value="o" />
           </el-select>
         </el-form-item>
-        <el-form-item label="MR/PR 号">
+        <el-form-item :label="$t('reviewPrs.prNumber')">
           <el-input-number
             v-model="query.pr_number"
             :min="1"
             :controls="false"
-            placeholder="精确 MR/PR 号"
+            :placeholder="$t('reviewPrs.prNumberPlaceholder')"
             style="width: 120px"
             @change="onFilterChange"
           />
         </el-form-item>
-        <el-form-item label="标题关键词">
+        <el-form-item :label="$t('reviewPrs.keyword')">
           <el-input
             v-model="query.q"
-            placeholder="匹配 MR/PR 标题"
+            :placeholder="$t('reviewPrs.keywordPlaceholder')"
             clearable
             style="width: 180px"
             @keyup.enter="onFilterChange"
             @clear="onFilterChange"
           />
         </el-form-item>
-        <el-form-item label="完成时间">
+        <el-form-item :label="$t('reviewPrs.finishedAt')">
           <el-date-picker
             v-model="query.dateRange"
             type="daterange"
             range-separator="~"
-            start-placeholder="开始"
-            end-placeholder="结束"
+            :start-placeholder="$t('reviewPrs.dateStart')"
+            :end-placeholder="$t('reviewPrs.dateEnd')"
             value-format="YYYY-MM-DD"
             format="YYYY-MM-DD"
             unlink-panels
@@ -64,25 +64,25 @@
     </el-card>
 
     <div v-loading="loading" class="pr-list">
-      <div v-if="!items.length && !loading" class="empty-tip">暂无已完成审查的 MR（需 ≥1 轮 completed 的 mr 任务）</div>
+      <div v-if="!items.length && !loading" class="empty-tip">{{ $t('reviewPrs.empty') }}</div>
 
       <el-card v-for="pr in items" :key="pr.key" class="pr-card" shadow="never">
         <template #header>
           <div class="pr-head">
             <div class="pr-title">
               <el-tag type="primary" effect="plain">PR/MR #{{ pr.pr_number }}</el-tag>
-              <span class="title-text">{{ pr.pr_title || '（无标题）' }}</span>
+              <span class="title-text">{{ pr.pr_title || $t('reviewPrs.noTitle') }}</span>
             </div>
             <div class="pr-meta">
               <el-tag size="small" effect="plain">{{ pr.provider }}</el-tag>
               <span class="branch">{{ pr.branch }}</span>
-              <span class="rounds-count">共 {{ pr.rounds_count }} 轮</span>
+              <span class="rounds-count">{{ $t('reviewPrs.roundsCount', { n: pr.rounds_count }) }}</span>
               <span
                 v-if="pr.rounds_count > 1"
                 class="conv-text"
                 :class="pr.rate_pct >= 80 ? 'good' : 'warn'"
-                :title="`收敛率 ${pr.rate_pct}%`"
-              >收敛 {{ pr.rate_pct }}%</span>
+                :title="$t('reviewPrs.convergenceTitle', { pct: pr.rate_pct })"
+              >{{ $t('reviewPrs.convergence', { pct: pr.rate_pct }) }}</span>
               <span v-else class="conv-text muted">&mdash;</span>
             </div>
           </div>
@@ -95,9 +95,9 @@
             :key="r.id"
             class="tl-round"
             :class="{ current: i === pr.rounds.length - 1 }"
-            :title="`第${i + 1}轮 ${r.head_sha}\n+新增 ${r.delta.new} · 持续 ${r.delta.persisting} · 已解决 ${r.delta.resolved} · 未覆盖 ${r.delta.not_reviewed}`"
+            :title="roundTitle(r, i)"
           >
-            第{{ i + 1 }}轮
+            {{ $t('reviewPrs.round', { n: i + 1 }) }}
             <b class="up">+{{ r.delta.new }}</b>
             <b class="down">-{{ r.delta.resolved }}</b>
           </span>
@@ -109,8 +109,8 @@
           type="warning"
           :closable="false"
           show-icon
-          title="存在上轮未覆盖（未验证）的问题"
-          description="这些问题上次报过、但本轮未审到对应文件（未变更复用/缺失覆盖集时保守登记）。≠ 已修复，需注意。"
+          :title="$t('reviewPrs.notReviewedAlertTitle')"
+          :description="$t('reviewPrs.notReviewedAlertDesc')"
           style="margin: 12px 0"
         />
         <div class="buckets">
@@ -143,13 +143,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { listReviewPrs, type ReviewPr, type CompareBucketItem } from '../api'
 import FindingBucketTable from '../components/FindingBucketTable.vue'
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
 
 const items = ref<ReviewPr[]>([])
 const total = ref(0)
@@ -174,12 +176,33 @@ const query = reactive<{
 })
 
 // 末轮四桶元数据（标签 / 颜色 / 空态文案），配合下方折叠渲染。
-const buckets = [
-  { key: 'new', label: '新增', tag: 'danger', empty: '本轮无新增问题' },
-  { key: 'persisting', label: '持续存在', tag: 'warning', empty: '无持续存在的问题' },
-  { key: 'resolved', label: '已解决', tag: 'success', empty: '本轮已全部修复' },
-  { key: 'not_reviewed', label: '上次未覆盖', tag: 'info', empty: '无' },
-]
+// computed 而非常量：桶标签与空态提示要随语言切换。
+const buckets = computed(() =>
+  (
+    [
+      { key: 'new', tag: 'danger' },
+      { key: 'persisting', tag: 'warning' },
+      { key: 'resolved', tag: 'success' },
+      { key: 'not_reviewed', tag: 'info' },
+    ] as const
+  ).map((b) => ({
+    ...b,
+    label: t(`enum.bucket.${b.key}`),
+    empty: t(`reviewPrs.emptyBucket.${b.key}`),
+  })),
+)
+
+/** 回合 pill 的悬浮提示：轮次 + head sha + 四桶差量。 */
+function roundTitle(r: ReviewPr['rounds'][number], i: number): string {
+  return t('reviewPrs.roundTitle', {
+    n: i + 1,
+    sha: r.head_sha,
+    new: r.delta.new,
+    persisting: r.delta.persisting,
+    resolved: r.delta.resolved,
+    notReviewed: r.delta.not_reviewed,
+  })
+}
 // 展开的桶集合（key=`pr.key:桶名`）；默认只展开每张卡的「新增」。
 const openBuckets = ref<Set<string>>(new Set())
 

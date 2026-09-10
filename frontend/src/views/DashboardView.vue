@@ -2,25 +2,25 @@
   <div>
     <div class="kpi-grid">
       <el-card>
-        <div class="stat-label">审查任务</div>
+        <div class="stat-label">{{ $t('dashboard.kpiTasks') }}</div>
         <div class="stat-value">{{ stats.total_tasks }}</div>
       </el-card>
       <el-card>
-        <div class="stat-label">问题总数</div>
+        <div class="stat-label">{{ $t('dashboard.kpiFindings') }}</div>
         <div class="stat-value">{{ stats.total_findings }}</div>
       </el-card>
       <el-card>
-        <div class="stat-label">未解决高危</div>
+        <div class="stat-label">{{ $t('dashboard.kpiOpenHigh') }}</div>
         <div class="stat-value" style="color: var(--el-color-danger)">{{ stats.open_high }}</div>
       </el-card>
       <el-card>
-        <div class="stat-label">未解决严重</div>
+        <div class="stat-label">{{ $t('dashboard.kpiOpenCritical') }}</div>
         <div class="stat-value" style="color: var(--el-color-warning)">{{ stats.open_critical }}</div>
       </el-card>
       <el-card>
-        <div class="stat-label">平均对话轮数（agent）</div>
+        <div class="stat-label">{{ $t('dashboard.kpiAvgRounds') }}</div>
         <div class="stat-value">
-          {{ stats.avg_chat_rounds }}<span class="stat-unit">轮</span>
+          {{ stats.avg_chat_rounds }}<span class="stat-unit">{{ $t('dashboard.unitRound') }}</span>
         </div>
       </el-card>
     </div>
@@ -29,25 +29,25 @@
     <el-row :gutter="20" class="charts-row band-row">
       <el-col :xs="12" :md="6">
         <el-card class="band-card">
-          <template #header>严重级别分布</template>
+          <template #header>{{ $t('dashboard.bandSeverity') }}</template>
           <KpiList :rows="severityRows" />
         </el-card>
       </el-col>
       <el-col :xs="12" :md="6">
         <el-card class="band-card">
-          <template #header>任务状态分布</template>
+          <template #header>{{ $t('dashboard.bandState') }}</template>
           <KpiList :rows="stateRows" />
         </el-card>
       </el-col>
       <el-col :xs="12" :md="6">
         <el-card class="band-card">
-          <template #header>审查渠道分流</template>
+          <template #header>{{ $t('dashboard.bandProvider') }}</template>
           <KpiList :rows="providerRows" />
         </el-card>
       </el-col>
       <el-col :xs="12" :md="6">
         <el-card class="band-card">
-          <template #header>审查模式（agent / diff）</template>
+          <template #header>{{ $t('dashboard.bandMode') }}</template>
           <KpiList :rows="modeRows" />
         </el-card>
       </el-col>
@@ -56,16 +56,16 @@
     <el-row :gutter="20" class="charts-row">
       <el-col :span="12" :xs="24" :md="12">
         <el-card>
-          <template #header>近 14 天审查趋势</template>
+          <template #header>{{ $t('dashboard.chartTrend') }}</template>
           <div ref="trendRef" class="chart"></div>
         </el-card>
       </el-col>
       <el-col :span="12" :xs="24" :md="12">
         <el-card>
           <template #header>
-            近 14 天成本
+            {{ $t('dashboard.chartCost') }}
             <span class="header-sub">
-              累计 {{ totalCost }}
+              {{ $t('dashboard.costTotal', { n: totalCost }) }}
             </span>
           </template>
           <div ref="costRef" class="chart"></div>
@@ -76,13 +76,13 @@
     <el-row :gutter="20" class="charts-row">
       <el-col :span="12" :xs="24" :md="12">
         <el-card>
-          <template #header>模型 Token 用量</template>
+          <template #header>{{ $t('dashboard.chartToken') }}</template>
           <div ref="tokenRef" class="chart"></div>
         </el-card>
       </el-col>
       <el-col :span="12" :xs="24" :md="12">
         <el-card>
-          <template #header>近 14 天审查耗时趋势</template>
+          <template #header>{{ $t('dashboard.chartDuration') }}</template>
           <div ref="durationRef" class="chart"></div>
         </el-card>
       </el-col>
@@ -92,9 +92,14 @@
       <el-col :span="16" :xs="24" :md="16">
         <el-card>
           <template #header>
-            Agent 复杂度 × 成本
+            {{ $t('dashboard.chartScatter') }}
             <span class="header-sub">
-              {{ stats.agent_task_count }} 次 agent 审查 · 平均 {{ stats.avg_chat_rounds }} 轮
+              {{
+                $t('dashboard.scatterSub', {
+                  n: stats.agent_task_count,
+                  rounds: stats.avg_chat_rounds,
+                })
+              }}
             </span>
           </template>
           <div ref="scatterRef" class="chart"></div>
@@ -102,14 +107,14 @@
       </el-col>
       <el-col :span="8" :xs="24" :md="8">
         <el-card>
-          <template #header>Agent 阶段管线分布</template>
+          <template #header>{{ $t('dashboard.chartPhase') }}</template>
           <div ref="phaseRef" class="chart"></div>
         </el-card>
       </el-col>
     </el-row>
 
     <el-card class="table-card">
-      <template #header>最近记录</template>
+      <template #header>{{ $t('dashboard.recent') }}</template>
       <ReviewsTable :items="recent" :loading="loading" time-field="finished_at" @detail="goDetail" />
     </el-card>
   </div>
@@ -118,6 +123,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import * as echarts from 'echarts'
 import { getStats, listReviews, type DashboardStats, type ReviewItem, type PhaseBoxItem } from '../api'
 import ReviewsTable from '../components/ReviewsTable.vue'
@@ -125,6 +131,7 @@ import KpiList from '../components/KpiList.vue'
 import { useDark } from '../composables/useDark'
 
 const { isDark } = useDark()
+const { t, te, locale } = useI18n()
 // 记住每个容器当前用的 echarts 主题，切换时才 dispose 重建
 const chartTheme = new WeakMap<HTMLDivElement, string | undefined>()
 
@@ -177,35 +184,36 @@ function pct(n: number, total: number): string {
 // 秒 → 「X 分 Y 秒」，不足 1 分钟只显示秒，整分钟省略秒
 function fmtDur(sec: number): string {
   const s = Math.round(sec)
-  if (s < 60) return `${s} 秒`
+  if (s < 60) return t('dashboard.durSec', { n: s })
   const m = Math.floor(s / 60)
   const r = s % 60
-  return r ? `${m} 分 ${r} 秒` : `${m} 分`
+  return r ? t('dashboard.durMinSec', { m, s: r }) : t('dashboard.durMin', { m })
 }
 
-const SEVERITY_META: Record<string, { label: string; color: string }> = {
-  critical: { label: '严重', color: 'var(--el-color-danger)' },
-  high: { label: '高', color: 'var(--el-color-warning)' },
-  medium: { label: '中', color: 'var(--el-text-color-secondary)' },
-  low: { label: '低', color: 'var(--el-text-color-placeholder)' },
+// 颜色是常量，标签走词条：切语言后各分布带的行名跟着变
+const SEVERITY_COLOR: Record<string, string> = {
+  critical: 'var(--el-color-danger)',
+  high: 'var(--el-color-warning)',
+  medium: 'var(--el-text-color-secondary)',
+  low: 'var(--el-text-color-placeholder)',
 }
 
 const severityTotal = computed(() => stats.value.findings_by_severity.reduce((s, x) => s + x.count, 0))
 const severityRows = computed(() =>
   stats.value.findings_by_severity.map((x) => ({
-    label: SEVERITY_META[x.key]?.label ?? x.key,
+    label: te(`enum.severity.${x.key}`) ? t(`enum.severity.${x.key}`) : x.key,
     value: x.count,
-    color: SEVERITY_META[x.key]?.color,
+    color: SEVERITY_COLOR[x.key],
     hint: pct(x.count, severityTotal.value),
   })),
 )
 
-const STATE_META: Record<string, { label: string; color: string }> = {
-  running: { label: '运行中', color: 'var(--el-color-primary)' },
-  queued: { label: '排队中', color: 'var(--el-text-color-secondary)' },
-  completed: { label: '已完成', color: 'var(--el-color-success)' },
-  failed: { label: '失败', color: 'var(--el-color-danger)' },
-  skipped: { label: '跳过', color: 'var(--el-color-warning)' },
+const STATE_COLOR: Record<string, string> = {
+  running: 'var(--el-color-primary)',
+  queued: 'var(--el-text-color-secondary)',
+  completed: 'var(--el-color-success)',
+  failed: 'var(--el-color-danger)',
+  skipped: 'var(--el-color-warning)',
 }
 const STATE_ORDER = ['running', 'queued', 'completed', 'failed', 'skipped']
 
@@ -216,9 +224,9 @@ const stateRows = computed(() =>
     .map((key) => stats.value.tasks_by_state.find((x) => x.key === key))
     .filter((x): x is { key: string; count: number } => !!x)
     .map((x) => ({
-      label: STATE_META[x.key]?.label ?? x.key,
+      label: te(`dashboard.state.${x.key}`) ? t(`dashboard.state.${x.key}`) : x.key,
       value: x.count,
-      color: STATE_META[x.key]?.color ?? 'var(--el-text-color-secondary)',
+      color: STATE_COLOR[x.key] ?? 'var(--el-text-color-secondary)',
       hint: pct(x.count, stateTotal.value),
     })),
 )
@@ -234,15 +242,12 @@ const providerRows = computed(() =>
 )
 
 const modeTotal = computed(() => stats.value.tasks_by_mode.reduce((s, x) => s + x.count, 0))
-const MODE_META: Record<string, { label: string; color: string }> = {
-  agentic: { label: 'Agent 审查', color: AGENT_COLOR },
-  diff: { label: 'Diff 审查', color: DIFF_COLOR },
-}
+const MODE_COLOR: Record<string, string> = { agentic: AGENT_COLOR, diff: DIFF_COLOR }
 const modeRows = computed(() =>
   stats.value.tasks_by_mode.map((x) => ({
-    label: MODE_META[x.key]?.label ?? x.key,
+    label: te(`dashboard.mode.${x.key}`) ? t(`dashboard.mode.${x.key}`) : x.key,
     value: x.count,
-    color: MODE_META[x.key]?.color ?? 'var(--el-color-primary)',
+    color: MODE_COLOR[x.key] ?? 'var(--el-color-primary)',
     hint: pct(x.count, modeTotal.value),
   })),
 )
@@ -258,7 +263,7 @@ function drawTrend() {
       type: 'category',
       data: stats.value.reviews_by_day.map((d) => d.day.slice(5)), // MM-DD
     },
-    yAxis: { type: 'value', minInterval: 1, name: '审查数', nameGap: 10 },
+    yAxis: { type: 'value', minInterval: 1, name: t('dashboard.axisReviews'), nameGap: 10 },
     series: [
       {
         name: 'Agent',
@@ -290,19 +295,24 @@ function drawScatter() {
       trigger: 'item',
       confine: true,
       formatter: (p: { value: number[] }) =>
-        `diff 行数: ${p.value[0]}<br/>耗时: ${fmtDur(p.value[1])}<br/>轮数: ${p.value[2]}<br/>工具调用: ${p.value[3]}`,
+        [
+          `${t('dashboard.scatterTip.diffLines')}: ${p.value[0]}`,
+          `${t('dashboard.scatterTip.duration')}: ${fmtDur(p.value[1])}`,
+          `${t('dashboard.scatterTip.rounds')}: ${p.value[2]}`,
+          `${t('dashboard.scatterTip.toolCalls')}: ${p.value[3]}`,
+        ].join('<br/>'),
     },
     grid: { containLabel: true, left: 8, right: 64, top: 28, bottom: 8 },
     xAxis: {
       type: 'value',
-      name: 'diff 行数',
+      name: t('dashboard.axisDiffLines'),
       minInterval: 1,
       nameLocation: 'end',
       nameGap: 12,
     },
     yAxis: {
       type: 'value',
-      name: '耗时',
+      name: t('dashboard.axisDuration'),
       nameLocation: 'end',
       nameGap: 8,
       axisLabel: { formatter: (v: number) => fmtDur(v) },
@@ -315,7 +325,7 @@ function drawScatter() {
       itemHeight: 110,
       right: 0,
       top: 'center',
-      text: ['工具调用', '少'],
+      text: [t('dashboard.visualMapHigh'), t('dashboard.visualMapLow')],
       seriesIndex: 0,
     },
     series: [
@@ -351,10 +361,10 @@ function drawToken() {
     xAxis: { type: 'category', data: models },
     yAxis: { type: 'value', name: 'token' },
     series: [
-      { name: 'Agent 输入', type: 'bar', stack: 'agent', barMaxWidth: 22, itemStyle: { color: AGENT_COLOR }, data: pick(aMap, 'prompt_tokens') },
-      { name: 'Agent 输出', type: 'bar', stack: 'agent', barMaxWidth: 22, itemStyle: { color: AGENT_COLOR, opacity: 0.4 }, data: pick(aMap, 'completion_tokens') },
-      { name: 'Diff 输入', type: 'bar', stack: 'diff', barMaxWidth: 22, itemStyle: { color: DIFF_COLOR }, data: pick(dMap, 'prompt_tokens') },
-      { name: 'Diff 输出', type: 'bar', stack: 'diff', barMaxWidth: 22, itemStyle: { color: DIFF_COLOR, opacity: 0.4 }, data: pick(dMap, 'completion_tokens') },
+      { name: t('dashboard.tokenSeries.agentPrompt'), type: 'bar', stack: 'agent', barMaxWidth: 22, itemStyle: { color: AGENT_COLOR }, data: pick(aMap, 'prompt_tokens') },
+      { name: t('dashboard.tokenSeries.agentCompletion'), type: 'bar', stack: 'agent', barMaxWidth: 22, itemStyle: { color: AGENT_COLOR, opacity: 0.4 }, data: pick(aMap, 'completion_tokens') },
+      { name: t('dashboard.tokenSeries.diffPrompt'), type: 'bar', stack: 'diff', barMaxWidth: 22, itemStyle: { color: DIFF_COLOR }, data: pick(dMap, 'prompt_tokens') },
+      { name: t('dashboard.tokenSeries.diffCompletion'), type: 'bar', stack: 'diff', barMaxWidth: 22, itemStyle: { color: DIFF_COLOR, opacity: 0.4 }, data: pick(dMap, 'completion_tokens') },
     ],
   })
 }
@@ -370,7 +380,7 @@ function drawCost() {
       type: 'category',
       data: stats.value.cost_by_day.map((d) => d.day.slice(5)),
     },
-    yAxis: { type: 'value', name: '成本' },
+    yAxis: { type: 'value', name: t('dashboard.axisCost') },
     series: [
       {
         name: 'Agent',
@@ -430,14 +440,14 @@ function drawDuration() {
       confine: true,
       formatter: (p: { name: string; marker: string; seriesName: string; value: number }[]) =>
         `${p[0].name}<br/>` +
-        p.map((x) => `${x.marker}${x.seriesName}　${fmtDur(x.value)}`).join('<br/>'),
+        p.map((x) => `${x.marker}${x.seriesName}&nbsp;&nbsp;${fmtDur(x.value)}`).join('<br/>'),
     },
     legend: { bottom: 0 },
     grid: { containLabel: true, left: 8, right: 16, top: 36, bottom: 24 },
     xAxis: { type: 'category', data: stats.value.duration_by_day.map((d) => d.day.slice(5)) },
     yAxis: {
       type: 'value',
-      name: '耗时',
+      name: t('dashboard.axisDuration'),
       nameGap: 10,
       axisLabel: { formatter: (v: number) => fmtDur(v) },
     },
@@ -490,10 +500,12 @@ function drawPhase() {
         const arr = Array.isArray(p.value) ? p.value : []
         const fmt = (v: number) =>
           Number.isInteger(v) ? `${v}` : `${Math.round(v * 100) / 100}`
-        const lines = boxes.map((b, i) =>
-          `${b.key}　${arr[i] == null ? '—' : `${fmt(arr[i])} 次`}　<span style="opacity:.6">${b.task_count} 个任务</span>`
+        const lines = boxes.map(
+          (b, i) =>
+            `${b.key}&nbsp;&nbsp;${arr[i] == null ? '—' : t('dashboard.phaseCalls', { n: fmt(arr[i]) })}&nbsp;&nbsp;` +
+            `<span style="opacity:.6">${t('dashboard.phaseTasks', { n: b.task_count })}</span>`,
         )
-        return `<b>${p.name}</b>（各阶段单次审查 LLM 调用次数）<br/>${lines.join('<br/>')}`
+        return `<b>${p.name}</b>${t('dashboard.phaseTipTitle')}<br/>${lines.join('<br/>')}`
       },
     },
     legend: { bottom: 0 },
@@ -509,10 +521,10 @@ function drawPhase() {
       {
         type: 'radar',
         data: [
-          { name: '最少', value: pick((b) => b.min) },
-          { name: '众数', value: pick((b) => b.mode) },
-          { name: '平均', value: pick((b) => b.mean) },
-          { name: '最多', value: pick((b) => b.max) },
+          { name: t('dashboard.phaseSeries.min'), value: pick((b) => b.min) },
+          { name: t('dashboard.phaseSeries.mode'), value: pick((b) => b.mode) },
+          { name: t('dashboard.phaseSeries.mean'), value: pick((b) => b.mean) },
+          { name: t('dashboard.phaseSeries.max'), value: pick((b) => b.max) },
         ],
       },
     ],
@@ -569,6 +581,8 @@ onUnmounted(() => window.removeEventListener('resize', resizeCharts))
 
 // 暗色切换后按新主题重建图表（轴文字/网格线颜色跟着走）
 watch(isDark, () => redrawAll())
+// 图表是命令式 setOption，轴名/图例/tooltip 不会随 t() 自动更新，切语言后必须整体重绘
+watch(locale, () => redrawAll())
 </script>
 
 <style scoped>

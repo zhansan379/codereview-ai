@@ -2,7 +2,7 @@
   <div class="swimlanes">
     <!-- 文件组图例：仅当存在 ≥2 个并行文件组时显示，说明泳道内各卡片的组归属 -->
     <div v-if="showGroups" class="legend">
-      <span class="legend-label">文件组</span>
+      <span class="legend-label">{{ $t('swimLane.fileGroup') }}</span>
       <span v-for="g in groupMap.list" :key="g.key" class="legend-chip">
         <span class="gdot" :style="{ background: g.color }" />
         <span class="gfiles" :title="g.key">{{ g.short }}</span>
@@ -20,9 +20,13 @@
         <span class="lane-dot" />
         <span class="lane-title">{{ lane.label }}</span>
         <code class="lane-code">{{ lane.phase }}</code>
-        <span class="lane-count">{{ lane.cards.length }} 轮</span>
-        <span v-if="lane.tokens" class="lane-tokens" :title="`累计 输入 ${lane.tokens.prompt} / 输出 ${lane.tokens.completion}`">
-          输入 {{ lane.tokens.prompt }} · 输出 {{ lane.tokens.completion }}
+        <span class="lane-count">{{ $t('swimLane.rounds', { n: lane.cards.length }) }}</span>
+        <span
+          v-if="lane.tokens"
+          class="lane-tokens"
+          :title="$t('swimLane.tokensTitle', { prompt: lane.tokens.prompt, completion: lane.tokens.completion })"
+        >
+          {{ $t('swimLane.tokens', { prompt: lane.tokens.prompt, completion: lane.tokens.completion }) }}
         </span>
       </header>
 
@@ -44,47 +48,58 @@
               <span class="gdot" :style="{ background: groupColor(card) }" />
               {{ groupShort(card) }}
             </span>
-            <span v-if="usageOf(card)" class="badge badge-tokens">输入 {{ usageOf(card).prompt_tokens }} · 输出 {{ usageOf(card).completion_tokens }}</span>
+            <span v-if="usageOf(card)" class="badge badge-tokens">{{
+              $t('swimLane.tokens', {
+                prompt: usageOf(card).prompt_tokens,
+                completion: usageOf(card).completion_tokens,
+              })
+            }}</span>
             <span v-if="card.it.trace_id" class="trace" title="trace_id"><code>{{ card.it.trace_id }}</code></span>
           </header>
 
           <div v-if="!isCollapsed(card)" class="card-body">
             <!-- 思考链：参考页「Reasoning」块——thinking 模型的推理过程（content 常为空时它才是主数据） -->
             <div v-if="reasoningOf(card)" class="sec">
-              <div class="sec-label">思考链 Reasoning</div>
+              <div class="sec-label">{{ $t('swimLane.reasoning') }}</div>
               <pre class="text reasoning">{{ reasoningOf(card) }}</pre>
             </div>
 
             <!-- 响应：模型原始输出 -->
             <div v-if="respContent(card) !== null" class="sec">
-              <div class="sec-label">响应 Response</div>
-              <div v-if="looksTruncatedJson(respContent(card))" class="warn">⚠ 响应 JSON 被写入端截断，无法按结构折叠</div>
+              <div class="sec-label">{{ $t('swimLane.response') }}</div>
+              <div v-if="looksTruncatedJson(respContent(card))" class="warn">
+                {{ $t('swimLane.responseTruncated') }}
+              </div>
               <pre v-if="respText(card) !== null" class="text">{{ respText(card) }}</pre>
               <JsonView v-else :data="respContent(card)" class="json" />
             </div>
 
             <!-- 工具调用 + 参数 + 结果（结果取自下一轮 request 里按 id 配对的 tool 消息） -->
             <div v-if="respToolCalls(card).length" class="sec toolcalls-section">
-              <div class="sec-label">工具调用 Tool Calls ({{ respToolCalls(card).length }})</div>
+              <div class="sec-label">
+                {{ $t('swimLane.toolCalls', { n: respToolCalls(card).length }) }}
+              </div>
               <div v-for="(tc, j) in respToolCalls(card)" :key="'tc' + j" class="toolcall">
                 <details class="toolcall-detail">
                   <summary class="toolcall-head">
                     <span class="chevron-sm" />
                     <span class="tool-icon">&#9881;</span>
                     <b class="tool-name" :title="tc.id">{{ toolNameOf(tc) }}</b>
-                    <span v-if="toolResultFor(card, tc)" class="badge badge-neutral">有结果</span>
+                    <span v-if="toolResultFor(card, tc)" class="badge badge-neutral">
+                      {{ $t('swimLane.hasResult') }}
+                    </span>
                   </summary>
                   <div class="toolcall-body">
                     <div v-if="argsOf(tc)">
-                      <div class="tl">参数 Arguments</div>
+                      <div class="tl">{{ $t('swimLane.arguments') }}</div>
                       <JsonView :data="argsOf(tc)" class="json" />
                     </div>
                     <div v-if="toolResultFor(card, tc)">
-                      <div class="tl">结果 Result</div>
+                      <div class="tl">{{ $t('swimLane.result') }}</div>
                       <div
                         v-if="looksTruncatedJson(toolResultFor(card, tc).content)"
                         class="warn"
-                      >⚠ 工具结果 JSON 被写入端截断，无法按结构折叠</div>
+                      >{{ $t('swimLane.resultTruncated') }}</div>
                       <pre
                         v-if="toolResultFor(card, tc).content && !isJson(toolResultFor(card, tc).content)"
                         class="text small"
@@ -94,7 +109,7 @@
                         :data="toolResultFor(card, tc).content"
                         class="json"
                       />
-                      <el-empty v-else-if="!toolResultFor(card, tc).content" description="空结果" :image-size="24" />
+                      <el-empty v-else-if="!toolResultFor(card, tc).content" :description="$t('swimLane.emptyResult')" :image-size="24" />
                     </div>
                   </div>
                 </details>
@@ -105,17 +120,19 @@
             <details v-if="requestMessages(card.it).length" class="reqd">
               <summary class="reqd-toggle">
                 <span class="chevron-sm" />
-                <span>请求消息（{{ requestMessages(card.it).length }} 条）</span>
+                <span>{{ $t('swimLane.requestMessages', { n: requestMessages(card.it).length }) }}</span>
               </summary>
               <div class="reqd-body">
                 <div v-for="(m, i) in requestMessages(card.it)" :key="'req' + i" class="msg">
                   <div class="msg-head">
                     <el-tag size="small" :type="roleTag(m.role)">{{ roleLabel(m.role) }}</el-tag>
                     <span v-if="m.name" class="muted name">{{ m.name }}</span>
-                    <span v-if="m.tool_calls?.length" class="muted">包含 {{ m.tool_calls.length }} 个工具调用（见上方工具调用）</span>
+                    <span v-if="m.tool_calls?.length" class="muted">
+                      {{ $t('swimLane.containsToolCalls', { n: m.tool_calls.length }) }}
+                    </span>
                   </div>
                   <div v-if="m.content && looksTruncatedJson(m.content)" class="warn">
-                    ⚠ 该请求内容是被旧版写入端切断的残缺 JSON，无法按结构折叠
+                    {{ $t('swimLane.requestTruncated') }}
                   </div>
                   <pre v-if="m.content && !isJson(m.content)" class="text small">{{ renderMessage(m) }}</pre>
                   <JsonView v-else-if="isJson(m.content)" :data="m.content" class="json" />
@@ -125,7 +142,7 @@
 
             <el-empty
               v-if="respContent(card) === null && !reasoningOf(card) && !respToolCalls(card).length"
-              description="无文本内容" :image-size="36"
+              :description="$t('swimLane.noContent')" :image-size="36"
             />
           </div>
         </article>
@@ -144,27 +161,30 @@
  * 组件无状态获取，数据由父组件懒加载后传入。
  */
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { ConversationItem } from '../api'
 import { formatTime } from '../utils/format'
 import JsonView from './JsonView.vue'
 
 const props = defineProps<{ items: ConversationItem[] }>()
+const { t, te } = useI18n()
 
-// 阶段元数据：中文标签 + el-tag 色 + 泳道色（同型任务同色）。
-const PHASES: Record<string, { label: string; tag: string; color: string }> = {
-  plan: { label: '规划', tag: 'primary', color: '#7c3aed' },
-  grouping: { label: '文件分组', tag: 'info', color: '#0891b2' },
-  main: { label: '主循环', tag: '', color: '#4f46e5' },
-  re_location: { label: '行号重锚', tag: 'info', color: '#ea580c' },
-  review_filter: { label: '复现核查', tag: 'warning', color: '#ca8a04' },
-  scoring: { label: '评分', tag: 'success', color: '#16a34a' },
-  compress: { label: '压缩', tag: 'info', color: '#8b949e' },
-  loop: { label: '后台循环', tag: '', color: '#64748b' },
+// 阶段元数据：el-tag 色 + 泳道色（同型任务同色）。标签文案在 enum.phase.* 里，别重复维护。
+const PHASES: Record<string, { tag: string; color: string }> = {
+  plan: { tag: 'primary', color: '#7c3aed' },
+  grouping: { tag: 'info', color: '#0891b2' },
+  main: { tag: '', color: '#4f46e5' },
+  re_location: { tag: 'info', color: '#ea580c' },
+  review_filter: { tag: 'warning', color: '#ca8a04' },
+  scoring: { tag: 'success', color: '#16a34a' },
+  compress: { tag: 'info', color: '#8b949e' },
+  loop: { tag: '', color: '#64748b' },
 }
 const PHASE_ORDER = Object.keys(PHASES)
 
 function phaseLabel(p: string): string {
-  return PHASES[p]?.label ?? p
+  // 后端若新增阶段，没有词条时回退显示原始值
+  return te(`enum.phase.${p}`) ? t(`enum.phase.${p}`) : p
 }
 function phaseTag(p: string): any {
   return PHASES[p]?.tag ?? 'info'
@@ -192,11 +212,7 @@ function renderMessage(m: any): string {
 }
 
 function roleLabel(r: string): string {
-  if (r === 'user') return '用户'
-  if (r === 'assistant') return '模型'
-  if (r === 'tool') return '工具结果'
-  if (r === 'system') return '系统'
-  return r || '未知'
+  return te(`swimLane.role.${r}`) ? t(`swimLane.role.${r}`) : r || t('swimLane.role.unknown')
 }
 function roleTag(r: string): any {
   if (r === 'user') return 'primary'

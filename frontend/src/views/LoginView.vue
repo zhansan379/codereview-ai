@@ -4,7 +4,7 @@
       <div class="login-brand">
         <AppLogo :size="40" />
       </div>
-      <h2 class="login-title">CodeReview AI 管理后台</h2>
+      <h2 class="login-title">{{ $t('menu.appTitle') }}</h2>
       <el-form
         ref="formRef"
         :model="form"
@@ -12,15 +12,15 @@
         label-position="top"
         @keyup.enter="onSubmit"
       >
-        <el-form-item label="用户名" prop="username">
-          <el-input v-model="form.username" placeholder="请输入用户名" />
+        <el-form-item :label="$t('login.username')" prop="username">
+          <el-input v-model="form.username" :placeholder="$t('login.usernamePlaceholder')" />
         </el-form-item>
-        <el-form-item label="密码" prop="password">
+        <el-form-item :label="$t('login.password')" prop="password">
           <el-input
             v-model="form.password"
             type="password"
             show-password
-            placeholder="请输入登录密码"
+            :placeholder="$t('login.passwordPlaceholder')"
           />
         </el-form-item>
         <el-button
@@ -29,7 +29,7 @@
           :loading="loading"
           @click="onSubmit"
         >
-          登录
+          {{ $t('login.submit') }}
         </el-button>
       </el-form>
     </el-card>
@@ -37,23 +37,26 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, type FormInstance } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
 import AppLogo from '../components/AppLogo.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
+const { t } = useI18n()
 
 const formRef = ref<FormInstance>()
 const form = reactive({ username: 'admin', password: '' })
 const loading = ref(false)
 
-const rules = {
-  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
-  password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
-}
+// computed 而非常量：切语言后校验提示也得跟着变
+const rules = computed(() => ({
+  username: [{ required: true, message: t('login.usernamePlaceholder'), trigger: 'blur' }],
+  password: [{ required: true, message: t('login.passwordPlaceholder'), trigger: 'blur' }],
+}))
 
 // 登录：调用 /auth/login，成功后跳转仪表盘
 async function onSubmit() {
@@ -62,10 +65,10 @@ async function onSubmit() {
     loading.value = true
     try {
       await auth.login(form.username, form.password)
-      ElMessage.success('登录成功')
+      ElMessage.success(t('login.success'))
       router.push('/dashboard')
     } catch (e: any) {
-      ElMessage.error(e?.response?.data?.detail || '登录失败，请重试')
+      ElMessage.error(e?.response?.data?.detail || t('login.failed'))
     } finally {
       loading.value = false
     }

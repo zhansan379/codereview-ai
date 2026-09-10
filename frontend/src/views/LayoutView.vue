@@ -12,43 +12,43 @@
       >
         <el-menu-item v-if="auth.hasPerm('stats:view')" index="/dashboard">
           <el-icon><DataBoard /></el-icon>
-          <span>仪表盘</span>
+          <span>{{ $t('menu.dashboard') }}</span>
         </el-menu-item>
         <el-menu-item v-if="auth.hasPerm('reviews:view')" index="/reviews">
           <el-icon><Document /></el-icon>
-          <span>审查记录</span>
+          <span>{{ $t('menu.reviews') }}</span>
         </el-menu-item>
         <el-menu-item v-if="auth.hasPerm('projects:view')" index="/projects">
           <el-icon><Folder /></el-icon>
-          <span>项目</span>
+          <span>{{ $t('menu.projects') }}</span>
         </el-menu-item>
         <el-menu-item v-if="auth.hasPerm('models:manage')" index="/models">
           <el-icon><Cpu /></el-icon>
-          <span>模型</span>
+          <span>{{ $t('menu.models') }}</span>
         </el-menu-item>
         <el-menu-item v-if="auth.hasPerm('notifiers:manage')" index="/notifiers">
           <el-icon><Bell /></el-icon>
-          <span>IM 通知</span>
+          <span>{{ $t('menu.notifiers') }}</span>
         </el-menu-item>
         <el-menu-item v-if="auth.hasPerm('schedules:manage')" index="/schedules">
           <el-icon><Timer /></el-icon>
-          <span>定时任务</span>
+          <span>{{ $t('menu.schedules') }}</span>
         </el-menu-item>
         <el-menu-item v-if="auth.hasPerm('caches:manage')" index="/clone-caches">
           <el-icon><Box /></el-icon>
-          <span>拉取缓存</span>
+          <span>{{ $t('menu.caches') }}</span>
         </el-menu-item>
         <el-menu-item v-if="auth.hasPerm('settings:manage')" index="/settings">
           <el-icon><Setting /></el-icon>
-          <span>设置</span>
+          <span>{{ $t('menu.settings') }}</span>
         </el-menu-item>
         <el-menu-item v-if="auth.hasPerm('users:manage')" index="/users">
           <el-icon><User /></el-icon>
-          <span>用户</span>
+          <span>{{ $t('menu.users') }}</span>
         </el-menu-item>
         <el-menu-item v-if="auth.hasPerm('roles:manage')" index="/roles">
           <el-icon><Key /></el-icon>
-          <span>角色</span>
+          <span>{{ $t('menu.roles') }}</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -70,17 +70,28 @@
             class="dark-switch"
             :active-action-icon="Moon"
             :inactive-action-icon="Sunny"
-            :aria-label="isDark ? '切换到亮色模式' : '切换到暗色模式'"
+            :aria-label="isDark ? $t('menu.toLight') : $t('menu.toDark')"
           />
+          <!-- 语言切换：@element-plus/icons-vue 里没有地球/语言类图标，用文字标识 -->
+          <el-dropdown trigger="click" @command="setLocale">
+            <span class="lang-chip" :title="$t('menu.language')">
+              {{ locale === 'en' ? 'EN' : '中' }}
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="zh-CN" :disabled="locale === 'zh-CN'">中文</el-dropdown-item>
+                <el-dropdown-item command="en" :disabled="locale === 'en'">English</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <el-dropdown>
             <span class="user-chip">
-              <el-icon><UserFilled /></el-icon>
-              {{ auth.user?.display_name || auth.user?.username || '用户' }}
+              {{ auth.user?.display_name || auth.user?.username || $t('menu.user') }}
               <span class="role-tag">{{ auth.role }}</span>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item @click="onLogout">退出登录</el-dropdown-item>
+                <el-dropdown-item @click="onLogout">{{ $t('menu.logout') }}</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -96,6 +107,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import {
   DataBoard,
   Document,
@@ -107,21 +119,24 @@ import {
   Box,
   User,
   Key,
-  UserFilled,
   Moon,
   Sunny,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 import { useDark } from '../composables/useDark'
+import { useLocale } from '../composables/useLocale'
 import AppLogo from '../components/AppLogo.vue'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const { isDark } = useDark()
+const { locale, setLocale } = useLocale()
+const { t } = useI18n()
 
-// 面包屑：从当前路由的 meta.title 出发，顺着 meta.parent 往上串出层级
+// 面包屑：从当前路由的 meta.titleKey 出发，顺着 meta.parent 往上串出层级
 // （路由表是平铺的，route.matched 只有 layout+叶子，串不出 审查记录 > 审查详情）。
+// t() 在 computed 里调用，切语言会自动重算，不用额外接线。
 const crumbs = computed(() => {
   const out: { name: string; title: string }[] = []
   const seen = new Set<string>()
@@ -129,9 +144,9 @@ const crumbs = computed(() => {
   while (name && !seen.has(name)) {
     seen.add(name)
     const r = router.getRoutes().find((x) => x.name === name)
-    const title = r?.meta?.title as string | undefined
-    if (!title) break
-    out.unshift({ name, title })
+    const titleKey = r?.meta?.titleKey as string | undefined
+    if (!titleKey) break
+    out.unshift({ name, title: t(titleKey) })
     name = r?.meta?.parent as string | undefined
   }
   return out
@@ -206,6 +221,26 @@ function onLogout() {
   gap: 6px;
   cursor: pointer;
   color: var(--el-text-color-primary);
+}
+/* 语言标识：与暗色开关同高的小方块，宽度固定，中/EN 切换时顶栏不抖 */
+.lang-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 22px;
+  padding: 0 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-regular);
+  background: var(--el-bg-color-page);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 4px;
+}
+.lang-chip:hover {
+  color: var(--el-color-primary);
+  border-color: var(--el-color-primary);
 }
 .role-tag {
   font-size: 12px;
