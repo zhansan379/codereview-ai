@@ -20,6 +20,13 @@
 
 一个部署在你自己机器上的代码审查服务。在 GitHub 或 GitLab 挂一个 webhook，之后每一个打开或更新的 PR / MR 都会被自动审查，意见以行级 inline 评论写回改动所在的那一行，同时推送到钉钉 / 飞书 / 企微。webhook 万一漏了事件，或者项目刚接入时已经有一批 PR 开着，后台可以主动补拉一轮把它们捞回来。配置、模型、项目、权限、统计都在自带的 Vue 管理后台里。
 
+<img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/173bc789-b4a7-4a92-bcbe-e2d9a1ff8a9a" />
+
+<img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/4b8a42f2-9348-4bfa-87ad-a32133c5e77f" />
+
+<img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/2bbc929b-1cb4-4914-8660-89a44d74007c" />
+
+
 ## 为什么需要它
 
 做审查的方式上，它站在"确定性的工程 × 会翻仓库的 agent"这一档：**凡是能被工程确定性解决的问题，绝不让模型赌**。行号由引擎按代码片段纯字符串匹配钉出，模型报的行号伤不到评论位置；文件分组按硬上限切开、LLM 只做闭卷的分组判断；agent 探一圈仓库，出任何岔子整条退回 diff，绝不把 agent 的失败记成任务失败。
