@@ -276,7 +276,11 @@ async def refresh(
         select(AuthSession).where(AuthSession.id == sid)
     )).scalar_one_or_none()
     # SQLite 读回 timezone 列是 naive（不保 tz），故以 naive UTC 比较
-    if row is None or row.revoked_at is not None or row.expires_at <= datetime.now(UTC).replace(tzinfo=None):
+    if (
+        row is None
+        or row.revoked_at is not None
+        or row.expires_at <= datetime.now(UTC).replace(tzinfo=None)
+    ):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "刷新令牌已失效")
     if hash_token(rand) != row.refresh_hash:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "刷新令牌已失效")
@@ -413,7 +417,10 @@ async def register(
                  "exp": datetime.now(UTC) + timedelta(seconds=EMAIL_VERIFY_TTL_SECONDS)},
                 secret, algorithm="HS256",
             )
-            send_verification_email(settings, to_email=email, username=username, token=token)
+            send_verification_email(
+                settings, to_email=email, username=username, token=token,
+                base_url=getattr(settings, "web_base_url", ""),
+            )
 
     return RegisterResponse(
         user=UserOut(

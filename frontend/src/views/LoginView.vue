@@ -38,6 +38,10 @@
         >
           登录
         </el-button>
+        <div class="login-footer">
+          还没有账号？
+          <router-link to="/register">立即注册</router-link>
+        </div>
       </el-form>
     </el-card>
   </div>
@@ -116,6 +120,16 @@ async function onSubmit() {
 }
 .login-btn {
   width: 100%;
+}
+.login-footer {
+  margin-top: 14px;
+  text-align: center;
+  color: #606266;
+  font-size: 14px;
+}
+.login-footer a {
+  color: #409eff;
+  text-decoration: none;
 }
 .captcha-row {
   display: flex;
