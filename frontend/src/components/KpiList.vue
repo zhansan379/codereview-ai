@@ -8,7 +8,7 @@
         <span class="dot" :style="{ background: r.color }"></span>{{ r.label }}
       </div>
     </div>
-    <div v-if="!rows.length" class="empty">暂无数据</div>
+    <div v-if="!rows.length" class="empty">{{ $t('common.empty') }}</div>
   </div>
 </template>
 

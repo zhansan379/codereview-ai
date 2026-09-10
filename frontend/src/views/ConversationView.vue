@@ -1,18 +1,18 @@
 <template>
   <div>
-    <el-page-header @back="$router.back()" :content="`原始对话 #${id}`" />
+    <el-page-header @back="$router.back()" :content="$t('conversation.pageTitle', { id })" />
 
     <div v-loading="loading" class="body">
       <el-empty
         v-if="!loading && items.length === 0"
-        description="该任务无原始 LLM 对话（仅 agentic 多轮采集 plan/main/re_location/review_filter/scoring/compress；diff 轨不采集）"
+        :description="$t('conversation.emptyDesc')"
       />
       <SwimLaneConversation v-else :items="items" />
     </div>
 
     <div v-if="hasMore && !loading" class="more">
       <el-button :loading="loadingMore" @click="loadMore">
-        加载更多（已显示 {{ items.length }} / {{ total }}）
+        {{ $t('conversation.loadMore', { shown: items.length, total }) }}
       </el-button>
     </div>
   </div>

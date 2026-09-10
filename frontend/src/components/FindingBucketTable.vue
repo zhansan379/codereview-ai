@@ -21,10 +21,10 @@ function sevTag(s: string): string {
   <table v-else class="bucket-table">
     <thead>
       <tr>
-        <th class="sev">严重度</th>
-        <th class="file">文件</th>
-        <th class="line">行</th>
-        <th class="cnt">问题内容</th>
+        <th class="sev">{{ $t('findingBucket.col.severity') }}</th>
+        <th class="file">{{ $t('findingBucket.col.file') }}</th>
+        <th class="line">{{ $t('findingBucket.col.line') }}</th>
+        <th class="cnt">{{ $t('findingBucket.col.content') }}</th>
       </tr>
     </thead>
     <tbody>

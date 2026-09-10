@@ -2,69 +2,69 @@
   <div>
     <el-card>
       <div class="toolbar">
-        <el-button type="primary" @click="openCreate">新增定时任务</el-button>
-        <el-button @click="load">刷新</el-button>
+        <el-button type="primary" @click="openCreate">{{ $t('schedules.create') }}</el-button>
+        <el-button @click="load">{{ $t('common.refresh') }}</el-button>
         <span v-if="!workerActive" class="hint">
-          运行器未启动（未配齐 LLM/平台），配置将落库，待运行器就绪后按计划生效。
+          {{ $t('schedules.workerInactive') }}
         </span>
       </div>
       <el-table :data="items" v-loading="loading" stripe>
         <el-table-column prop="id" label="ID" width="70" />
-        <el-table-column prop="name" label="任务名" min-width="140" />
-        <el-table-column label="类型" width="120">
+        <el-table-column prop="name" :label="$t('schedules.jobName')" min-width="140" />
+        <el-table-column :label="$t('schedules.jobType')" width="120">
           <template #default="{ row }">
             <el-tag>{{ typeLabel(row.job_type) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="参数" min-width="150">
+        <el-table-column :label="$t('schedules.params')" min-width="150">
           <template #default="{ row }">
             {{ paramText(row) }}
           </template>
         </el-table-column>
-        <el-table-column label="启用" width="80">
+        <el-table-column :label="$t('common.enabled')" width="80">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'">
-              {{ row.enabled ? '是' : '否' }}
+              {{ row.enabled ? $t('common.yes') : $t('common.no') }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="210" fixed="right">
+        <el-table-column :label="$t('common.actions')" width="210" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="onRun(row)">立即执行</el-button>
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+            <el-button link type="primary" @click="onRun(row)">{{ $t('schedules.runNow') }}</el-button>
+            <el-button link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
+            <el-button link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑定时任务' : '新增定时任务'" width="560px">
+    <el-dialog v-model="dialogVisible" :title="isEdit ? $t('schedules.editTitle') : $t('schedules.create')" width="560px">
       <el-form :model="form" label-width="110px">
-        <el-form-item label="任务名" required>
-          <el-input v-model="form.name" placeholder="如：每周一轮 GitHub 补拉" />
+        <el-form-item :label="$t('schedules.jobName')" required>
+          <el-input v-model="form.name" :placeholder="$t('schedules.namePlaceholder')" />
         </el-form-item>
-        <el-form-item label="类型" required>
+        <el-form-item :label="$t('schedules.jobType')" required>
           <el-select v-model="form.job_type" :disabled="isEdit" style="width: 100%">
-            <el-option label="主动补拉轮询 poll" value="poll" />
-            <el-option label="日报 daily" value="daily" />
+            <el-option :label="$t('schedules.typePoll')" value="poll" />
+            <el-option :label="$t('schedules.typeDaily')" value="daily" />
           </el-select>
-          <div class="form-tip">任务类型创建后不可修改。</div>
+          <div class="form-tip">{{ $t('schedules.typeFixed') }}</div>
         </el-form-item>
-        <el-form-item v-if="form.job_type === 'poll'" label="间隔(秒)" required>
+        <el-form-item v-if="form.job_type === 'poll'" :label="$t('schedules.interval')" required>
           <el-input-number v-model="form.interval_seconds" :min="1" :step="60" />
-          <div class="form-tip">每隔该秒数扫一次启用项目的打开 PR/MR，仅新 head 才审。</div>
+          <div class="form-tip">{{ $t('schedules.intervalTip') }}</div>
         </el-form-item>
-        <el-form-item v-else label="时刻(时)" required>
+        <el-form-item v-else :label="$t('schedules.hour')" required>
           <el-input-number v-model="form.hour" :min="0" :max="23" />
-          <div class="form-tip">每日此时推送代码审查日报（本地时区，0–23）。</div>
+          <div class="form-tip">{{ $t('schedules.hourTip') }}</div>
         </el-form-item>
-        <el-form-item label="启用">
+        <el-form-item :label="$t('common.enabled')">
           <el-switch v-model="form.enabled" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
+        <el-button @click="dialogVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="saving" @click="onSave">{{ $t('common.save') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -72,6 +72,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   listSchedules,
@@ -82,6 +83,8 @@ import {
   type ScheduleJob,
 } from '../api'
 
+const { t, te } = useI18n()
+
 const items = ref<ScheduleJob[]>([])
 const workerActive = ref(true)
 const loading = ref(false)
@@ -90,12 +93,13 @@ const dialogVisible = ref(false)
 const isEdit = ref(false)
 const editingId = ref<number | null>(null)
 
-const typeLabels: Record<string, string> = { poll: '主动补拉轮询', daily: '日报' }
-const typeLabel = (t: string) => typeLabels[t] || t
+// 后端若新增 job_type，没有词条时回退显示原始值
+const typeLabel = (jobType: string) =>
+  te(`schedules.type.${jobType}`) ? t(`schedules.type.${jobType}`) : jobType
 
 const paramText = (row: ScheduleJob): string => {
-  if (row.job_type === 'poll') return `每 ${row.params?.interval_seconds ?? '-'} 秒一轮`
-  if (row.job_type === 'daily') return `每日 ${row.params?.hour ?? '-'} 点`
+  if (row.job_type === 'poll') return t('schedules.paramPoll', { n: row.params?.interval_seconds ?? '-' })
+  if (row.job_type === 'daily') return t('schedules.paramDaily', { n: row.params?.hour ?? '-' })
   return ''
 }
 
@@ -152,7 +156,7 @@ function payload() {
 
 async function onSave() {
   if (!form.name.trim()) {
-    ElMessage.warning('请输入任务名')
+    ElMessage.warning(t('schedules.nameRequired'))
     return
   }
   saving.value = true
@@ -162,11 +166,11 @@ async function onSave() {
     } else {
       await createSchedule(payload())
     }
-    ElMessage.success('已保存并热更生效')
+    ElMessage.success(t('schedules.savedAndApplied'))
     dialogVisible.value = false
     load()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '保存失败')
+    ElMessage.error(e?.response?.data?.detail || t('common.saveFailed'))
   } finally {
     saving.value = false
   }
@@ -175,16 +179,18 @@ async function onSave() {
 async function onRun(row: ScheduleJob) {
   try {
     await runSchedule(row.id)
-    ElMessage.success(`已在后台触发「${row.name}」一次`)
+    ElMessage.success(t('schedules.triggered', { name: row.name }))
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '触发失败')
+    ElMessage.error(e?.response?.data?.detail || t('schedules.triggerFailed'))
   }
 }
 
 async function onDelete(row: ScheduleJob) {
-  await ElMessageBox.confirm(`确认删除定时任务「${row.name}」？`, '提示', { type: 'warning' })
+  await ElMessageBox.confirm(t('schedules.deleteConfirm', { name: row.name }), t('common.tip'), {
+    type: 'warning',
+  })
   await deleteSchedule(row.id)
-  ElMessage.success('已删除')
+  ElMessage.success(t('common.deleted'))
   load()
 }
 

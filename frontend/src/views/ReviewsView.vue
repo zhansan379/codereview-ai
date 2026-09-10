@@ -4,34 +4,36 @@
     <el-card class="filter-card">
       <template #header>
         <div class="card-head">
-          <span class="card-title">筛选条件</span>
+          <span class="card-title">{{ $t('reviews.filterTitle') }}</span>
           <span class="card-actions">
-            <el-button @click="onFilterChange">刷新</el-button>
+            <el-button @click="onFilterChange">{{ $t('common.refresh') }}</el-button>
             <el-button type="success" :icon="Download" @click="openExport">
-              导出 Excel
+              {{ $t('reviews.exportExcel') }}
             </el-button>
           </span>
         </div>
       </template>
       <el-form inline class="filter-form" @submit.prevent>
-        <el-form-item label="状态">
+        <el-form-item :label="$t('common.status')">
           <el-select
             v-model="query.state"
-            placeholder="全部状态"
+            :placeholder="$t('reviews.allStates')"
             clearable
             style="width: 160px"
             @change="onFilterChange"
           >
-            <el-option label="排队中" value="queued" />
-            <el-option label="审查成功" value="completed" />
-            <el-option label="已跳过" value="skipped" />
-            <el-option label="失败" value="failed" />
+            <el-option
+              v-for="o in stateOptions"
+              :key="o.value"
+              :label="o.label"
+              :value="o.value"
+            />
           </el-select>
         </el-form-item>
-        <el-form-item label="平台">
+        <el-form-item :label="$t('reviews.provider')">
           <el-select
             v-model="query.provider"
-            placeholder="全部平台"
+            :placeholder="$t('reviews.allProviders')"
             clearable
             filterable
             allow-create
@@ -42,10 +44,10 @@
             <el-option v-for="p in providerOptions" :key="p" :label="p" :value="p" />
           </el-select>
         </el-form-item>
-        <el-form-item label="事件类型">
+        <el-form-item :label="$t('reviews.eventType')">
           <el-select
             v-model="query.event_type"
-            placeholder="全部类型"
+            :placeholder="$t('reviews.allEventTypes')"
             clearable
             style="width: 130px"
             @change="onFilterChange"
@@ -55,13 +57,13 @@
             <el-option label="Push" value="push" />
           </el-select>
         </el-form-item>
-        <el-form-item label="评分">
+        <el-form-item :label="$t('reviews.score')">
           <el-input-number
             v-model="query.score_min"
             :min="0"
             :max="100"
             :controls="false"
-            placeholder="最低分"
+            :placeholder="$t('reviews.scoreMin')"
             style="width: 90px"
             @change="onFilterChange"
           />
@@ -71,18 +73,18 @@
             :min="0"
             :max="100"
             :controls="false"
-            placeholder="最高分"
+            :placeholder="$t('reviews.scoreMax')"
             style="width: 90px"
             @change="onFilterChange"
           />
         </el-form-item>
-        <el-form-item label="完成时间">
+        <el-form-item :label="$t('reviews.finishedAt')">
           <el-date-picker
             v-model="query.dateRange"
             type="daterange"
             range-separator="~"
-            start-placeholder="开始"
-            end-placeholder="结束"
+            :start-placeholder="$t('reviews.dateStart')"
+            :end-placeholder="$t('reviews.dateEnd')"
             value-format="YYYY-MM-DD"
             format="YYYY-MM-DD"
             unlink-panels
@@ -96,52 +98,54 @@
     <!-- Excel 导出：范围(当前筛选) + 问题过滤(严重度/状态) -->
     <el-dialog
       v-model="exportVisible"
-      title="导出问题明细"
+      :title="$t('reviews.exportTitle')"
       width="480px"
       :close-on-click-modal="false"
       append-to-body
     >
       <el-form label-width="90px">
-        <el-form-item label="导出范围">
+        <el-form-item :label="$t('reviews.exportScope')">
           <span class="export-scope">
-            当前筛选命中的全部评审的问题明细
+            {{ $t('reviews.exportScopeText') }}
             <el-tag v-if="query.state" size="small" type="info">{{ stateText }}</el-tag>
           </span>
         </el-form-item>
-        <el-form-item label="严重度">
+        <el-form-item :label="$t('reviews.severity')">
           <el-select
             v-model="exportForm.severities"
             multiple
             collapse-tags
             collapse-tags-tooltip
             clearable
-            placeholder="全部严重度"
+            :placeholder="$t('reviews.allSeverities')"
             style="width: 100%"
           >
             <el-option v-for="o in severityOptions" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
         </el-form-item>
-        <el-form-item label="状态">
+        <el-form-item :label="$t('common.status')">
           <el-select
             v-model="exportForm.statuses"
             multiple
             collapse-tags
             collapse-tags-tooltip
             clearable
-            placeholder="全部状态"
+            :placeholder="$t('reviews.allStates')"
             style="width: 100%"
           >
             <el-option v-for="o in statusOptions" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
         </el-form-item>
-        <el-form-item label="导出内容">
-          <span class="export-scope">每条问题一行，含所属评审信息（PR号/仓库/分支）及</span>
-          <span class="export-scope">问题标题、详细分析、原代码、建议修复。</span>
+        <el-form-item :label="$t('reviews.exportContent')">
+          <span class="export-scope">{{ $t('reviews.exportContentLine1') }}</span>
+          <span class="export-scope">{{ $t('reviews.exportContentLine2') }}</span>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="exportVisible = false">取消</el-button>
-        <el-button type="primary" :loading="exporting" @click="doExport">导出</el-button>
+        <el-button @click="exportVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="exporting" @click="doExport">
+          {{ $t('reviews.exportSubmit') }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -180,6 +184,7 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import {
   listReviews,
@@ -194,6 +199,7 @@ import ReviewsTable from '../components/ReviewsTable.vue'
 
 const router = useRouter()
 const route = useRoute()
+const { t } = useI18n()
 
 const items = ref<ReviewItem[]>([])
 const total = ref(0)
@@ -230,24 +236,27 @@ const exportForm = reactive<{ severities: string[]; statuses: string[] }>({
   statuses: [],
 })
 // 与后端 Severity 枚举一致：仅 critical/high/medium/low 四档（error/warning/info 从不入库）。
-const severityOptions = [
-  { value: 'critical', label: '严重' },
-  { value: 'high', label: '高' },
-  { value: 'medium', label: '中' },
-  { value: 'low', label: '低' },
-]
-const statusOptions = [
-  { value: 'active', label: '待处理' },
-  { value: 'resolved', label: '已解决' },
-]
-const stateOptions: Record<string, string> = {
-  queued: '排队中',
-  completed: '审查成功',
-  skipped: '已跳过',
-  failed: '失败',
-}
-const stateText = computed(() =>
-  query.state ? stateOptions[query.state] || query.state : '',
+// computed 而非常量：这些数组直接喂给 el-select，切语言后选项文案必须跟着变。
+const severityOptions = computed(() =>
+  (['critical', 'high', 'medium', 'low'] as const).map((v) => ({
+    value: v,
+    label: t(`enum.severity.${v}`),
+  })),
+)
+const statusOptions = computed(() =>
+  (['active', 'resolved'] as const).map((v) => ({
+    value: v,
+    label: t(`enum.findingStatus.${v}`),
+  })),
+)
+const stateOptions = computed(() =>
+  (['queued', 'completed', 'skipped', 'failed'] as const).map((v) => ({
+    value: v,
+    label: t(`enum.state.${v}`),
+  })),
+)
+const stateText = computed(
+  () => stateOptions.value.find((o) => o.value === query.state)?.label || query.state,
 )
 
 function openExport() {
@@ -319,15 +328,15 @@ async function doExport() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `评审问题导出_${ts()}.xlsx`
+    a.download = `${t('reviews.exportFileName')}_${ts()}.xlsx`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
     exportVisible.value = false
-    ElMessage.success('导出成功')
+    ElMessage.success(t('reviews.exportSuccess'))
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '导出失败')
+    ElMessage.error(e?.response?.data?.detail || t('reviews.exportFailed'))
   } finally {
     exporting.value = false
   }
@@ -374,10 +383,10 @@ async function onRetry(row: ReviewItem) {
   retryingId.value = row.id
   try {
     await retryTask(row.id)
-    ElMessage.success('已提交重试')
+    ElMessage.success(t('reviews.retrySubmitted'))
     load()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '重试失败')
+    ElMessage.error(e?.response?.data?.detail || t('reviews.retryFailed'))
   } finally {
     retryingId.value = null
   }
@@ -389,10 +398,10 @@ async function onRedeliver(row: ReviewItem) {
   redeliveringId.value = row.id
   try {
     await redeliverTask(row.id)
-    ElMessage.success('已发起重新发送，稍后刷新查看结果')
+    ElMessage.success(t('reviews.redelivered'))
     load() // 刷新一下，防用户连续点击
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '重新发送失败')
+    ElMessage.error(e?.response?.data?.detail || t('reviews.redeliverFailed'))
   } finally {
     redeliveringId.value = null
   }
@@ -401,7 +410,7 @@ async function onRedeliver(row: ReviewItem) {
 // 删除审查记录（含 findings 级联）：确认后删除并刷新；删空末页回退一页。
 async function onDelete(id: number) {
   try {
-    await ElMessageBox.confirm(`确认删除审查记录 #${id}（其问题列表将一并删除）？`, '提示', {
+    await ElMessageBox.confirm(t('reviews.deleteConfirm', { id }), t('common.tip'), {
       type: 'warning',
     })
   } catch {
@@ -409,14 +418,14 @@ async function onDelete(id: number) {
   }
   try {
     await deleteReview(id)
-    ElMessage.success('已删除')
+    ElMessage.success(t('common.deleted'))
     if (items.value.length === 1 && query.offset > 0) {
       query.offset -= query.limit
       syncUrl()
     }
     load()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '删除失败')
+    ElMessage.error(e?.response?.data?.detail || t('common.deleteFailed'))
   }
 }
 

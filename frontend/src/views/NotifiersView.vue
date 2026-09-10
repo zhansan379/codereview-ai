@@ -2,58 +2,58 @@
   <div>
     <el-card>
       <div class="toolbar">
-        <el-button type="primary" @click="openCreate">新增通知渠道</el-button>
-        <el-button @click="openMemberManager">@成员管理</el-button>
+        <el-button type="primary" @click="openCreate">{{ $t('notifiers.createBtn') }}</el-button>
+        <el-button @click="openMemberManager">{{ $t('notifiers.memberManagerBtn') }}</el-button>
       </div>
       <el-table :data="items" v-loading="loading" stripe>
-        <el-table-column prop="id" label="ID" width="70" />
-        <el-table-column label="渠道" width="120">
+        <el-table-column prop="id" :label="$t('common.id')" width="70" />
+        <el-table-column :label="$t('notifiers.columns.channel')" width="120">
           <template #default="{ row }">
             <el-tag>{{ row.channel }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="project_id" label="项目(ID)" width="110">
+        <el-table-column prop="project_id" :label="$t('notifiers.columns.project')" width="110">
           <template #default="{ row }">
-            {{ row.project_id === null ? '全局' : row.project_id }}
+            {{ row.project_id === null ? $t('notifiers.columns.global') : row.project_id }}
           </template>
         </el-table-column>
-        <el-table-column prop="at_threshold" label="@阈值" width="90" />
-        <el-table-column label="@所有人" width="100">
+        <el-table-column prop="at_threshold" :label="$t('notifiers.columns.atThreshold')" width="90" />
+        <el-table-column :label="$t('notifiers.columns.atAll')" width="100">
           <template #default="{ row }">
             <el-tag :type="row.at_all ? 'warning' : 'info'">
-              {{ row.at_all ? '是' : '否' }}
+              {{ row.at_all ? $t('common.yes') : $t('common.no') }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="启用" width="80">
+        <el-table-column :label="$t('notifiers.columns.enabled')" width="80">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'">
-              {{ row.enabled ? '是' : '否' }}
+              {{ row.enabled ? $t('common.yes') : $t('common.no') }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="webhook" label="Webhook" min-width="160" show-overflow-tooltip />
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column :label="$t('common.actions')" width="160" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+            <el-button link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
+            <el-button link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑通知渠道' : '新增通知渠道'" width="560px">
+    <el-dialog v-model="dialogVisible" :title="isEdit ? $t('notifiers.dialog.editTitle') : $t('notifiers.dialog.createTitle')" width="560px">
       <el-form :model="form" label-width="110px">
-        <el-form-item label="渠道" required>
+        <el-form-item :label="$t('notifiers.form.channel')" required>
           <el-select
             v-model="form.channel"
             :disabled="isEdit"
             style="width: 100%"
             @change="onChannelChange"
           >
-            <el-option label="钉钉 dingtalk" value="dingtalk" />
-            <el-option label="飞书 feishu" value="feishu" />
-            <el-option label="企业微信 wecom" value="wecom" />
+            <el-option :label="$t('notifiers.form.channelDingtalk')" value="dingtalk" />
+            <el-option :label="$t('notifiers.form.channelFeishu')" value="feishu" />
+            <el-option :label="$t('notifiers.form.channelWecom')" value="wecom" />
           </el-select>
         </el-form-item>
         <el-form-item label="Webhook" required>
@@ -61,30 +61,30 @@
             v-model="form.webhook"
             type="password"
             show-password
-            :placeholder="isEdit ? '留空或填 ****** 表示不修改' : '请输入 Webhook 地址'"
+            :placeholder="isEdit ? $t('notifiers.form.webhookKeepPlaceholder') : $t('notifiers.form.webhookPlaceholder')"
           />
-          <div class="form-tip" v-if="isEdit">读回为 ****** 表示保留原值。</div>
+          <div class="form-tip" v-if="isEdit">{{ $t('notifiers.form.redactedTip') }}</div>
         </el-form-item>
         <el-form-item v-if="form.channel !== 'wecom'" label="Secret" required>
           <el-input
             v-model="form.secret"
             type="password"
             show-password
-            :placeholder="isEdit ? '留空或填 ****** 表示不修改' : '请输入 Secret'"
+            :placeholder="isEdit ? $t('notifiers.form.webhookKeepPlaceholder') : $t('notifiers.form.secretPlaceholder')"
           />
-          <div class="form-tip" v-if="isEdit">读回为 ****** 表示保留原值。</div>
-          <div class="form-tip" v-else>钉钉/飞书可用加签；企业微信无签名机制，不填。</div>
+          <div class="form-tip" v-if="isEdit">{{ $t('notifiers.form.redactedTip') }}</div>
+          <div class="form-tip" v-else>{{ $t('notifiers.form.secretTip') }}</div>
         </el-form-item>
-        <el-form-item label="项目">
+        <el-form-item :label="$t('notifiers.form.project')">
           <el-select
             v-model="form.project_id"
             clearable
             :value-on-clear="null"
-            :placeholder="projects.length ? '请选择项目' : '暂无项目'"
+            :placeholder="projects.length ? $t('notifiers.form.projectPlaceholder') : $t('notifiers.form.projectEmptyPlaceholder')"
             :loading="projectsLoading"
             style="width: 100%"
           >
-            <el-option label="全局（应用到全部项目）" :value="null" />
+            <el-option :label="$t('notifiers.form.projectGlobalOption')" :value="null" />
             <el-option
               v-for="p in projects"
               :key="p.id"
@@ -92,82 +92,82 @@
               :value="p.id"
             />
           </el-select>
-          <div class="form-tip">不选则应用到全部项目（全局）。</div>
+          <div class="form-tip">{{ $t('notifiers.form.projectTip') }}</div>
         </el-form-item>
-        <el-form-item label="@阈值">
+        <el-form-item :label="$t('notifiers.form.atThreshold')">
           <el-input-number v-model="form.at_threshold" :min="0" />
-          <div class="form-tip">评分低于此阈值才触发 @；达标则不 @，避免打扰。</div>
+          <div class="form-tip">{{ $t('notifiers.form.atThresholdTip') }}</div>
         </el-form-item>
-        <el-form-item label="@所有人">
+        <el-form-item :label="$t('notifiers.form.atAll')">
           <el-switch v-model="form.at_all" />
-          <div class="form-tip">评分低于阈值时额外 @群内全员（各平台原生 @all）。会打扰每个人，慎开。</div>
+          <div class="form-tip">{{ $t('notifiers.form.atAllTip') }}</div>
         </el-form-item>
-        <el-form-item label="指定成员">
+        <el-form-item :label="$t('notifiers.form.atMembers')">
           <el-select v-model="form.at_member_ids" multiple filterable style="width: 100%"
-            :placeholder="members.length ? '选择该渠道要 @ 的人（评分低于阈值时触发）' : '请先在「@成员管理」添加'">
+            :placeholder="members.length ? $t('notifiers.form.atMembersPlaceholder') : $t('notifiers.form.atMembersEmptyPlaceholder')">
             <el-option v-for="m in members" :key="m.id" :value="m.id" :label="memberLabel(m)">
-              <span>{{ m.name || m.git_username || '成员 #' + m.id }}</span>
+              <span>{{ m.name || m.git_username || $t('notifiers.members.fallbackLabel', { id: m.id }) }}</span>
               <el-tag size="small" type="info" class="member-tag">{{ m.dingtalk_mobile || '—' }} / {{ m.wecom_userid || '—' }} / {{ m.feishu_open_id || '—' }}</el-tag>
             </el-option>
           </el-select>
-          <div class="form-tip">评分低于阈值时才 @ 这些成员 + @提交者；fork 用户名只作正文点名，不进 @ID。</div>
+          <div class="form-tip">{{ $t('notifiers.form.atMembersTip') }}</div>
         </el-form-item>
-        <el-form-item label="启用">
+        <el-form-item :label="$t('notifiers.form.enabled')">
           <el-switch v-model="form.enabled" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
+        <el-button @click="dialogVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="saving" @click="onSave">{{ $t('common.save') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 系统级 @成员管理（表格内联编辑：点行内「编辑」该行变输入框；新增即追加一草稿行） -->
-    <el-dialog v-model="memberDialogVisible" title="系统级 @成员管理" width="880px">
+    <el-dialog v-model="memberDialogVisible" :title="$t('notifiers.members.title')" width="880px">
       <div class="toolbar">
-        <el-button type="primary" @click="addMember">新增成员</el-button>
+        <el-button type="primary" @click="addMember">{{ $t('notifiers.members.addBtn') }}</el-button>
       </div>
       <el-table :data="displayMembers" v-loading="membersLoading" stripe
-        :empty-text="members.length || newRowDraft ? ' ' : '暂无成员'">
-        <el-table-column label="姓名" width="120">
+        :empty-text="members.length || newRowDraft ? ' ' : $t('notifiers.members.empty')">
+        <el-table-column :label="$t('notifiers.members.name')" width="120">
           <template #default="{ row }">
-            <el-input v-if="memberEditingId === row.id" v-model="memberForm.name" placeholder="展示名，可空" size="small" clearable style="width: 100%" />
+            <el-input v-if="memberEditingId === row.id" v-model="memberForm.name" :placeholder="$t('notifiers.members.namePlaceholder')" size="small" clearable style="width: 100%" />
             <template v-else>{{ row.name || '—' }}</template>
           </template>
         </el-table-column>
-        <el-table-column label="fork用户名" width="150">
+        <el-table-column :label="$t('notifiers.members.gitUsername')" width="150">
           <template #default="{ row }">
-            <el-input v-if="memberEditingId === row.id" v-model="memberForm.git_username" placeholder="提交者 @ 命中键" size="small" clearable style="width: 100%" />
+            <el-input v-if="memberEditingId === row.id" v-model="memberForm.git_username" :placeholder="$t('notifiers.members.gitUsernamePlaceholder')" size="small" clearable style="width: 100%" />
             <template v-else>{{ row.git_username || '—' }}</template>
           </template>
         </el-table-column>
-        <el-table-column label="钉钉手机号" width="140">
+        <el-table-column :label="$t('notifiers.members.dingtalkMobile')" width="140">
           <template #default="{ row }">
-            <el-input v-if="memberEditingId === row.id" v-model="memberForm.dingtalk_mobile" placeholder="钉钉 @ 用" size="small" clearable style="width: 100%" />
+            <el-input v-if="memberEditingId === row.id" v-model="memberForm.dingtalk_mobile" :placeholder="$t('notifiers.members.dingtalkMobilePlaceholder')" size="small" clearable style="width: 100%" />
             <template v-else>{{ row.dingtalk_mobile || '—' }}</template>
           </template>
         </el-table-column>
-        <el-table-column label="企微userid" min-width="120">
+        <el-table-column :label="$t('notifiers.members.wecomUserid')" min-width="120">
           <template #default="{ row }">
-            <el-input v-if="memberEditingId === row.id" v-model="memberForm.wecom_userid" placeholder="企微点名用" size="small" clearable style="width: 100%" />
+            <el-input v-if="memberEditingId === row.id" v-model="memberForm.wecom_userid" :placeholder="$t('notifiers.members.wecomUseridPlaceholder')" size="small" clearable style="width: 100%" />
             <template v-else>{{ row.wecom_userid || '—' }}</template>
           </template>
         </el-table-column>
-        <el-table-column label="飞书open_id" min-width="130">
+        <el-table-column :label="$t('notifiers.members.feishuOpenId')" min-width="130">
           <template #default="{ row }">
-            <el-input v-if="memberEditingId === row.id" v-model="memberForm.feishu_open_id" placeholder="飞书 @ 用" size="small" clearable style="width: 100%" />
+            <el-input v-if="memberEditingId === row.id" v-model="memberForm.feishu_open_id" :placeholder="$t('notifiers.members.feishuOpenIdPlaceholder')" size="small" clearable style="width: 100%" />
             <template v-else>{{ row.feishu_open_id || '—' }}</template>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column :label="$t('common.actions')" width="150" fixed="right">
           <template #default="{ row }">
             <template v-if="memberEditingId === row.id">
-              <el-button link type="success" :loading="memberSaving" @click="onSaveInline(row)">保存</el-button>
-              <el-button link @click="cancelInline(row)">取消</el-button>
+              <el-button link type="success" :loading="memberSaving" @click="onSaveInline(row)">{{ $t('common.save') }}</el-button>
+              <el-button link @click="cancelInline(row)">{{ $t('common.cancel') }}</el-button>
             </template>
             <template v-else>
-              <el-button link type="primary" @click="startEdit(row)">编辑</el-button>
-              <el-button link type="danger" @click="onDeleteMember(row)">删除</el-button>
+              <el-button link type="primary" @click="startEdit(row)">{{ $t('common.edit') }}</el-button>
+              <el-button link type="danger" @click="onDeleteMember(row)">{{ $t('common.delete') }}</el-button>
             </template>
           </template>
         </el-table-column>
@@ -179,11 +179,14 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import {
   listNotifiers, createNotifier, updateNotifier, deleteNotifier, listProjects,
   listMembers, createMember, updateMember, deleteMember,
   type Notifier, type Project, type NotifierMember,
 } from '../api'
+
+const { t } = useI18n()
 
 const items = ref<Notifier[]>([])
 const projects = ref<Project[]>([])
@@ -239,7 +242,7 @@ async function loadProjects() {
     projects.value = await listProjects()
   } catch (e: any) {
     projects.value = []
-    ElMessage.error(e?.message || '项目列表加载失败')
+    ElMessage.error(e?.message || t('notifiers.msg.projectsLoadFailed'))
   } finally {
     projectsLoading.value = false
   }
@@ -250,7 +253,7 @@ async function loadMembers() {
   try {
     members.value = await listMembers()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '加载成员失败')
+    ElMessage.error(e?.response?.data?.detail || t('notifiers.members.loadFailed'))
   } finally {
     membersLoading.value = false
   }
@@ -285,30 +288,34 @@ async function onSaveInline(row: NotifierMember) {
   try {
     if (row.id === 0) {
       await createMember({ ...memberForm })
-      ElMessage.success('已新增成员')
+      ElMessage.success(t('notifiers.members.added'))
       newRowDraft.value = null
     } else {
       await updateMember(row.id, { ...memberForm })
-      ElMessage.success('已保存成员')
+      ElMessage.success(t('notifiers.members.saved'))
       memberEditingId.value = null
     }
     loadMembers()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '保存成员失败')
+    ElMessage.error(e?.response?.data?.detail || t('notifiers.members.saveFailed'))
   } finally {
     memberSaving.value = false
   }
 }
 async function onDeleteMember(row: NotifierMember) {
-  await ElMessageBox.confirm(`确认删除成员「${row.name || row.git_username || row.id}」？`, '提示', { type: 'warning' })
+  await ElMessageBox.confirm(
+    t('notifiers.members.deleteConfirm', { name: row.name || row.git_username || row.id }),
+    t('common.tip'),
+    { type: 'warning' },
+  )
   await deleteMember(row.id)
-  ElMessage.success('已删除')
+  ElMessage.success(t('common.deleted'))
   loadMembers()
 }
 
 function memberLabel(m: NotifierMember): string {
-  if (m.name) return `${m.name}${m.git_username ? '（@' + m.git_username + '）' : ''}`
-  return m.git_username || `成员 #${m.id}`
+  if (m.name) return m.git_username ? t('notifiers.members.labelWithGit', { name: m.name, git: m.git_username }) : m.name
+  return m.git_username || t('notifiers.members.fallbackLabel', { id: m.id })
 }
 
 function openCreate() {
@@ -345,7 +352,7 @@ function onChannelChange() {
 async function onSave() {
   // 新建时 webhook 必填
   if (!isEdit.value && !form.webhook) {
-    ElMessage.warning('请输入 Webhook 地址')
+    ElMessage.warning(t('notifiers.msg.webhookRequired'))
     return
   }
   saving.value = true
@@ -356,20 +363,20 @@ async function onSave() {
     } else {
       await createNotifier({ ...form })
     }
-    ElMessage.success('保存成功')
+    ElMessage.success(t('notifiers.msg.saveSuccess'))
     dialogVisible.value = false
     load()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '保存失败')
+    ElMessage.error(e?.response?.data?.detail || t('common.saveFailed'))
   } finally {
     saving.value = false
   }
 }
 
 async function onDelete(row: Notifier) {
-  await ElMessageBox.confirm(`确认删除「${row.channel}」通知渠道？`, '提示', { type: 'warning' })
+  await ElMessageBox.confirm(t('notifiers.msg.deleteConfirm', { channel: row.channel }), t('common.tip'), { type: 'warning' })
   await deleteNotifier(row.id)
-  ElMessage.success('已删除')
+  ElMessage.success(t('common.deleted'))
   load()
 }
 

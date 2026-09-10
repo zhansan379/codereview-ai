@@ -2,54 +2,54 @@
   <div>
     <el-card>
       <div class="toolbar">
-        <el-button type="primary" @click="openCreate">新增角色</el-button>
+        <el-button type="primary" @click="openCreate">{{ $t('roles.createTitle') }}</el-button>
       </div>
       <el-table :data="items" v-loading="loading" stripe>
-        <el-table-column prop="name" label="名称" min-width="110" />
-        <el-table-column prop="description" label="描述" min-width="150" show-overflow-tooltip />
-        <el-table-column label="类型" width="90">
+        <el-table-column prop="name" :label="$t('common.name')" min-width="110" />
+        <el-table-column prop="description" :label="$t('roles.description')" min-width="150" show-overflow-tooltip />
+        <el-table-column :label="$t('roles.type')" width="90">
           <template #default="{ row }">
             <el-tag :type="row.is_system ? 'info' : 'warning'" size="small">
-              {{ row.is_system ? '内置' : '自定义' }}
+              {{ row.is_system ? $t('roles.builtin') : $t('roles.custom') }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="全项目" width="90">
+        <el-table-column :label="$t('roles.allProjects')" width="90">
           <template #default="{ row }">
-            <el-tag v-if="row.all_projects" type="success" size="small">是</el-tag>
-            <span v-else class="muted">否</span>
+            <el-tag v-if="row.all_projects" type="success" size="small">{{ $t('common.yes') }}</el-tag>
+            <span v-else class="muted">{{ $t('common.no') }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="权限数" width="80">
+        <el-table-column :label="$t('roles.permCount')" width="80">
           <template #default="{ row }">
             {{ row.permissions.length }}
           </template>
         </el-table-column>
-        <el-table-column prop="member_count" label="成员数" width="80" />
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column prop="member_count" :label="$t('roles.memberCount')" width="80" />
+        <el-table-column :label="$t('common.actions')" width="200" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openPerms(row)">权限</el-button>
-            <el-button v-if="!row.is_system" link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button v-if="!row.is_system" link type="danger" @click="onDelete(row)">删除</el-button>
+            <el-button link type="primary" @click="openPerms(row)">{{ $t('roles.permissions') }}</el-button>
+            <el-button v-if="!row.is_system" link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
+            <el-button v-if="!row.is_system" link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
 
     <!-- 新增 / 编辑 角色 -->
-    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑角色' : '新增角色'" width="640px">
+    <el-dialog v-model="dialogVisible" :title="isEdit ? $t('roles.editTitle') : $t('roles.createTitle')" width="640px">
       <el-form :model="form" label-width="90px">
-        <el-form-item label="名称" required>
+        <el-form-item :label="$t('common.name')" required>
           <el-input v-model="form.name" :disabled="isEdit" />
         </el-form-item>
-        <el-form-item label="描述">
+        <el-form-item :label="$t('roles.description')">
           <el-input v-model="form.description" />
         </el-form-item>
-        <el-form-item v-if="!isEdit" label="全项目">
+        <el-form-item v-if="!isEdit" :label="$t('roles.allProjects')">
           <el-switch v-model="form.all_projects" />
-          <span class="form-tip">勾选后该角色的项目级权限对所有项目生效（无需逐项目加成员）。</span>
+          <span class="form-tip">{{ $t('roles.allProjectsTip') }}</span>
         </el-form-item>
-        <el-form-item v-if="!isEdit" label="权限">
+        <el-form-item v-if="!isEdit" :label="$t('roles.permissions')">
           <div class="perm-panel">
             <div v-for="group in permGroups" :key="group.scope" class="perm-group">
               <div class="perm-group-title">{{ group.label }}</div>
@@ -63,13 +63,13 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="onSave">{{ isEdit ? '保存' : '创建' }}</el-button>
+        <el-button @click="dialogVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="saving" @click="onSave">{{ isEdit ? $t('common.save') : $t('roles.createBtn') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 权限分配（任意角色，含内置） -->
-    <el-dialog v-model="permVisible" :title="`分配权限：${current?.name || ''}`" width="640px">
+    <el-dialog v-model="permVisible" :title="$t('roles.assignPermsTitle', { name: current?.name || '' })" width="640px">
       <div class="perm-panel">
         <div v-for="group in permGroups" :key="group.scope" class="perm-group">
           <div class="perm-group-title">{{ group.label }}</div>
@@ -81,8 +81,8 @@
         </div>
       </div>
       <template #footer>
-        <el-button @click="permVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="onSavePerms">保存</el-button>
+        <el-button @click="permVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="saving" @click="onSavePerms">{{ $t('common.save') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -91,6 +91,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import {
   listRoles,
   listPermissions,
@@ -101,6 +102,8 @@ import {
   type RoleItem,
   type PermissionItem,
 } from '../api'
+
+const { t } = useI18n()
 
 const items = ref<RoleItem[]>([])
 const perms = ref<PermissionItem[]>([])
@@ -114,12 +117,12 @@ const permVisible = ref(false)
 const permGroups = computed(() => [
   {
     scope: 'global',
-    label: '全局权限（系统级，不区分项目）',
+    label: t('roles.groupGlobal'),
     items: perms.value.filter((p) => p.scope === 'global'),
   },
   {
     scope: 'project',
-    label: '项目权限（经成员关系 / 全项目角色生效）',
+    label: t('roles.groupProject'),
     items: perms.value.filter((p) => p.scope === 'project'),
   },
 ])
@@ -165,11 +168,11 @@ async function onSave() {
         all_projects: form.all_projects, permission_codes: form.permission_codes,
       })
     }
-    ElMessage.success(isEdit.value ? '已保存' : '已创建')
+    ElMessage.success(isEdit.value ? t('common.saved') : t('common.created'))
     dialogVisible.value = false
     load()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '保存失败')
+    ElMessage.error(e?.response?.data?.detail || t('common.saveFailed'))
   } finally {
     saving.value = false
   }
@@ -184,11 +187,11 @@ async function onSavePerms() {
   saving.value = true
   try {
     await setRolePermissions(current.value!.id, permForm.codes)
-    ElMessage.success('权限已更新')
+    ElMessage.success(t('roles.permsUpdated'))
     permVisible.value = false
     load()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '保存失败')
+    ElMessage.error(e?.response?.data?.detail || t('common.saveFailed'))
   } finally {
     saving.value = false
   }
@@ -196,12 +199,12 @@ async function onSavePerms() {
 
 async function onDelete(row: RoleItem) {
   try {
-    await ElMessageBox.confirm(`确认删除角色「${row.name}」？`, '提示', { type: 'warning' })
+    await ElMessageBox.confirm(t('roles.deleteConfirm', { name: row.name }), t('common.tip'), { type: 'warning' })
     await deleteRole(row.id)
-    ElMessage.success('已删除')
+    ElMessage.success(t('common.deleted'))
     load()
   } catch (e: any) {
-    if (e !== 'cancel') ElMessage.error(e?.response?.data?.detail || '删除失败')
+    if (e !== 'cancel') ElMessage.error(e?.response?.data?.detail || t('common.deleteFailed'))
   }
 }
 

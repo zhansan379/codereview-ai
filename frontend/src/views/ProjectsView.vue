@@ -2,47 +2,54 @@
   <div>
     <el-card>
       <div class="toolbar">
-        <el-button v-if="auth.hasPerm('projects:manage')" type="primary" @click="openCreate">新增项目</el-button>
+        <el-button v-if="auth.hasPerm('projects:manage')" type="primary" @click="openCreate">{{ $t('projects.createBtn') }}</el-button>
         <el-button v-if="auth.hasPerm('pulls:manage')" :loading="pollBusy" @click="onPoll">
-          {{ pollBusy ? '补拉中…' : '补拉 PR/MR' }}
+          {{ pollBusy ? $t('projects.pollBtnBusy') : $t('projects.pollBtn') }}
         </el-button>
       </div>
       <div v-if="pollBusy" class="poll-progress">
         <span class="spinner" /> <template v-if="pollProgress && pollProgress.total > 0">
-          补拉进行中 {{ pollProgress.done }}/{{ pollProgress.total }}（新 {{ pollProgress.new }}，跳过 {{ pollProgress.skipped }}）…
+          {{
+            $t('projects.pollProgress', {
+              done: pollProgress.done,
+              total: pollProgress.total,
+              added: pollProgress.new,
+              skipped: pollProgress.skipped,
+            })
+          }}
         </template>
-        <template v-else>补拉进行中…</template>
-        正在入队打开 PR/MR 的审查，可切换页面，审查在后台进行
+        <template v-else>{{ $t('projects.pollRunning') }}</template>
+        {{ $t('projects.pollHint') }}
       </div>
       <el-table :data="items" v-loading="loading" stripe>
-        <el-table-column prop="id" label="ID" width="70" />
-        <el-table-column prop="repo_full_name" label="仓库" min-width="180" />
-        <el-table-column prop="provider" label="平台" width="100" />
+        <el-table-column prop="id" :label="$t('common.id')" width="70" />
+        <el-table-column prop="repo_full_name" :label="$t('projects.columns.repo')" min-width="180" />
+        <el-table-column prop="provider" :label="$t('projects.columns.provider')" width="100" />
         <el-table-column prop="web_url" label="Web URL" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="review_strategy" label="审查策略" width="120" />
-        <el-table-column label="启用" width="80">
+        <el-table-column prop="review_strategy" :label="$t('projects.columns.reviewStrategy')" width="120" />
+        <el-table-column :label="$t('projects.columns.enabled')" width="80">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'">
-              {{ row.enabled ? '是' : '否' }}
+              {{ row.enabled ? $t('common.yes') : $t('common.no') }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column :label="$t('common.actions')" width="220" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="auth.hasPerm('projects:manage')" link type="primary" @click="openMembers(row)">成员</el-button>
-            <el-button v-if="auth.hasPerm('projects:manage')" link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button v-if="auth.hasPerm('projects:manage')" link type="danger" @click="onDelete(row)">删除</el-button>
+            <el-button v-if="auth.hasPerm('projects:manage')" link type="primary" @click="openMembers(row)">{{ $t('projects.membersBtn') }}</el-button>
+            <el-button v-if="auth.hasPerm('projects:manage')" link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
+            <el-button v-if="auth.hasPerm('projects:manage')" link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑项目' : '新增项目'" width="860px">
+    <el-dialog v-model="dialogVisible" :title="isEdit ? $t('projects.dialog.editTitle') : $t('projects.dialog.createTitle')" width="860px">
       <el-form :model="form" label-width="110px">
         <!-- 矮字段两两一行压缩弹窗高度（A 方案：双列网格） -->
         <el-row :gutter="12">
           <el-col :span="12">
-            <el-form-item label="平台" required>
+            <el-form-item :label="$t('projects.form.provider')" required>
               <el-select v-model="form.provider" style="width: 100%">
                 <el-option label="GitHub" value="github" />
                 <el-option label="GitLab" value="gitlab" />
@@ -52,103 +59,103 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="审查策略">
+            <el-form-item :label="$t('projects.form.reviewStrategy')">
               <el-select v-model="form.review_strategy" style="width: 100%">
-                <el-option label="diff（普通 diff 分组审查）" value="diff" />
-                <el-option label="agentic（沙箱探索式，需额外配置）" value="agentic" />
+                <el-option :label="$t('projects.form.strategyDiff')" value="diff" />
+                <el-option :label="$t('projects.form.strategyAgentic')" value="agentic" />
               </el-select>
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="仓库 ID" required>
+            <el-form-item :label="$t('projects.form.repoId')" required>
               <el-input v-model="form.repo_id" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="仓库全名" required>
+            <el-form-item :label="$t('projects.form.repoFullName')" required>
               <el-input v-model="form.repo_full_name" placeholder="owner/repo" />
             </el-form-item>
           </el-col>
           <el-col :span="24">
-            <el-form-item label="Web URL">
+            <el-form-item :label="$t('projects.form.webUrl')">
               <el-input
                 v-model="form.web_url"
-                placeholder="粘贴仓库链接后点「解析」，自动回填 仓库ID / 仓库全名"
+                :placeholder="$t('projects.form.webUrlPlaceholder')"
               >
                 <template #append>
-                  <el-button :loading="resolving" @click="onResolve">解析</el-button>
+                  <el-button :loading="resolving" @click="onResolve">{{ $t('projects.form.resolve') }}</el-button>
                 </template>
               </el-input>
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="分支规则">
-              <el-input v-model="form.branch_rule" placeholder="如 main" />
+            <el-form-item :label="$t('projects.form.branchRule')">
+              <el-input v-model="form.branch_rule" :placeholder="$t('projects.form.branchRulePlaceholder')" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="Push 分支规则">
+            <el-form-item :label="$t('projects.form.pushBranchGlobs')">
               <el-input
                 v-model="form.push_branch_globs"
-                placeholder="如 main,release/*；留空继承全局"
+                :placeholder="$t('projects.form.pushBranchGlobsPlaceholder')"
               />
             </el-form-item>
           </el-col>
           <el-col :span="24">
-            <el-form-item label="Push 审查">
+            <el-form-item :label="$t('projects.form.pushReview')">
               <el-radio-group v-model="form.push_mode">
-                <el-radio label="on">开启</el-radio>
-                <el-radio label="off">关闭</el-radio>
-                <el-radio label="inherit">跟随全局</el-radio>
+                <el-radio label="on">{{ $t('projects.form.modeOn') }}</el-radio>
+                <el-radio label="off">{{ $t('projects.form.modeOff') }}</el-radio>
+                <el-radio label="inherit">{{ $t('projects.form.modeInherit') }}</el-radio>
               </el-radio-group>
-              <div class="field-hint">跟随全局 = 交全局默认层裁决：「设置」页「自动审查触发」开关落库值优先，无落库行才回落到环境变量 CR_PUSH_REVIEW_ENABLED。</div>
+              <div class="field-hint">{{ $t('projects.form.pushHint') }}</div>
             </el-form-item>
           </el-col>
           <el-col :span="24">
-            <el-form-item label="MR 审查">
+            <el-form-item :label="$t('projects.form.mrReview')">
               <el-radio-group v-model="form.mr_mode">
-                <el-radio label="on">开启</el-radio>
-                <el-radio label="off">关闭</el-radio>
-                <el-radio label="inherit">跟随全局</el-radio>
+                <el-radio label="on">{{ $t('projects.form.modeOn') }}</el-radio>
+                <el-radio label="off">{{ $t('projects.form.modeOff') }}</el-radio>
+                <el-radio label="inherit">{{ $t('projects.form.modeInherit') }}</el-radio>
               </el-radio-group>
-              <div class="field-hint">MR 到达是否自动审；跟随全局 = 交全局默认层裁决：「设置」页「自动审查触发」MR 轨开关落库值优先，无落库行才回落到环境变量 CR_MR_REVIEW_ENABLED。</div>
+              <div class="field-hint">{{ $t('projects.form.mrHint') }}</div>
             </el-form-item>
           </el-col>
           <el-col :span="24">
-            <el-form-item label="文件扩展名">
+            <el-form-item :label="$t('projects.form.fileExtensions')">
               <el-select
                 v-model="form.file_extensions"
                 multiple
                 filterable
                 allow-create
                 default-first-option
-                placeholder="输入后回车添加，如 .py"
+                :placeholder="$t('projects.form.fileExtensionsPlaceholder')"
                 style="width: 100%"
               />
             </el-form-item>
           </el-col>
           <el-col :span="24">
-            <el-form-item label="Prompt 后缀">
+            <el-form-item :label="$t('projects.form.promptSuffix')">
               <el-input v-model="form.prompt_suffix" type="textarea" :rows="2" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="得分阈值">
+            <el-form-item :label="$t('projects.form.scoreThreshold')">
               <el-input-number v-model="form.score_threshold" :min="0" :max="100" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="仓库启用">
+            <el-form-item :label="$t('projects.form.repoEnabled')">
               <el-switch v-model="form.enabled" />
             </el-form-item>
           </el-col>
           <el-col :span="24">
-            <el-form-item label="阻塞合并">
+            <el-form-item :label="$t('projects.form.blockMerge')">
               <el-switch v-model="form.enforce_score_threshold" />
-              <span class="field-hint" style="margin-left: 8px">开：总分低于阈值时对 head commit 发失败状态（阻塞合并）
+              <span class="field-hint" style="margin-left: 8px">{{ $t('projects.form.blockMergeHint') }}
                 <el-tooltip placement="top" :show-after="50">
                   <template #content>
-                    分平台效果：<br/>· GitHub 写 commit status「failure」(context codereview-ai)，分支保护要求该检查通过才真正阻塞合并<br/>· GitLab 写 commit status「failed」，合并检查「Pipeline must succeed」开启时才阻塞<br/>· Gitea / Gitee 暂未实现该状态回写，开启无效果
+                    {{ $t('projects.form.blockMergeTip.title') }}<br/>{{ $t('projects.form.blockMergeTip.github') }}<br/>{{ $t('projects.form.blockMergeTip.gitlab') }}<br/>{{ $t('projects.form.blockMergeTip.others') }}
                   </template>
                   <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
                 </el-tooltip>
@@ -158,36 +165,36 @@
         </el-row>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
+        <el-button @click="dialogVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="saving" @click="onSave">{{ $t('common.save') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 项目成员（F5.11 项目级隔离） -->
-    <el-dialog v-model="memberVisible" :title="`成员：${memberProject?.repo_full_name || memberProject?.id || ''}`" width="520px">
+    <el-dialog v-model="memberVisible" :title="$t('projects.members.title', { name: memberProject?.repo_full_name || memberProject?.id || '' })" width="520px">
       <el-form label-width="90px">
-        <el-form-item label="成员">
+        <el-form-item :label="$t('projects.members.label')">
           <el-select
             v-model="memberUserIds"
             multiple
             filterable
             collapse-tags
             style="width: 100%"
-            placeholder="选择可访问该项目的用户"
+            :placeholder="$t('projects.members.placeholder')"
           >
             <el-option
               v-for="u in allUsers"
               :key="u.id"
-              :label="`${u.username}${u.display_name ? '（' + u.display_name + '）' : ''}`"
+              :label="u.display_name ? $t('projects.members.userLabel', { username: u.username, display: u.display_name }) : u.username"
               :value="u.id"
             />
           </el-select>
-          <div class="form-tip">项目级权限经成员关系生效；全项目角色无需在此勾选即可看所有项目。</div>
+          <div class="form-tip">{{ $t('projects.members.tip') }}</div>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="memberVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="onSaveMembers">保存</el-button>
+        <el-button @click="memberVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="saving" @click="onSaveMembers">{{ $t('common.save') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -196,6 +203,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import {
   listProjects,
   createProject,
@@ -212,6 +220,7 @@ import { pollBusy, pollProgress, triggerPoll, resumePollWatchIfBusy } from './us
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
+const { t } = useI18n()
 
 const items = ref<Project[]>([])
 const loading = ref(false)
@@ -299,11 +308,11 @@ async function onSave() {
     } else {
       await createProject(payload)
     }
-    ElMessage.success('保存成功')
+    ElMessage.success(t('projects.msg.saveSuccess'))
     dialogVisible.value = false
     load()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '保存失败')
+    ElMessage.error(e?.response?.data?.detail || t('common.saveFailed'))
   } finally {
     saving.value = false
   }
@@ -330,8 +339,8 @@ function parseOwnerRepo(url: string): string {
 
 async function onResolve() {
   const url = form.web_url.trim()
-  if (!form.provider) return ElMessage.warning('请先选择平台')
-  if (!url) return ElMessage.warning('请先填入仓库链接')
+  if (!form.provider) return ElMessage.warning(t('projects.msg.pickProviderFirst'))
+  if (!url) return ElMessage.warning(t('projects.msg.fillUrlFirst'))
   resolving.value = true
   try {
     if (form.provider === 'github' || form.provider === 'gitlab') {
@@ -339,26 +348,26 @@ async function onResolve() {
       form.repo_id = meta.repo_id
       form.repo_full_name = meta.repo_full_name
       if (meta.web_url) form.web_url = meta.web_url
-      ElMessage.success('解析成功')
+      ElMessage.success(t('projects.msg.resolveSuccess'))
     } else {
       // Gitea / Gitee：平台暂无后端解析，本地取 owner/repo（repo_id 同为该路径）
       const path = parseOwnerRepo(url)
-      if (!path) return ElMessage.warning('无法从链接解析出仓库')
+      if (!path) return ElMessage.warning(t('projects.msg.resolveNoRepo'))
       form.repo_id = path
       form.repo_full_name = path
-      ElMessage.success('解析成功')
+      ElMessage.success(t('projects.msg.resolveSuccess'))
     }
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '解析失败')
+    ElMessage.error(e?.response?.data?.detail || t('projects.msg.resolveFailed'))
   } finally {
     resolving.value = false
   }
 }
 
 async function onDelete(row: Project) {
-  await ElMessageBox.confirm(`确认删除项目「${row.repo_full_name}」？`, '提示', { type: 'warning' })
+  await ElMessageBox.confirm(t('projects.msg.deleteConfirm', { name: row.repo_full_name }), t('common.tip'), { type: 'warning' })
   await deleteProject(row.id)
-  ElMessage.success('已删除')
+  ElMessage.success(t('common.deleted'))
   load()
 }
 
@@ -370,7 +379,7 @@ async function openMembers(row: Project) {
     memberUserIds.value = mems.map((m) => Number(m.id))
     if (!allUsers.value.length) allUsers.value = await listUsers()
   } catch (e: any) {
-    return ElMessage.error(e?.response?.data?.detail || '加载成员失败')
+    return ElMessage.error(e?.response?.data?.detail || t('projects.members.loadFailed'))
   }
   memberVisible.value = true
 }
@@ -378,10 +387,10 @@ async function onSaveMembers() {
   saving.value = true
   try {
     await setProjectMembers(memberProject.value!.id, memberUserIds.value)
-    ElMessage.success('成员已更新')
+    ElMessage.success(t('projects.members.updated'))
     memberVisible.value = false
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '保存失败')
+    ElMessage.error(e?.response?.data?.detail || t('common.saveFailed'))
   } finally {
     saving.value = false
   }

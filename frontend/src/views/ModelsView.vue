@@ -2,63 +2,67 @@
   <div>
     <el-card>
       <div class="toolbar">
-        <el-button type="primary" @click="openCreate">新增模型</el-button>
+        <el-button type="primary" @click="openCreate">{{ $t('models.create') }}</el-button>
       </div>
       <el-table :data="items" v-loading="loading" stripe>
         <el-table-column prop="id" label="ID" width="70" />
-        <el-table-column prop="name" label="名称" min-width="120" />
-        <el-table-column prop="provider" label="平台" width="110" />
-        <el-table-column prop="model" label="模型" min-width="140" />
+        <el-table-column prop="name" :label="$t('models.colName')" min-width="120" />
+        <el-table-column prop="provider" :label="$t('models.colProvider')" width="110" />
+        <el-table-column prop="model" :label="$t('models.colModel')" min-width="140" />
         <el-table-column prop="base_url" label="Base URL" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="priority" label="优先级" width="90" />
-        <el-table-column label="启用" width="80">
+        <el-table-column prop="priority" :label="$t('models.colPriority')" width="90" />
+        <el-table-column :label="$t('models.colEnabled')" width="80">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'">
-              {{ row.enabled ? '是' : '否' }}
+              {{ row.enabled ? $t('common.yes') : $t('common.no') }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column :label="$t('common.actions')" width="220" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="onTest(row)">连通测试</el-button>
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+            <el-button link type="primary" @click="onTest(row)">{{ $t('models.test') }}</el-button>
+            <el-button link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
+            <el-button link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑模型' : '新增模型'" width="640px">
+    <el-dialog
+      v-model="dialogVisible"
+      :title="isEdit ? $t('models.editTitle') : $t('models.create')"
+      width="640px"
+    >
       <el-form :model="form" label-width="120px">
-        <el-form-item label="名称" required>
+        <el-form-item :label="$t('models.colName')" required>
           <el-input v-model="form.name" />
         </el-form-item>
-        <el-form-item label="平台" required>
+        <el-form-item :label="$t('models.colProvider')" required>
           <el-select
             v-model="platformKey"
-            placeholder="选择平台，自动填路由前缀 / Base URL"
+            :placeholder="$t('models.platformPlaceholder')"
             style="width: 100%"
             @change="applyPlatform"
           >
-            <el-option-group label="主流云厂商">
+            <el-option-group :label="$t('models.groupCloud')">
               <el-option v-for="p in cloudPresets" :key="p.key" :label="p.label" :value="p.key" />
             </el-option-group>
-            <el-option-group label="自托管 / 本地">
+            <el-option-group :label="$t('models.groupLocal')">
               <el-option v-for="p in localPresets" :key="p.key" :label="p.label" :value="p.key" />
             </el-option-group>
-            <el-option label="自定义（手动填写）" value="__custom__" />
+            <el-option :label="$t('models.custom')" value="__custom__" />
           </el-select>
           <template v-if="platformKey === '__custom__'">
             <el-select
               v-model="form.provider"
-              placeholder="选择消息协议格式"
+              :placeholder="$t('models.protocolPlaceholder')"
               style="width: 100%; margin-top: 8px"
             >
               <el-option v-for="o in customProviderOptions" :key="o.value" :label="o.label" :value="o.value" />
             </el-select>
           </template>
           <div class="form-tip">
-            平台决定接口格式与密钥路由前缀，选择厂商会自动填 Base URL。
+            {{ $t('models.platformTip') }}
             <template v-if="presetFormat">
               <el-tag size="small" :type="presetFormat === 'anthropic' ? 'warning' : 'success'" style="margin-left: 8px">
                 {{ formatLabel[presetFormat] }}
@@ -66,11 +70,14 @@
             </template>
           </div>
         </el-form-item>
-        <el-form-item label="模型" required>
-          <el-input v-model="modelBare" placeholder="如 gpt-4o / deepseek-chat（无需带协议前缀）" />
+        <el-form-item :label="$t('models.colModel')" required>
+          <el-input v-model="modelBare" :placeholder="$t('models.modelPlaceholder')" />
           <div class="form-tip">
-            保存为复合名 <code>{{ resolvedComposite || '（等待输入模型名）' }}</code>
-            <template v-if="form.provider">，前缀「{{ form.provider }}」由平台自动拼接</template>
+            {{ $t('models.compositeTip') }}
+            <code>{{ resolvedComposite || $t('models.compositeWaiting') }}</code>
+            <template v-if="form.provider">{{
+              $t('models.prefixTip', { provider: form.provider })
+            }}</template>
           </div>
         </el-form-item>
         <el-form-item label="API Key" required>
@@ -78,23 +85,30 @@
             v-model="form.api_key"
             type="password"
             show-password
-            :placeholder="isEdit ? '留空或填 ****** 表示不修改' : '请输入 API Key'"
+            :placeholder="isEdit ? $t('models.apiKeyKeep') : $t('models.apiKeyRequired')"
           />
-          <div class="form-tip" v-if="isEdit">读回为 ****** 表示保留原值。</div>
+          <div class="form-tip" v-if="isEdit">{{ $t('models.apiKeyRedactedTip') }}</div>
         </el-form-item>
         <el-form-item label="Base URL">
-          <el-input v-model="form.base_url" placeholder="可选，默认后端配置" />
+          <el-input v-model="form.base_url" :placeholder="$t('models.baseUrlPlaceholder')" />
         </el-form-item>
-        <el-form-item label="温度">
+        <el-form-item :label="$t('models.temperature')">
           <el-input-number v-model="form.temperature" :min="0" :max="2" :step="0.1" />
         </el-form-item>
         <el-form-item>
           <template #label>
             <el-tooltip effect="dark" placement="top">
               <template #content>
-                <div style="line-height: 1.6">单次回复的输出预算（max_tokens），<b>不是</b>上下文窗口长度。<br />DeepSeek V4 系上限 393216，其他模型各有不同，过高会被 API 拒绝。</div>
+                <!-- eslint-disable-next-line vue/no-v-html —— 词条由本仓维护，非用户输入 -->
+                <div style="line-height: 1.6">
+                  <span v-html="$t('models.maxTokensTip1')" /><br />
+                  {{ $t('models.maxTokensTip2') }}
+                </div>
               </template>
-              <span>最大输出 Token <el-icon style="vertical-align: -2px"><QuestionFilled /></el-icon></span>
+              <span>
+                {{ $t('models.maxTokens') }}
+                <el-icon style="vertical-align: -2px"><QuestionFilled /></el-icon>
+              </span>
             </el-tooltip>
           </template>
           <div class="token-editor">
@@ -119,28 +133,30 @@
             </el-tag>
           </div>
         </el-form-item>
-        <el-form-item label="优先级">
+        <el-form-item :label="$t('models.colPriority')">
           <el-input-number v-model="form.priority" :min="0" />
         </el-form-item>
-        <el-form-item label="启用">
+        <el-form-item :label="$t('models.colEnabled')">
           <el-switch v-model="form.enabled" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
+        <el-button @click="dialogVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="saving" @click="onSave">{{ $t('common.save') }}</el-button>
       </template>
     </el-dialog>
 
     <el-card class="cap-card">
-      <template #header>模型回退链</template>
+      <template #header>{{ $t('models.chainTitle') }}</template>
       <div class="chain-row">
-        <span class="chain-label">当前使用</span>
-        <el-tag v-if="reviewChain.length" type="primary">{{ reviewChain[0].name }}（主）</el-tag>
-        <span v-else class="muted">无启用模型</span>
+        <span class="chain-label">{{ $t('models.chainCurrent') }}</span>
+        <el-tag v-if="reviewChain.length" type="primary">
+          {{ reviewChain[0].name }}{{ $t('models.chainPrimary') }}
+        </el-tag>
+        <span v-else class="muted">{{ $t('models.chainNone') }}</span>
       </div>
       <div v-if="reviewChain.length > 1" class="chain-row">
-        <span class="chain-label">回退链</span>
+        <span class="chain-label">{{ $t('models.chainFallback') }}</span>
         <el-tag
           v-for="(m, i) in reviewChain.slice(1)"
           :key="m.id"
@@ -150,11 +166,7 @@
           {{ i + 1 }}. {{ m.name }}
         </el-tag>
       </div>
-      <p class="muted rule-note">
-        审查启用全部模型，按 priority 高→低排成回退链：单台瞬时错误（超时/限流/5xx）在模型内部
-        自动重试 2 次，业务错误（如 4xx）直接失败并切下一台；整条链全败则该次审查失败。若已设
-        环境变量 CR_LLM_MODEL，则固定用该模型，忽略上述规则。
-      </p>
+      <p class="muted rule-note">{{ $t('models.chainNote') }}</p>
     </el-card>
   </div>
 </template>
@@ -163,7 +175,10 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
+import { useI18n } from 'vue-i18n'
 import { listModels, createModel, updateModel, deleteModel, testModel, type ModelItem } from '../api'
+
+const { t } = useI18n()
 
 const items = ref<ModelItem[]>([])
 const loading = ref(false)
@@ -197,20 +212,21 @@ const cloudPresets: ProviderPreset[] = [
   { key: 'moonshot', label: 'Moonshot（Kimi）', provider: 'openai', model: 'openai/moonshot-v1-8k', baseUrl: 'https://api.moonshot.cn/v1', format: 'openai' },
 ]
 
-const localPresets: ProviderPreset[] = [
+// 自托管预设的 model 里带占位符（<模型ID> 等），故随语言变化 → computed。
+const localPresets = computed<ProviderPreset[]>(() => [
   { key: 'ollama', label: 'Ollama', provider: 'ollama', model: 'ollama/llama3', baseUrl: 'http://localhost:11434', format: 'other' },
-  { key: 'vllm', label: 'vLLM', provider: 'openai', model: 'openai/<模型ID>', baseUrl: 'http://localhost:8000/v1', format: 'openai' },
-  { key: 'lmstudio', label: 'LM Studio', provider: 'openai', model: 'openai/<模型名>', baseUrl: 'http://localhost:1234/v1', format: 'openai' },
-]
+  { key: 'vllm', label: 'vLLM', provider: 'openai', model: `openai/${t('models.modelIdPlaceholder')}`, baseUrl: 'http://localhost:8000/v1', format: 'openai' },
+  { key: 'lmstudio', label: 'LM Studio', provider: 'openai', model: `openai/${t('models.modelNamePlaceholder')}`, baseUrl: 'http://localhost:1234/v1', format: 'openai' },
+])
 
-const allPresets = [...cloudPresets, ...localPresets]
+const allPresets = computed(() => [...cloudPresets, ...localPresets.value])
 
 // 自定义平台时可选的路由前缀——只有两种消息协议格式：OpenAI 兼容 / Anthropic。
 // 其余厂商一律用「openai + 各自的 Base URL」或「anthropic」表达。
-const customProviderOptions: { value: string; label: string }[] = [
-  { value: 'openai', label: 'OpenAI 兼容格式' },
-  { value: 'anthropic', label: 'Anthropic（Claude）' },
-]
+const customProviderOptions = computed(() => [
+  { value: 'openai', label: t('models.protocol.openai') },
+  { value: 'anthropic', label: t('models.protocol.anthropic') },
+])
 
 // 「平台」下拉：值=厂商 key（或 __custom__），选中自动填路由前缀 / Base URL / 格式。
 const platformKey = ref<string>('')
@@ -218,12 +234,12 @@ const platformKey = ref<string>('')
 // 当前选中平台的线格式（openai / anthropic / other），用于表单内显式标注
 const presetFormat = ref<ProviderPreset['format'] | ''>('')
 
-// 格式的中文标签
-const formatLabel: Record<Exclude<ProviderPreset['format'], ''>, string> = {
-  openai: 'OpenAI 兼容格式',
-  anthropic: 'Anthropic 格式',
-  other: '本地 / 自托管协议',
-}
+// 格式标签
+const formatLabel = computed<Record<Exclude<ProviderPreset['format'], ''>, string>>(() => ({
+  openai: t('models.format.openai'),
+  anthropic: t('models.format.anthropic'),
+  other: t('models.format.other'),
+}))
 
 // 模型输入框展示「裸模型名」（不带协议前缀）；form.model 保存为带前缀的复合名。
 const modelBare = ref<string>('')
@@ -251,7 +267,7 @@ function applyPlatform() {
     }
     return
   }
-  const p = allPresets.find((x) => x.key === key)
+  const p = allPresets.value.find((x) => x.key === key)
   if (!p) return
   form.provider = p.provider
   form.base_url = p.baseUrl
@@ -261,7 +277,7 @@ function applyPlatform() {
 
 // 编辑回显：按 provider+baseUrl 尽量反向匹配到某个厂商预设，否则退回自定义
 function matchPlatformKey(): string {
-  const cand = allPresets.find(
+  const cand = allPresets.value.find(
     (p) => p.provider === form.provider && (p.baseUrl || '') === (form.base_url || ''),
   )
   return cand ? cand.key : '__custom__'
@@ -373,7 +389,7 @@ function openEdit(row: ModelItem) {
 async function onSave() {
   // 新建时 api_key 必填
   if (!isEdit.value && !form.api_key) {
-    ElMessage.warning('请输入 API Key')
+    ElMessage.warning(t('models.apiKeyRequired'))
     return
   }
   // 用「数值 + 单位」换算成原生 token 数；模型名拼上前缀成复合名，一并落库
@@ -387,11 +403,11 @@ async function onSave() {
     } else {
       await createModel({ ...form })
     }
-    ElMessage.success('保存成功')
+    ElMessage.success(t('common.saved'))
     dialogVisible.value = false
     load()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '保存失败')
+    ElMessage.error(e?.response?.data?.detail || t('common.saveFailed'))
   } finally {
     saving.value = false
   }
@@ -404,17 +420,19 @@ async function onTest(row: ModelItem) {
   }
   try {
     await testModel(row.id)
-    ElMessage.success(`模型「${row.name}」连通正常`)
+    ElMessage.success(t('models.testOk', { name: row.name }))
   } catch (e: any) {
-    const msg = e?.response?.data?.detail || '连通测试失败'
+    const msg = e?.response?.data?.detail || t('models.testFailed')
     ElMessage.error(msg)
   }
 }
 
 async function onDelete(row: ModelItem) {
-  await ElMessageBox.confirm(`确认删除模型「${row.name}」？`, '提示', { type: 'warning' })
+  await ElMessageBox.confirm(t('models.deleteConfirm', { name: row.name }), t('common.tip'), {
+    type: 'warning',
+  })
   await deleteModel(row.id)
-  ElMessage.success('已删除')
+  ElMessage.success(t('common.deleted'))
   load()
 }
 

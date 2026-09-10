@@ -1,5 +1,7 @@
+import { watch } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import LayoutView from '../views/LayoutView.vue'
+import i18n, { t } from '../locales'
 
 // 除 /login 外所有页面都挂在 LayoutView 之下（含侧边菜单、顶栏）
 const router = createRouter({
@@ -19,13 +21,13 @@ const router = createRouter({
           path: '/dashboard',
           name: 'Dashboard',
           component: () => import('../views/DashboardView.vue'),
-          meta: { title: '仪表盘' },
+          meta: { titleKey: 'menu.dashboard' },
         },
         {
           path: '/reviews',
           name: 'Reviews',
           component: () => import('../views/ReviewTabsView.vue'),
-          meta: { title: '审查记录' },
+          meta: { titleKey: 'menu.reviews' },
         },
         {
           // 旧聚合页地址兜底：并入审查记录页的「MR 汇总」tab
@@ -36,43 +38,43 @@ const router = createRouter({
           path: '/reviews/:id',
           name: 'ReviewDetail',
           component: () => import('../views/ReviewDetailView.vue'),
-          meta: { title: '审查详情', parent: 'Reviews' },
+          meta: { titleKey: 'menu.reviewDetail', parent: 'Reviews' },
         },
         {
           path: '/reviews/:id/conversation',
           name: 'ReviewConversation',
           component: () => import('../views/ConversationView.vue'),
-          meta: { title: '对话过程', parent: 'ReviewDetail' },
+          meta: { titleKey: 'menu.conversation', parent: 'ReviewDetail' },
         },
         {
           path: '/projects',
           name: 'Projects',
           component: () => import('../views/ProjectsView.vue'),
-          meta: { title: '项目' },
+          meta: { titleKey: 'menu.projects' },
         },
         {
           path: '/models',
           name: 'Models',
           component: () => import('../views/ModelsView.vue'),
-          meta: { title: '模型' },
+          meta: { titleKey: 'menu.models' },
         },
         {
           path: '/notifiers',
           name: 'Notifiers',
           component: () => import('../views/NotifiersView.vue'),
-          meta: { title: 'IM 通知' },
+          meta: { titleKey: 'menu.notifiers' },
         },
         {
           path: '/schedules',
           name: 'Schedules',
           component: () => import('../views/SchedulesView.vue'),
-          meta: { title: '定时任务' },
+          meta: { titleKey: 'menu.schedules' },
         },
         {
           path: '/clone-caches',
           name: 'CloneCaches',
           component: () => import('../views/CloneCachesView.vue'),
-          meta: { title: '拉取缓存', permission: 'caches:manage' },
+          meta: { titleKey: 'menu.caches', permission: 'caches:manage' },
         },
         {
           // 任务页已并入审查记录页，保留旧地址兜底跳转
@@ -83,19 +85,19 @@ const router = createRouter({
           path: '/settings',
           name: 'Settings',
           component: () => import('../views/SettingsView.vue'),
-          meta: { title: '设置' },
+          meta: { titleKey: 'menu.settings' },
         },
         {
           path: '/users',
           name: 'Users',
           component: () => import('../views/UsersView.vue'),
-          meta: { title: '用户', permission: 'users:manage' },
+          meta: { titleKey: 'menu.users', permission: 'users:manage' },
         },
         {
           path: '/roles',
           name: 'Roles',
           component: () => import('../views/RolesView.vue'),
-          meta: { title: '角色', permission: 'roles:manage' },
+          meta: { titleKey: 'menu.roles', permission: 'roles:manage' },
         },
       ],
     },
@@ -120,5 +122,14 @@ router.beforeEach((to) => {
   }
   return true
 })
+
+// 标签页标题：跟着路由和语言走（meta.titleKey 是词条 key，不是字面量）
+function applyTitle(): void {
+  const key = router.currentRoute.value.meta?.titleKey as string | undefined
+  document.title = key ? `${t(key)} · ${t('menu.appTitle')}` : t('menu.appTitle')
+}
+router.afterEach(applyTitle)
+// 切语言时当前页标题也要跟着变（此时不发生路由跳转，afterEach 不会触发）
+watch(() => i18n.global.locale.value, applyTitle)
 
 export default router

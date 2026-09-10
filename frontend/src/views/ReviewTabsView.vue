@@ -5,13 +5,13 @@
       <el-segmented
         v-model="tab"
         :options="[
-          { label: 'MR 汇总', value: 'mr' },
-          { label: '明细', value: 'detail' },
+          { label: $t('reviewTabs.mrSummary'), value: 'mr' },
+          { label: $t('reviewTabs.detail'), value: 'detail' },
         ]"
         @change="onTabChange"
       />
       <span class="tab-hint">
-        {{ tab === 'mr' ? '按 MR 聚合多轮审查，看问题收敛趋势' : '逐条审查任务（含 push / 失败 / 重试 / 导出）' }}
+        {{ tab === 'mr' ? $t('reviewTabs.hintMr') : $t('reviewTabs.hintDetail') }}
       </span>
     </el-card>
 
