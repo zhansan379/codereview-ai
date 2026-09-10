@@ -28,7 +28,12 @@ def send_verification_email(
     if not (host and from_addr):
         logger.warning("smtp_host/from 未配置，跳过邮件发送（to=%s）", to_email)
         return False
-    link = f"{base_url.rstrip('/')}/api/auth/verify-email?token={token}"
+    if base_url:
+        # 有前端 SPA 根地址 → 指向注册页面的邮箱验证路由，用户体验一致
+        link = f"{base_url.rstrip('/')}/verify-email?token={token}"
+    else:
+        # 未配 → 指回后端 API 端点（浏览器打开返回 JSON，功能可用）
+        link = f"/api/auth/verify-email?token={token}"
     msg = EmailMessage()
     msg["Subject"] = "验证你的 CodeReview AI 邮箱"
     msg["From"] = from_addr

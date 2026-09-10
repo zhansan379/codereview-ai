@@ -33,6 +33,7 @@ from codereview_ai.api.admin import (
     schedules,
     stats,
     tasks,
+    usage,
     users,
 )
 from codereview_ai.api.admin import (
@@ -360,6 +361,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_settings.router, prefix="/api")
     app.include_router(tasks.router, prefix="/api")
     app.include_router(stats.router, prefix="/api")
+    app.include_router(usage.router, prefix="/api")
     app.include_router(users.router, prefix="/api")
     app.include_router(roles.router, prefix="/api")
     app.include_router(webhook_router)

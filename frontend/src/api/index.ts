@@ -27,6 +27,16 @@ export interface MeResult {
   permissions: string[]
 }
 
+export interface RegisterResult {
+  user: User
+  workspace: { id: number; name: string; slug: string }
+}
+
+export interface VerifyEmailResult {
+  ok: boolean
+  email_verified: boolean
+}
+
 export interface Project {
   id: number
   provider: string
@@ -191,6 +201,21 @@ export function login(
 }
 export function me(): Promise<MeResult> {
   return client.get('/auth/me').then((r) => r.data)
+}
+// 公开自助注册：建私有 workspace + member 用户；可选 email 触发验证邮件（SMTP 未配则静默跳过）
+export function register(
+  username: string,
+  password: string,
+  email = '',
+  displayName = '',
+): Promise<RegisterResult> {
+  return client
+    .post('/auth/register', { username, password, email, display_name: displayName })
+    .then((r) => r.data)
+}
+// 邮箱验证：GET /auth/verify-email?token=...（注册页/邮件链接承载）
+export function verifyEmail(token: string): Promise<VerifyEmailResult> {
+  return client.get('/auth/verify-email', { params: { token } }).then((r) => r.data)
 }
 
 // ===== 项目 =====

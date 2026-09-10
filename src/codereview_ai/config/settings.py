@@ -122,6 +122,7 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = ""
     smtp_starttls: bool = True
+    web_base_url: str = ""  # 前端 SPA 根；非空则验证邮件链接指向 /verify-email 页而非后端 API
 
     @model_validator(mode="after")
     def _fail_fast(self) -> Settings:

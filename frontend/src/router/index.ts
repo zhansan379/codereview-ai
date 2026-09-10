@@ -11,6 +11,16 @@ const router = createRouter({
       component: () => import('../views/LoginView.vue'),
     },
     {
+      path: '/register',
+      name: 'Register',
+      component: () => import('../views/RegisterView.vue'),
+    },
+    {
+      path: '/verify-email',
+      name: 'VerifyEmail',
+      component: () => import('../views/VerifyEmailView.vue'),
+    },
+    {
       path: '/',
       component: LayoutView,
       redirect: '/dashboard',
@@ -97,7 +107,9 @@ const router = createRouter({
 // 全局守卫：无 token 时除 /login 外重定向到 /login；有 token 但命中需权限路由且无该权限 → /dashboard
 router.beforeEach((to) => {
   const token = sessionStorage.getItem('cr_token')
-  if (!token && to.path !== '/login') {
+  // 游客可访问：登录、注册、邮箱验证（验证页也允许已登录用户点开邮件链接后正常落地）
+  const publicPaths = ['/login', '/register', '/verify-email']
+  if (!token && !publicPaths.includes(to.path)) {
     return { path: '/login' }
   }
   if (token && to.path === '/login') {
