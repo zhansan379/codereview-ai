@@ -16,7 +16,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
-from codereview_ai.api.deps import get_current_user, get_db
+from codereview_ai.api.deps import (
+    CurrentUser,
+    allowed_project_ids,
+    get_current_user,
+    get_db,
+    review_scope_clause,
+    review_task_allowed,
+    review_task_project_id,
+    user_can,
+)
 from codereview_ai.domain.models import PullRequest
 from codereview_ai.forges.base import repo_path_from_url
 from codereview_ai.storage.models import ReviewTask, _utcnow
@@ -58,11 +67,17 @@ async def _get_or_404(session: AsyncSession, task_id: int) -> ReviewTask:
 
 @router.get("", response_model=list[TaskOut])
 async def list_tasks(
-    session: AsyncSession = Depends(get_db), state: str | None = None
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_db),
+    state: str | None = None,
 ) -> list[TaskOut]:
     stmt = select(ReviewTask)
     if state:
         stmt = stmt.where(ReviewTask.state == state)
+    is_global, ids = await allowed_project_ids(session, user)
+    scope_clause = review_scope_clause(is_global, ids)
+    if scope_clause is not None:
+        stmt = stmt.where(scope_clause)
     rows = (await session.execute(stmt.order_by(ReviewTask.id.desc()))).scalars().all()
     return [TaskOut.model_validate(r) for r in rows]
 
@@ -112,9 +127,15 @@ def _retryable(row: ReviewTask) -> bool:
 async def retry_task(
     task_id: int,
     request: Request,
+    user: CurrentUser,
     session: AsyncSession = Depends(get_db),
 ) -> TaskRetried:
     row = await _get_or_404(session, task_id)
+    if not await review_task_allowed(session, user, row):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "任务不存在")
+    pid = await review_task_project_id(session, row)
+    if not await user_can(session, user, "reviews:manage", project_id=pid):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "无权限重试该任务")
     if not _retryable(row):
         raise HTTPException(
             status.HTTP_409_CONFLICT,

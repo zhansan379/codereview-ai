@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from codereview_ai.domain.models import Finding
 from codereview_ai.review.increments import IncrementReference, finding_fingerprint
 from codereview_ai.storage.db import session_factory
-from codereview_ai.storage.models import ReviewFinding, ReviewTask
+from codereview_ai.storage.models import Project, ReviewFinding, ReviewTask
 
 #: 短标题缺失时（静态/旧 LLM）由完整分析 content 兜底截断。
 _MAX_TITLE = 40
@@ -172,12 +172,19 @@ class ReviewRepository:
                 if existing.state == "running":
                     return None
                 return int(existing.id)
+            # 归属项目（RBAC 隔离）：按 (provider, repo_id) 实时归到 project 行；未注册项目 → None
+            project_id = (await s.execute(
+                select(Project.id).where(
+                    Project.provider == provider, Project.repo_id == repo_id
+                )
+            )).scalar_one_or_none()
             task = ReviewTask(
                 provider=provider, repo_id=repo_id, pr_number=pr_number,
                 event_type=event_type, branch=branch, head_sha=head_sha,
                 base_sha=base_sha, pr_title=pr_title, web_url=web_url,
                 push_commits=push_commits, state="queued", payload=payload,
                 trace_id=trace_id, diff_snapshot=diff_snapshot,
+                project_id=project_id,
             )
             s.add(task)
             try:

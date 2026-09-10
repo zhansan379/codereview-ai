@@ -16,13 +16,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from codereview_ai.api.admin import reviews as admin_reviews
-from codereview_ai.api.auth import issue_token
-from codereview_ai.api.auth import router as auth_router
 from codereview_ai.domain.models import Category, Finding, Severity
 from codereview_ai.review.increments import finding_fingerprint
 from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.models import ReviewFinding, ReviewTask
 from codereview_ai.storage.review_repo import ReviewRepository
+from tests.unit.helpers import make_admin_app
 
 MR = dict(provider="gitlab", repo_id="9", pr_number=7, event_type="mr", branch="f")
 
@@ -186,19 +185,12 @@ async def test_reconcile_waived_never_auto_changed(tmp_path):
 
 @pytest.fixture
 async def app(tmp_path):
-    db_path = str(tmp_path / "life.db")
-    eng = create_engine(f"sqlite+aiosqlite:///{db_path}")
-    await init_db(eng)
-    settings = type("S", (), {"secret_key": "s", "encryption_key": "x" * 44})()
-    fast = FastAPI()
-    fast.state.engine = eng
-    fast.state.settings = settings
+    fast, token, _admin, eng = await make_admin_app(
+        tmp_path, db_name="life.db", routers=[admin_reviews.router],
+    )
     fast.state.config_repository = None
     fast.state.forge_registry = None
-    fast.include_router(auth_router, prefix="/api")
-    fast.include_router(admin_reviews.router, prefix="/api")
-    token = issue_token(settings.secret_key)
-    yield fast, token, db_path
+    yield fast, token, str(tmp_path / "life.db")
     await eng.dispose()
 
 

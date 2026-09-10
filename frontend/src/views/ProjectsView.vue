@@ -2,8 +2,8 @@
   <div>
     <el-card>
       <div class="toolbar">
-        <el-button type="primary" @click="openCreate">新增项目</el-button>
-        <el-button :loading="pollBusy" @click="onPoll">
+        <el-button v-if="auth.hasPerm('projects:manage')" type="primary" @click="openCreate">新增项目</el-button>
+        <el-button v-if="auth.hasPerm('pulls:manage')" :loading="pollBusy" @click="onPoll">
           {{ pollBusy ? '补拉中…' : '补拉 PR/MR' }}
         </el-button>
       </div>
@@ -27,10 +27,11 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+            <el-button v-if="auth.hasPerm('projects:manage')" link type="primary" @click="openMembers(row)">成员</el-button>
+            <el-button v-if="auth.hasPerm('projects:manage')" link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button v-if="auth.hasPerm('projects:manage')" link type="danger" @click="onDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -114,6 +115,34 @@
         <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 项目成员（F5.11 项目级隔离） -->
+    <el-dialog v-model="memberVisible" :title="`成员：${memberProject?.repo_full_name || memberProject?.id || ''}`" width="520px">
+      <el-form label-width="90px">
+        <el-form-item label="成员">
+          <el-select
+            v-model="memberUserIds"
+            multiple
+            filterable
+            collapse-tags
+            style="width: 100%"
+            placeholder="选择可访问该项目的用户"
+          >
+            <el-option
+              v-for="u in allUsers"
+              :key="u.id"
+              :label="`${u.username}${u.display_name ? '（' + u.display_name + '）' : ''}`"
+              :value="u.id"
+            />
+          </el-select>
+          <div class="form-tip">项目级权限经成员关系生效；全项目角色无需在此勾选即可看所有项目。</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="memberVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="onSaveMembers">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -126,9 +155,16 @@ import {
   updateProject,
   deleteProject,
   resolveRepo,
+  listProjectMembers,
+  setProjectMembers,
+  listUsers,
   type Project,
+  type UserRow,
 } from '../api'
 import { pollBusy, pollProgress, triggerPoll, resumePollWatchIfBusy } from './usePoll'
+import { useAuthStore } from '../stores/auth'
+
+const auth = useAuthStore()
 
 const items = ref<Project[]>([])
 const loading = ref(false)
@@ -136,6 +172,10 @@ const saving = ref(false)
 const resolving = ref(false)
 const dialogVisible = ref(false)
 const isEdit = ref(false)
+const memberVisible = ref(false)
+const memberProject = ref<Project | null>(null)
+const memberUserIds = ref<number[]>([])
+const allUsers = ref<UserRow[]>([])
 const editingId = ref<number | null>(null)
 
 const emptyForm = () => ({
@@ -268,6 +308,31 @@ async function onDelete(row: Project) {
   await deleteProject(row.id)
   ElMessage.success('已删除')
   load()
+}
+
+// ── 项目成员（F5.11 项目级隔离）────────────────────────────────────
+async function openMembers(row: Project) {
+  memberProject.value = row
+  try {
+    const mems = await listProjectMembers(row.id)
+    memberUserIds.value = mems.map((m) => Number(m.id))
+    if (!allUsers.value.length) allUsers.value = await listUsers()
+  } catch (e: any) {
+    return ElMessage.error(e?.response?.data?.detail || '加载成员失败')
+  }
+  memberVisible.value = true
+}
+async function onSaveMembers() {
+  saving.value = true
+  try {
+    await setProjectMembers(memberProject.value!.id, memberUserIds.value)
+    ElMessage.success('成员已更新')
+    memberVisible.value = false
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '保存失败')
+  } finally {
+    saving.value = false
+  }
 }
 
 onMounted(() => {

@@ -15,11 +15,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
-from codereview_ai.api.deps import get_current_user
+from codereview_ai.api.deps import get_current_user, require_permission
 from codereview_ai.queue.concurrency import WORKER_LOOP_CAP
 from codereview_ai.storage.setting_repo import SettingRepository
 
-router = APIRouter(prefix="/settings", dependencies=[Depends(get_current_user)])
+router = APIRouter(
+    prefix="/settings",
+    dependencies=[Depends(get_current_user), Depends(require_permission("settings:manage"))],
+)
 
 CONCURRENCY_KEY = "worker_concurrency"
 MIN_CONCURRENCY = 1

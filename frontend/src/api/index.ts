@@ -5,6 +5,10 @@ import client from './client'
 export interface User {
   id: number | string
   username: string
+  display_name: string
+  enabled: boolean
+  role_id: number
+  role_name: string
   [key: string]: any
 }
 
@@ -13,6 +17,12 @@ export interface LoginResult {
   token_type: string
   expires_in: number
   user: User
+  permissions: string[]
+}
+
+export interface MeResult {
+  user: User
+  permissions: string[]
 }
 
 export interface Project {
@@ -145,8 +155,11 @@ export interface TaskItem {
 }
 
 // ===== 认证 =====
-export function login(password: string): Promise<LoginResult> {
-  return client.post('/auth/login', { password }).then((r) => r.data)
+export function login(username: string, password: string): Promise<LoginResult> {
+  return client.post('/auth/login', { username, password }).then((r) => r.data)
+}
+export function me(): Promise<MeResult> {
+  return client.get('/auth/me').then((r) => r.data)
 }
 
 // ===== 项目 =====
@@ -405,4 +418,74 @@ export interface DashboardStats {
 }
 export function getStats(): Promise<DashboardStats> {
   return client.get('/stats').then((r) => r.data)
+}
+
+// ===== 用户 / 角色（F5.11 RBAC）=====
+export interface UserRow extends User {
+  created_at: string
+}
+export interface RoleItem {
+  id: number
+  name: string
+  description: string
+  is_super: boolean
+  is_system: boolean
+  all_projects: boolean
+  builtin_code: string
+  permissions: string[]
+  member_count: number
+}
+export interface PermissionItem {
+  code: string
+  name: string
+  scope: 'global' | 'project'
+  description: string
+}
+
+export function listUsers(): Promise<UserRow[]> {
+  return client.get('/users').then((r) => r.data)
+}
+export function createUser(data: { username: string; password: string; display_name?: string; role_id: number; enabled?: boolean }): Promise<UserRow> {
+  return client.post('/users', data).then((r) => r.data)
+}
+export function updateUser(id: number, data: Partial<UserRow>): Promise<UserRow> {
+  return client.put(`/users/${id}`, data).then((r) => r.data)
+}
+export function deleteUser(id: number): Promise<any> {
+  return client.delete(`/users/${id}`).then((r) => r.data)
+}
+export function resetPassword(id: number, password: string): Promise<UserRow> {
+  return client.post(`/users/${id}/reset-password`, { password }).then((r) => r.data)
+}
+
+export function listRoles(): Promise<RoleItem[]> {
+  return client.get('/roles').then((r) => r.data)
+}
+export function listPermissions(): Promise<PermissionItem[]> {
+  return client.get('/roles/permissions').then((r) => r.data)
+}
+export function createRole(data: { name: string; description?: string; all_projects?: boolean; permission_codes?: string[] }): Promise<RoleItem> {
+  return client.post('/roles', data).then((r) => r.data)
+}
+export function updateRole(id: number, data: Partial<RoleItem>): Promise<RoleItem> {
+  return client.put(`/roles/${id}`, data).then((r) => r.data)
+}
+export function setRolePermissions(id: number, permission_codes: string[]): Promise<RoleItem> {
+  return client.put(`/roles/${id}/permissions`, { permission_codes }).then((r) => r.data)
+}
+export function deleteRole(id: number): Promise<any> {
+  return client.delete(`/roles/${id}`).then((r) => r.data)
+}
+
+// 项目成员
+export interface ProjectMember {
+  id: number
+  username: string
+  display_name: string
+}
+export function listProjectMembers(projectId: number): Promise<ProjectMember[]> {
+  return client.get(`/projects/${projectId}/members`).then((r) => r.data)
+}
+export function setProjectMembers(projectId: number, user_ids: number[]): Promise<ProjectMember[]> {
+  return client.put(`/projects/${projectId}/members`, { user_ids }).then((r) => r.data)
 }

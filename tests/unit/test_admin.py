@@ -17,10 +17,10 @@ from fastapi.testclient import TestClient
 from codereview_ai.api.admin import forges, notifiers, projects, pull, reviews, tasks
 from codereview_ai.api.admin import models as admin_models
 from codereview_ai.api.auth import issue_token
-from codereview_ai.api.auth import router as auth_router
 from codereview_ai.config.repository import ConfigRepository
-from codereview_ai.storage.db import create_engine, init_db, session_factory
+from codereview_ai.storage.db import session_factory
 from codereview_ai.storage.models import ForgeConfig, ModelConfig, ReviewFinding, ReviewTask
+from tests.unit.helpers import make_admin_app
 
 
 def _fernet_key() -> str:
@@ -29,27 +29,15 @@ def _fernet_key() -> str:
 
 @pytest.fixture
 async def app(tmp_path) -> AsyncIterator[tuple[FastAPI, str]]:
-    url = f"sqlite+aiosqlite:///{tmp_path / 'admin.db'}"
-    engine = create_engine(url)
-    await init_db(engine)
-
-    settings = type("S", (), {"secret_key": "s", "encryption_key": _fernet_key()})()
-
-    fast = FastAPI()
-    fast.state.engine = engine
-    fast.state.settings = settings
+    routers = [
+        projects.router, admin_models.router, notifiers.router, forges.router,
+        reviews.router, tasks.router, pull.router,
+    ]
+    fast, token, _admin, engine = await make_admin_app(
+        tmp_path, db_name="admin.db", routers=routers,
+    )
     fast.state.config_repository = ConfigRepository(engine, encryption_key=_fernet_key())
     fast.state.forge_registry = None  # 单测不启动 worker；热更分支被跳过
-    fast.include_router(auth_router, prefix="/api")
-    fast.include_router(projects.router, prefix="/api")
-    fast.include_router(admin_models.router, prefix="/api")
-    fast.include_router(notifiers.router, prefix="/api")
-    fast.include_router(forges.router, prefix="/api")
-    fast.include_router(reviews.router, prefix="/api")
-    fast.include_router(tasks.router, prefix="/api")
-    fast.include_router(pull.router, prefix="/api")
-
-    token = issue_token(settings.secret_key)
     try:
         yield fast, token
     finally:

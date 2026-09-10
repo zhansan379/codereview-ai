@@ -27,9 +27,11 @@ from codereview_ai.api.admin import (
     projects,
     pull,
     reviews,
+    roles,
     schedules,
     stats,
     tasks,
+    users,
 )
 from codereview_ai.api.admin import (
     settings as admin_settings,  # 全局运行时设置（并发数）
@@ -50,9 +52,10 @@ from codereview_ai.ops.tracing import TraceMiddleware
 from codereview_ai.queue.asyncio import AsyncioTaskQueue
 from codereview_ai.queue.concurrency import WorkerPool
 from codereview_ai.review.static_analysis import StaticAnalyzer
-from codereview_ai.storage.db import create_engine, init_db
+from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.project_repo import ProjectRepository
 from codereview_ai.storage.review_repo import ReviewRepository
+from codereview_ai.storage.seed import seed_rbac
 from codereview_ai.storage.setting_repo import SettingRepository
 from codereview_ai.worker import (
     EventStore,
@@ -88,6 +91,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await init_db(engine)
         app.state.engine = engine
         app.state.settings = settings
+
+        # —— RBAC 种子（F5.11）：MLP 就绪后播种权限目录 + 内置角色 + 首个 admin ——
+        async with session_factory(engine)() as s:
+            await seed_rbac(s, settings.admin_password)
 
         # —— simple 档队列：webhook 入队即返回 202，worker 异步消费 ——
         store = EventStore()
@@ -275,6 +282,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_settings.router, prefix="/api")
     app.include_router(tasks.router, prefix="/api")
     app.include_router(stats.router, prefix="/api")
+    app.include_router(users.router, prefix="/api")
+    app.include_router(roles.router, prefix="/api")
     app.include_router(webhook_router)
     return app
 

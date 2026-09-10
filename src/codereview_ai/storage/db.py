@@ -90,6 +90,7 @@ _COLUMN_FALLBACKS: dict[str, list[tuple[str, str, str]]] = {
         ("pr_title", "VARCHAR(255)", "DEFAULT ''"),
         ("push_commits", "TEXT", "DEFAULT ''"),
         ("web_url", "VARCHAR(1024)", "DEFAULT ''"),
+        ("project_id", "INTEGER", ""),  # RBAC 项目级隔离：存量行 NULL，读侧按 provider+repo_id 兜底
     ],
 }
 

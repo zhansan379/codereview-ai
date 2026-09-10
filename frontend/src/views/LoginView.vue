@@ -9,6 +9,9 @@
         label-position="top"
         @keyup.enter="onSubmit"
       >
+        <el-form-item label="用户名" prop="username">
+          <el-input v-model="form.username" placeholder="请输入用户名" />
+        </el-form-item>
         <el-form-item label="密码" prop="password">
           <el-input
             v-model="form.password"
@@ -40,10 +43,11 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const formRef = ref<FormInstance>()
-const form = reactive({ password: '' })
+const form = reactive({ username: 'admin', password: '' })
 const loading = ref(false)
 
 const rules = {
+  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
 
@@ -53,7 +57,7 @@ async function onSubmit() {
     if (!valid) return
     loading.value = true
     try {
-      await auth.login(form.password)
+      await auth.login(form.username, form.password)
       ElMessage.success('登录成功')
       router.push('/dashboard')
     } catch (e: any) {

@@ -22,7 +22,7 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 def _utcnow() -> datetime:
@@ -77,11 +77,14 @@ class ReviewTask(Base):
             sqlite_where=text("event_type = 'push'"),
             postgresql_where=text("event_type = 'push'"),
         ),
+        Index("idx_review_task_project_id", "project_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     provider: Mapped[str] = mapped_column(String(32))
     repo_id: Mapped[str] = mapped_column(String(255))
+    # 归属项目（RBAC 隔离；存量可空，读侧按 provider+repo_id 兜底）
+    project_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pr_number: Mapped[int | None] = mapped_column(Integer, nullable=True)  # push 轨为 NULL
     event_type: Mapped[str] = mapped_column(String(16), default="mr")
     branch: Mapped[str] = mapped_column(String(255), default="")
@@ -277,3 +280,80 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(String(255), default="")
+
+
+class Role(Base):
+    """角色（RBAC）：`is_super`（admin 全通）/`is_system`（内置不可删）/`all_projects`
+    （项目级权限对所有项目生效）/`builtin_code`（admin|tech_lead|developer|viewer）。
+    """
+
+    __tablename__ = "role"
+    __table_args__ = (Index("uq_role_name", "name", unique=True),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64))
+    description: Mapped[str] = mapped_column(String(255), default="")
+    is_super: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False)
+    all_projects: Mapped[bool] = mapped_column(Boolean, default=False)
+    builtin_code: Mapped[str] = mapped_column(String(32), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    permissions: Mapped[list[Permission]] = relationship(secondary="role_permission")
+
+
+class Permission(Base):
+    """权限点（静态目录）：`code` 唯一、`scope` ∈ {'global','project'}。seed 时写入。"""
+
+    __tablename__ = "permission"
+    __table_args__ = (Index("uq_perm_code", "code", unique=True),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(128), default="")
+    scope: Mapped[str] = mapped_column(String(16), default="global")
+    is_system: Mapped[bool] = mapped_column(Boolean, default=True)
+    description: Mapped[str] = mapped_column(String(255), default="")
+
+
+class RolePermission(Base):
+    """角色-权限 junction。"""
+
+    __tablename__ = "role_permission"
+    __table_args__ = (
+        Index("uq_role_permission", "role_id", "permission_id", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    role_id: Mapped[int] = mapped_column(ForeignKey("role.id", ondelete="CASCADE"))
+    permission_id: Mapped[int] = mapped_column(ForeignKey("permission.id", ondelete="CASCADE"))
+
+
+class User(Base):
+    """后台登录用户：`password_hash`=scrypt 密文；`role_id` 指向全局角色。"""
+
+    __tablename__ = "user"
+    __table_args__ = (Index("uq_user_username", "username", unique=True),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64))
+    password_hash: Mapped[str] = mapped_column(String(255))
+    display_name: Mapped[str] = mapped_column(String(128), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    role_id: Mapped[int] = mapped_column(ForeignKey("role.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    role: Mapped[Role] = relationship("Role", lazy="joined")
+
+
+class ProjectMember(Base):
+    """项目-用户成员关系（项目级隔离）：用户对其有成员关系的项目才可见/可操作项目级权限。"""
+
+    __tablename__ = "project_member"
+    __table_args__ = (
+        Index("uq_project_member", "project_id", "user_id", unique=True),
+        Index("idx_project_member_user", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("project.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

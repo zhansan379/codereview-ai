@@ -993,11 +993,49 @@ def classify_for_writeback(f: Finding, min_inline_severity: str) -> Literal["inl
 /settings                          # 系统级（webhook secret 为只读展示）
 ```
 
-### 14.3 鉴权
+### 14.3 鉴权（F5.11 多用户 + RBAC）
 
-- 登录：`POST /api/auth/login` → JWT（HS256，`SECRET_KEY` 来自环境变量，**无默认值**，未配置 fail-fast）。
-- `api/deps.py` 的 `get_current_user` 依赖解析 Bearer token。
-- 前端把 JWT 存 `sessionStorage`（非 localStorage，关闭即失效更安全）。
+**登录**：`POST /api/auth/login` 收 `{username, password}` → 查 `user` 表 → `security.py::verify_password`
+（stdlib scrypt + 每用户盐，常量时间比较）→ 校验 `enabled` → 签发 HS256 JWT，`sub` 为**用户 id**
+（username 可改，id 稳定）。密钥来自环境变量 `CR_SECRET_KEY`，**无默认值**，未配置 fail-fast。
+首次登录的 `admin` 由 `storage/seed.py::seed_rbac` 在启动时从 `CR_ADMIN_PASSWORD` 派生（幂等）。
+
+**鉴权依赖**：`api/deps.py` 的 `get_current_user` **按请求查库加载 User行**（连带角色与权限）——
+禁用用户即时拒绝、角色/权限改动即时生效。解析 Bearer → 取用户失败一律 401。
+
+**RBAC 模型（全量）**：新增 `role` / `permission` / `role_permission` / `user` / `project_member` 五表
+（`storage/models.py`，`create_all` 自动建）。权限点有 `scope`∈{global, project}；`role.is_super`
+（admin）在所有项目全通；`role.all_projects` 让项目级权限对所有项目生效；项目级权限通过
+`project_member(user, project)` 成员关系再进一步限定。权限目录 `PERMISSION_CATALOG` 为单一事实源，
+seed 出四套内置角色（admin / tech_lead / developer / viewer），管理员可自建自定义角色勾选权限组合
+（不可设 `is_super`）。授权判定统一走 `deps.user_can(session, user, code, project_id)`，
+路由级全局权限挂 `require_permission(code)`，项目级读写各自校验。
+
+- `get_current_user` → 当前用户（User 行）
+- `CurrentUser` = `Annotated[User, Depends(get_current_user)]`
+- `user_can` / `allowed_project_ids` / `review_scope_clause`/`review_task_allowed`：权限判定 + 项目隔离谓词
+
+**项目级隔离**：`Project` 列表/详情按成员关系过滤；`ReviewTask` 新增可空 `project_id`（webhook
+入队时按 `(provider, repo_id)` 回填，见 `ReviewRepository.ensure_task`），读侧对存量 NULL 行按
+`(provider, repo_id)` join `project` 兜底。`stats` / reviews / tasks / notifiers 列表均注入用户后
+套 `review_scope_clause` 或成员过滤。前端按登录返回的 `permissions` 数组用 `hasPerm(code)` 门控菜单
+与按钮，登录/管理 API 见 `api/admin/users.py`、`api/admin/roles.py`。
+
+---
+
+## 14.5 数据表补充（RBAC）
+
+| 表 | 说明 |
+|---|---|
+| `user` | 登录用户：`username`(uq)、`password_hash`(scrypt)、`display_name`、`enabled`、`role_id`→role |
+| `role` | 角色：`is_super`、`is_system`、`all_projects`、`builtin_code` |
+| `permission` | 权限点：`code`(uq)、`scope`∈{global,project}（seed 静态目录） |
+| `role_permission` | 角色-权限 junction |
+| `project_member` | 项目-用户成员关系（`(project_id,user_id)` uq，级联删除） |
+
+> Postgres 说明：本仓库无 Alembic。新表由 `create_all` 自动建；`review_task.project_id` 为**存量表
+> 加列**，SQLite 由 `_COLUMN_FALLBACKS` 自动补，Postgres **存量库需一次手动
+> `ALTER TABLE review_task ADD COLUMN project_id INTEGER NULL;`**（新建库的 create_all 已覆盖）。
 
 ---
 
