@@ -103,7 +103,7 @@
       :close-on-click-modal="false"
       append-to-body
     >
-      <el-form label-width="90px">
+      <el-form label-width="auto">
         <el-form-item :label="$t('reviews.exportScope')">
           <span class="export-scope">
             {{ $t('reviews.exportScopeText') }}

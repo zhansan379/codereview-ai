@@ -9,7 +9,7 @@
         </div>
       </template>
       <div class="policy-body">
-        <el-form :inline="true" label-width="90px">
+        <el-form :inline="true" label-width="auto">
           <el-form-item :label="$t('common.enabled')">
             <el-switch v-model="settings.enabled" />
           </el-form-item>
@@ -41,7 +41,7 @@
       </div>
       <el-table :data="items" v-loading="loading" stripe>
         <el-table-column prop="repo_full_name" :label="$t('caches.repo')" min-width="220" />
-        <el-table-column prop="provider" :label="$t('caches.provider')" width="90" />
+        <el-table-column prop="provider" :label="$t('caches.provider')" :width="colWidth(90)" />
         <el-table-column :label="$t('caches.lastFetchedHead')" width="220">
           <template #default="{ row }">
             <code class="sha">{{ shortSha(row.head_sha) }}</code>
@@ -74,6 +74,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
+import { colWidth } from '../composables/useLocale'
 import {
   listCloneCaches,
   deleteCloneCache,

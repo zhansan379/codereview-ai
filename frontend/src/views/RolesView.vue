@@ -14,19 +14,19 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('roles.allProjects')" width="90">
+        <el-table-column :label="$t('roles.allProjects')" :width="colWidth(90)">
           <template #default="{ row }">
             <el-tag v-if="row.all_projects" type="success" size="small">{{ $t('common.yes') }}</el-tag>
             <span v-else class="muted">{{ $t('common.no') }}</span>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('roles.permCount')" width="80">
+        <el-table-column :label="$t('roles.permCount')" :width="colWidth(85)">
           <template #default="{ row }">
             {{ row.permissions.length }}
           </template>
         </el-table-column>
-        <el-table-column prop="member_count" :label="$t('roles.memberCount')" width="80" />
-        <el-table-column :label="$t('common.actions')" width="200" fixed="right">
+        <el-table-column prop="member_count" :label="$t('roles.memberCount')" :width="colWidth(80)" />
+        <el-table-column :label="$t('common.actions')" :width="colWidth(200)" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openPerms(row)">{{ $t('roles.permissions') }}</el-button>
             <el-button v-if="!row.is_system" link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
@@ -38,7 +38,7 @@
 
     <!-- 新增 / 编辑 角色 -->
     <el-dialog v-model="dialogVisible" :title="isEdit ? $t('roles.editTitle') : $t('roles.createTitle')" width="640px">
-      <el-form :model="form" label-width="90px">
+      <el-form :model="form" label-width="auto">
         <el-form-item :label="$t('common.name')" required>
           <el-input v-model="form.name" :disabled="isEdit" />
         </el-form-item>
@@ -92,6 +92,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
+import { colWidth } from '../composables/useLocale'
 import {
   listRoles,
   listPermissions,

@@ -71,21 +71,23 @@ export default {
       active: 'Open',
       resolved: 'Resolved',
     },
+    // 这几条只进 el-tag 和雷达图图例,宽度很紧,取最短且仍可辨的写法;
+    // Main loop / Bg loop 的 loop 都留着,不然两个循环阶段分不出来。
     phase: {
       plan: 'Plan',
-      grouping: 'File grouping',
+      grouping: 'Grouping',
       main: 'Main loop',
-      re_location: 'Line re-anchor',
-      review_filter: 'Reproduction check',
+      re_location: 'Re-anchor',
+      review_filter: 'Repro check',
       scoring: 'Scoring',
       compress: 'Compress',
-      loop: 'Background loop',
+      loop: 'Bg loop',
     },
     bucket: {
       new: 'New',
       persisting: 'Persisting',
       resolved: 'Resolved',
-      not_reviewed: 'Not covered last round',
+      not_reviewed: 'Not covered',
     },
   },
 }

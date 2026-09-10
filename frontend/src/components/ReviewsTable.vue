@@ -3,12 +3,12 @@
     <el-table-column prop="id" label="ID" width="50" />
     <el-table-column prop="pr_number" label="PR" width="50" />
     <el-table-column prop="pr_title" :label="$t('reviewsTable.title')" min-width="180" show-overflow-tooltip />
-    <el-table-column prop="provider" :label="$t('reviewsTable.provider')" width="80" />
+    <el-table-column prop="provider" :label="$t('reviewsTable.provider')" :width="colWidth(80)" />
     <el-table-column prop="repo_id" :label="$t('reviewsTable.repoId')" min-width="200" show-overflow-tooltip />
-    <el-table-column v-if="showProcess" prop="event_type" :label="$t('reviewsTable.event')" width="60" />
+    <el-table-column v-if="showProcess" prop="event_type" :label="$t('reviewsTable.event')" :width="colWidth(60)" />
     <el-table-column v-if="showProcess" prop="branch" :label="$t('reviewsTable.branch')" width="200" show-overflow-tooltip />
-    <el-table-column v-if="showProcess" prop="attempt" :label="$t('reviewsTable.attempt')" width="80" />
-    <el-table-column prop="score_total" :label="$t('reviewsTable.score')" width="60" />
+    <el-table-column v-if="showProcess" prop="attempt" :label="$t('reviewsTable.attempt')" :width="colWidth(80)" />
+    <el-table-column prop="score_total" :label="$t('reviewsTable.score')" :width="colWidth(60)" />
     <el-table-column :label="$t('reviewsTable.mode')" width="80">
       <template #default="{ row }">
         <el-tag :type="modeTagType(row.exec_mode)" size="small">{{ modeLabel(row.exec_mode) }}</el-tag>
@@ -22,7 +22,10 @@
     <el-table-column :label="timeLabel" :width="160">
       <template #default="{ row }">{{ formatTime(row[timeField]) }}</template>
     </el-table-column>
-    <el-table-column v-if="showAction || showRetry || showDelete" :label="$t('common.actions')" :width="showDelete ? 160 : 120"
+    <!-- 宽度按最挤的一行给：详情 + 删除 + 补审/重试 + 重新发送 四个按钮同时出现时，
+         中文需 ~200px（含按钮间距 12px×3 与单元格内边距 24px），英文需 ~238px。
+         原先给的 160px 中文就会折行，把行高撑高——这里一并修掉。 -->
+    <el-table-column v-if="showAction || showRetry || showDelete" :label="$t('common.actions')" :width="colWidth(showDelete ? 205 : 120)"
       fixed="right">
       <template #default="{ row }">
         <el-button v-if="showAction" link type="primary" @click="$emit('detail', row.id)">{{ $t('common.detail') }}</el-button>
@@ -41,6 +44,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { formatTime, stateTagType, stateLabel, modeLabel, modeTagType } from '../utils/format'
 import type { ReviewItem } from '../api'
+import { colWidth } from '../composables/useLocale'
 
 // 审查记录 / 仪表盘"最近记录"共用的表格：列统一，改动一处多处生效。
 // - timeField 决定显示"排队时间"还是"完成时间"（标签与列宽随之切换）。

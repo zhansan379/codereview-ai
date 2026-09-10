@@ -26,8 +26,8 @@
         <el-table-column prop="repo_full_name" :label="$t('projects.columns.repo')" min-width="180" />
         <el-table-column prop="provider" :label="$t('projects.columns.provider')" width="100" />
         <el-table-column prop="web_url" label="Web URL" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="review_strategy" :label="$t('projects.columns.reviewStrategy')" width="120" />
-        <el-table-column :label="$t('projects.columns.enabled')" width="80">
+        <el-table-column prop="review_strategy" :label="$t('projects.columns.reviewStrategy')" :width="colWidth(120)" />
+        <el-table-column :label="$t('projects.columns.enabled')" :width="colWidth(80)">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'">
               {{ row.enabled ? $t('common.yes') : $t('common.no') }}
@@ -45,7 +45,7 @@
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="isEdit ? $t('projects.dialog.editTitle') : $t('projects.dialog.createTitle')" width="860px">
-      <el-form :model="form" label-width="110px">
+      <el-form :model="form" label-width="auto">
         <!-- 矮字段两两一行压缩弹窗高度（A 方案：双列网格） -->
         <el-row :gutter="12">
           <el-col :span="12">
@@ -172,7 +172,7 @@
 
     <!-- 项目成员（F5.11 项目级隔离） -->
     <el-dialog v-model="memberVisible" :title="$t('projects.members.title', { name: memberProject?.repo_full_name || memberProject?.id || '' })" width="520px">
-      <el-form label-width="90px">
+      <el-form label-width="auto">
         <el-form-item :label="$t('projects.members.label')">
           <el-select
             v-model="memberUserIds"
@@ -218,6 +218,7 @@ import {
 } from '../api'
 import { pollBusy, pollProgress, triggerPoll, resumePollWatchIfBusy } from './usePoll'
 import { useAuthStore } from '../stores/auth'
+import { colWidth } from '../composables/useLocale'
 
 const auth = useAuthStore()
 const { t } = useI18n()

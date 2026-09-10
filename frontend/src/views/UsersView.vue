@@ -19,7 +19,7 @@
         <el-table-column :label="$t('common.createdAt')" min-width="160">
           <template #default="{ row }">{{ fmt(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column :label="$t('common.actions')" width="260" fixed="right">
+        <el-table-column :label="$t('common.actions')" :width="colWidth(260)" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
             <el-button link type="primary" @click="openResetPw(row)">{{ $t('users.resetPassword') }}</el-button>
@@ -33,7 +33,7 @@
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="isEdit ? $t('users.editTitle') : $t('users.createTitle')" width="520px">
-      <el-form :model="form" label-width="90px">
+      <el-form :model="form" label-width="auto">
         <el-form-item :label="$t('users.username')" required>
           <el-input v-model="form.username" :disabled="isEdit" />
         </el-form-item>
@@ -69,7 +69,7 @@
       :title="$t('users.resetPasswordTitle', { name: current?.username || '' })"
       width="480px"
     >
-      <el-form label-width="90px">
+      <el-form label-width="auto">
         <el-form-item :label="$t('users.newPassword')" required>
           <el-input v-model="newPassword" type="password" show-password :placeholder="$t('users.passwordHint')" />
         </el-form-item>
@@ -97,6 +97,7 @@ import {
   type RoleItem,
 } from '../api'
 import { formatTime } from '../utils/format'
+import { colWidth } from '../composables/useLocale'
 
 const { t } = useI18n()
 

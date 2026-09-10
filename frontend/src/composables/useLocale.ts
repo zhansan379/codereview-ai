@@ -30,6 +30,21 @@ watch(
   },
 )
 
+/**
+ * 死宽度按语言放大。现有 px 全是照中文文案量的,英文同义词普遍宽 30%~40%
+ * (「重置密码」8 格 → 「Reset password」14 格),砍成缩写反而难读,不如多留位置。
+ *
+ * 只用在两种列上,别全表铺开:
+ *   1. `fixed` 列 / 操作列——Element Plus 必须知道确切宽度,用不了 min-width;
+ *   2. 实测英文表头挤不下的窄列(见下方各调用点)。
+ * 其余列现有宽度对英文都有富余,原样保留——中文侧宽度因此一格不变。
+ *
+ * 模板里调用即可响应语言切换:渲染时读了 locale.value,切换后组件自然重渲染。
+ */
+export function colWidth(zh: number, ratio = 1.3): number {
+  return locale.value === 'en' ? Math.round(zh * ratio) : zh
+}
+
 export function useLocale() {
   const epLocale = computed(() => EP_LOCALES[locale.value] ?? zhCn)
 

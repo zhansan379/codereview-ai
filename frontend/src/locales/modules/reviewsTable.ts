@@ -29,7 +29,8 @@ export default {
     queuedAt: 'Queued at',
     finishedAt: 'Finished at',
     retry: 'Retry',
-    reReview: 'Re-review',
+    // 「补审」是给被跳过、从未审过的任务补一次，不是重审，所以不能叫 Re-review
+    reReview: 'Review',
     resend: 'Resend',
   },
 }

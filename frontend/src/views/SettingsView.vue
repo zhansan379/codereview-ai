@@ -11,7 +11,7 @@
 
       <div v-for="prov in providers" :key="prov" class="forge-card">
         <h3>{{ provLabels[prov] }}</h3>
-        <el-form label-width="70px">
+        <el-form label-width="auto">
           <el-form-item label="URL">
             <el-input v-model="form[prov].url" :placeholder="defaults[prov]" />
             <div class="form-tip">{{ $t('settings.urlTip', { url: defaults[prov] }) }}</div>
@@ -72,7 +72,7 @@
       <p class="intro">
         {{ $t('settings.concurrencyIntro') }}
       </p>
-      <el-form label-width="110px">
+      <el-form label-width="auto">
         <el-form-item :label="$t('settings.concurrencyLimit')">
           <el-input-number v-model="concurrency" :min="1" :max="32" />
           <span class="form-tip" style="margin-left: 8px">{{ $t('settings.concurrencyTip') }}</span>
@@ -93,7 +93,7 @@
           <template #priority><strong>{{ $t('settings.autoPriority') }}</strong></template>
         </i18n-t>
       </p>
-      <el-form label-width="110px">
+      <el-form label-width="auto">
         <el-form-item :label="$t('settings.pushTrack')">
           <el-switch v-model="pushEnabled" />
           <span class="form-tip" style="margin-left: 8px">

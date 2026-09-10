@@ -12,20 +12,20 @@
             <el-tag>{{ row.channel }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="project_id" :label="$t('notifiers.columns.project')" width="110">
+        <el-table-column prop="project_id" :label="$t('notifiers.columns.project')" :width="colWidth(110)">
           <template #default="{ row }">
             {{ row.project_id === null ? $t('notifiers.columns.global') : row.project_id }}
           </template>
         </el-table-column>
-        <el-table-column prop="at_threshold" :label="$t('notifiers.columns.atThreshold')" width="90" />
-        <el-table-column :label="$t('notifiers.columns.atAll')" width="100">
+        <el-table-column prop="at_threshold" :label="$t('notifiers.columns.atThreshold')" :width="colWidth(90)" />
+        <el-table-column :label="$t('notifiers.columns.atAll')" :width="colWidth(100)">
           <template #default="{ row }">
             <el-tag :type="row.at_all ? 'warning' : 'info'">
               {{ row.at_all ? $t('common.yes') : $t('common.no') }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('notifiers.columns.enabled')" width="80">
+        <el-table-column :label="$t('notifiers.columns.enabled')" :width="colWidth(80)">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'">
               {{ row.enabled ? $t('common.yes') : $t('common.no') }}
@@ -43,7 +43,7 @@
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="isEdit ? $t('notifiers.dialog.editTitle') : $t('notifiers.dialog.createTitle')" width="560px">
-      <el-form :model="form" label-width="110px">
+      <el-form :model="form" label-width="auto">
         <el-form-item :label="$t('notifiers.form.channel')" required>
           <el-select
             v-model="form.channel"
@@ -141,7 +141,7 @@
             <template v-else>{{ row.git_username || '—' }}</template>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('notifiers.members.dingtalkMobile')" width="140">
+        <el-table-column :label="$t('notifiers.members.dingtalkMobile')" :width="colWidth(140)">
           <template #default="{ row }">
             <el-input v-if="memberEditingId === row.id" v-model="memberForm.dingtalk_mobile" :placeholder="$t('notifiers.members.dingtalkMobilePlaceholder')" size="small" clearable style="width: 100%" />
             <template v-else>{{ row.dingtalk_mobile || '—' }}</template>
@@ -180,6 +180,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
+import { colWidth } from '../composables/useLocale'
 import {
   listNotifiers, createNotifier, updateNotifier, deleteNotifier, listProjects,
   listMembers, createMember, updateMember, deleteMember,

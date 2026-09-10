@@ -10,8 +10,8 @@
         <el-table-column prop="provider" :label="$t('models.colProvider')" width="110" />
         <el-table-column prop="model" :label="$t('models.colModel')" min-width="140" />
         <el-table-column prop="base_url" label="Base URL" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="priority" :label="$t('models.colPriority')" width="90" />
-        <el-table-column :label="$t('models.colEnabled')" width="80">
+        <el-table-column prop="priority" :label="$t('models.colPriority')" :width="colWidth(90)" />
+        <el-table-column :label="$t('models.colEnabled')" :width="colWidth(80)">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'">
               {{ row.enabled ? $t('common.yes') : $t('common.no') }}
@@ -33,7 +33,7 @@
       :title="isEdit ? $t('models.editTitle') : $t('models.create')"
       width="640px"
     >
-      <el-form :model="form" label-width="120px">
+      <el-form :model="form" label-width="auto">
         <el-form-item :label="$t('models.colName')" required>
           <el-input v-model="form.name" />
         </el-form-item>
@@ -177,6 +177,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import { listModels, createModel, updateModel, deleteModel, testModel, type ModelItem } from '../api'
+import { colWidth } from '../composables/useLocale'
 
 const { t } = useI18n()
 

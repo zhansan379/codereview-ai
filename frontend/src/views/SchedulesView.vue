@@ -21,7 +21,7 @@
             {{ paramText(row) }}
           </template>
         </el-table-column>
-        <el-table-column :label="$t('common.enabled')" width="80">
+        <el-table-column :label="$t('common.enabled')" :width="colWidth(80)">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'">
               {{ row.enabled ? $t('common.yes') : $t('common.no') }}
@@ -39,7 +39,7 @@
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="isEdit ? $t('schedules.editTitle') : $t('schedules.create')" width="560px">
-      <el-form :model="form" label-width="110px">
+      <el-form :model="form" label-width="auto">
         <el-form-item :label="$t('schedules.jobName')" required>
           <el-input v-model="form.name" :placeholder="$t('schedules.namePlaceholder')" />
         </el-form-item>
@@ -74,6 +74,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { colWidth } from '../composables/useLocale'
 import {
   listSchedules,
   createSchedule,
