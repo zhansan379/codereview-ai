@@ -169,7 +169,8 @@ function onLogout() {
   height: var(--app-header-height);
   display: flex;
   align-items: center;
-  justify-content: center;
+  /* 居左，左内边距对齐 el-menu-item 的默认 20px，图标与菜单项左缘成一条线 */
+  padding-left: 20px;
   gap: 8px;
   font-size: 17px;
   font-weight: 700;
