@@ -84,6 +84,7 @@ _COLUMN_FALLBACKS: dict[str, list[tuple[str, str, str]]] = {
         ("push_branch_globs", "VARCHAR(255)", "DEFAULT ''"),
         ("enforce_score_threshold", "BOOLEAN", "DEFAULT 0"),  # F3.7 评分阻塞开关
         ("mr_enabled", "BOOLEAN", ""),            # MR 轨：存量行 NULL=继承全局
+        ("workspace_id", "INTEGER", ""),  # 租户归属：存量行 NULL，启动回填指向默认工作区
     ],
     "review_task": [
         ("skip_reason", "VARCHAR(32)", "DEFAULT ''"),

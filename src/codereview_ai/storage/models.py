@@ -42,6 +42,8 @@ class Project(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     provider: Mapped[str] = mapped_column(String(32))
     repo_id: Mapped[str] = mapped_column(String(255))
+    # 租户归属（多租户开放注册）：NULL=默认/管理端空间，存量行启动后由回填指向「默认工作区」
+    workspace_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     repo_full_name: Mapped[str] = mapped_column(String(255), default="")
     web_url: Mapped[str] = mapped_column(String(1024), default="")
     branch_rule: Mapped[str] = mapped_column(String(255), default="")
@@ -424,4 +426,22 @@ class ProjectMember(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("project.id", ondelete="CASCADE"))
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Workspace(Base):
+    """租户工作区（多租户开放注册，单用户私有空间）。
+
+    注册用户各自 1 个私有 `Workspace`，`owner_id = user.id`。`owner_id` 可空 = 默认/管理端
+    空间（种子回填用；单用户阶段不建 workspace_member 中间表，多成员协作后置）。
+    `Project.workspace_id` 指向本表 `id`（无外键，存量可空，读侧/回填兜底）。
+    """
+
+    __tablename__ = "workspace"
+    __table_args__ = (Index("uq_workspace_slug", "slug", unique=True),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), default="")
+    slug: Mapped[str] = mapped_column(String(64))
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
