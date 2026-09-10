@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "自托管、开源的 AI 代码审查平台。LiteLLM 多模型接入，Webhook 自动审查 MR/PR，行级 inline 评论，钉钉/飞书/企微推送，Vue 管理后台。"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 dependencies = [
     "fastapi>=0.133",
     "uvicorn[standard]>=0.41",
@@ -14,7 +14,6 @@ dependencies = [
     "httpx>=0.28",
     "orjson>=3.12",
     "cryptography>=42",
-    "prometheus-client>=0.20",
     "aiosqlite>=0.20",
     "pyjwt>=2.13.0",
     "litellm>=1.40",  # LLM 网关（DESIGN §2）：统一多厂商 + JSON mode + acompletion

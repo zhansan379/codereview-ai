@@ -32,3 +32,6 @@ coverage.xml
 
 aacr-bench/
 .claude/
+.agents/
+
+skills-lock.json
