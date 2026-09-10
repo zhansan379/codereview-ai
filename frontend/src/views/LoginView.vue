@@ -1,6 +1,9 @@
 <template>
   <div class="login-wrap">
     <el-card class="login-card">
+      <div class="login-brand">
+        <AppLogo :size="40" />
+      </div>
       <h2 class="login-title">CodeReview AI 管理后台</h2>
       <el-form
         ref="formRef"
@@ -38,6 +41,7 @@ import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
+import AppLogo from '../components/AppLogo.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -80,6 +84,12 @@ async function onSubmit() {
 .login-card {
   width: 360px;
   padding: 12px 8px;
+}
+.login-brand {
+  display: flex;
+  justify-content: center;
+  color: var(--el-color-primary);
+  margin-bottom: 8px;
 }
 .login-title {
   text-align: center;
