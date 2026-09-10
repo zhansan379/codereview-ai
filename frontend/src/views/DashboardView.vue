@@ -11,11 +11,11 @@
       </el-card>
       <el-card>
         <div class="stat-label">未解决高危</div>
-        <div class="stat-value" style="color: #f56c6c">{{ stats.open_high }}</div>
+        <div class="stat-value" style="color: var(--el-color-danger)">{{ stats.open_high }}</div>
       </el-card>
       <el-card>
         <div class="stat-label">未解决严重</div>
-        <div class="stat-value" style="color: #e6a23c">{{ stats.open_critical }}</div>
+        <div class="stat-value" style="color: var(--el-color-warning)">{{ stats.open_critical }}</div>
       </el-card>
       <el-card>
         <div class="stat-label">平均对话轮数（agent）</div>
@@ -116,12 +116,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { getStats, listReviews, type DashboardStats, type ReviewItem, type PhaseBoxItem } from '../api'
 import ReviewsTable from '../components/ReviewsTable.vue'
 import KpiList from '../components/KpiList.vue'
+import { useDark } from '../composables/useDark'
+
+const { isDark } = useDark()
+// 记住每个容器当前用的 echarts 主题，切换时才 dispose 重建
+const chartTheme = new WeakMap<HTMLDivElement, string | undefined>()
 
 const trendRef = ref<HTMLDivElement>()
 const scatterRef = ref<HTMLDivElement>()
@@ -179,10 +184,10 @@ function fmtDur(sec: number): string {
 }
 
 const SEVERITY_META: Record<string, { label: string; color: string }> = {
-  critical: { label: '严重', color: '#f56c6c' },
-  high: { label: '高', color: '#e6a23c' },
-  medium: { label: '中', color: '#909399' },
-  low: { label: '低', color: '#c0c4cc' },
+  critical: { label: '严重', color: 'var(--el-color-danger)' },
+  high: { label: '高', color: 'var(--el-color-warning)' },
+  medium: { label: '中', color: 'var(--el-text-color-secondary)' },
+  low: { label: '低', color: 'var(--el-text-color-placeholder)' },
 }
 
 const severityTotal = computed(() => stats.value.findings_by_severity.reduce((s, x) => s + x.count, 0))
@@ -196,11 +201,11 @@ const severityRows = computed(() =>
 )
 
 const STATE_META: Record<string, { label: string; color: string }> = {
-  running: { label: '运行中', color: '#409eff' },
-  queued: { label: '排队中', color: '#909399' },
-  completed: { label: '已完成', color: '#67c23a' },
-  failed: { label: '失败', color: '#f56c6c' },
-  skipped: { label: '跳过', color: '#e6a23c' },
+  running: { label: '运行中', color: 'var(--el-color-primary)' },
+  queued: { label: '排队中', color: 'var(--el-text-color-secondary)' },
+  completed: { label: '已完成', color: 'var(--el-color-success)' },
+  failed: { label: '失败', color: 'var(--el-color-danger)' },
+  skipped: { label: '跳过', color: 'var(--el-color-warning)' },
 }
 const STATE_ORDER = ['running', 'queued', 'completed', 'failed', 'skipped']
 
@@ -213,7 +218,7 @@ const stateRows = computed(() =>
     .map((x) => ({
       label: STATE_META[x.key]?.label ?? x.key,
       value: x.count,
-      color: STATE_META[x.key]?.color ?? '#909399',
+      color: STATE_META[x.key]?.color ?? 'var(--el-text-color-secondary)',
       hint: pct(x.count, stateTotal.value),
     })),
 )
@@ -223,7 +228,7 @@ const providerRows = computed(() =>
   stats.value.provider_split.map((x) => ({
     label: x.key,
     value: x.count,
-    color: '#409eff',
+    color: 'var(--el-color-primary)',
     hint: pct(x.count, providerTotal.value),
   })),
 )
@@ -237,7 +242,7 @@ const modeRows = computed(() =>
   stats.value.tasks_by_mode.map((x) => ({
     label: MODE_META[x.key]?.label ?? x.key,
     value: x.count,
-    color: MODE_META[x.key]?.color ?? '#409eff',
+    color: MODE_META[x.key]?.color ?? 'var(--el-color-primary)',
     hint: pct(x.count, modeTotal.value),
   })),
 )
@@ -387,9 +392,20 @@ function drawCost() {
   })
 }
 
-// 复用已有实例（模式开关重绘）而非重复 init（重复 init 会抛「已初始化」）
+// 复用已有实例（模式开关重绘）而非重复 init（重复 init 会抛「已初始化」）；
+// 但亮/暗切换必须换 echarts 主题，而主题只能在 init 时定——所以主题变了就先 dispose。
 function ensure(el: HTMLDivElement) {
-  return echarts.getInstanceByDom(el) ?? echarts.init(el)
+  const theme = isDark.value ? 'dark' : undefined
+  const existing = echarts.getInstanceByDom(el)
+  if (existing) {
+    if (chartTheme.get(el) === theme) return existing
+    existing.dispose()
+  }
+  chartTheme.set(el, theme)
+  const inst = echarts.init(el, theme)
+  // echarts 内置 dark 主题自带深紫底色，这里让卡片背景透出来
+  inst.setOption({ backgroundColor: 'transparent' })
+  return inst
 }
 
 // Agent 管线阶段规范顺序；未在列出的兜底phase（如 loop）追加在后
@@ -527,6 +543,9 @@ onMounted(() => {
   loadDash()
 })
 onUnmounted(() => window.removeEventListener('resize', resizeCharts))
+
+// 暗色切换后按新主题重建图表（轴文字/网格线颜色跟着走）
+watch(isDark, () => redrawAll())
 </script>
 
 <style scoped>
@@ -541,7 +560,7 @@ onUnmounted(() => window.removeEventListener('resize', resizeCharts))
   }
 }
 .stat-label {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 13px;
 }
 .stat-value {
@@ -552,7 +571,7 @@ onUnmounted(() => window.removeEventListener('resize', resizeCharts))
 .stat-unit {
   font-size: 14px;
   font-weight: 400;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-left: 2px;
 }
 .charts-row {
@@ -574,7 +593,7 @@ onUnmounted(() => window.removeEventListener('resize', resizeCharts))
 .header-sub {
   font-size: 13px;
   font-weight: 400;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-left: 8px;
 }
 .table-card {

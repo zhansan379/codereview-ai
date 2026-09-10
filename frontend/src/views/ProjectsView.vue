@@ -401,16 +401,16 @@ onMounted(() => {
 .poll-hint {
   margin-left: 12px;
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 .poll-progress {
   margin-bottom: 12px;
   padding: 8px 12px;
-  border: 1px solid #e1e8f0;
+  border: 1px solid var(--el-border-color-light);
   border-radius: 6px;
-  background: #f5f8fc;
+  background: var(--el-fill-color-lighter);
   font-size: 13px;
-  color: #4a5b6d;
+  color: var(--el-text-color-regular);
 }
 .spinner {
   display: inline-block;
@@ -418,7 +418,7 @@ onMounted(() => {
   height: 12px;
   margin-right: 6px;
   vertical-align: -1px;
-  border: 2px solid #409eff;
+  border: 2px solid var(--el-color-primary);
   border-right-color: transparent;
   border-radius: 50%;
   animation: poll-spin 0.8s linear infinite;
@@ -431,6 +431,6 @@ onMounted(() => {
 .field-hint {
   margin-left: 8px;
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 </style>

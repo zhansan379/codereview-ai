@@ -298,13 +298,13 @@ onMounted(() => {
 
 <style scoped>
 .intro {
-  color: #606266;
+  color: var(--el-text-color-regular);
   font-size: 13px;
   margin: 0 0 12px;
   line-height: 1.6;
 }
 .forge-card {
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
   padding: 12px 16px 16px;
   margin-bottom: 16px;
@@ -312,11 +312,11 @@ onMounted(() => {
 .forge-card h3 {
   margin: 0 0 12px;
   font-size: 15px;
-  color: #303133;
+  color: var(--el-text-color-primary);
 }
 .form-tip {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-top: 2px;
 }
 .save-bar {
@@ -331,16 +331,16 @@ onMounted(() => {
 .capability-title {
   font-size: 13px;
   font-weight: 600;
-  color: #303133;
+  color: var(--el-text-color-primary);
   margin-bottom: 6px;
 }
 .capability-hint {
   font-weight: 400;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 .capability-detail {
   font-size: 12px;
-  color: #606266;
+  color: var(--el-text-color-regular);
 }
 .concurrency-card,
 .push-card,
@@ -350,6 +350,6 @@ onMounted(() => {
 .hint {
   margin-left: 8px;
   font-size: 12px;
-  color: #e6a23c;
+  color: var(--el-color-warning);
 }
 </style>

@@ -1,0 +1,21 @@
+@use './var.scss' as *;
+@use './util.scss' as *;
+
+.el-card {
+  @include set-ele-var('card', $ele);
+}
+
+body .el-card {
+  border-radius: 8px;
+  background: eleVar('card', 'bg');
+
+  .el-card__header {
+    font-size: 16px;
+    font-weight: bold;
+    padding: 16px 20px;
+  }
+
+  &.is-always-shadow {
+    box-shadow: eleVar('card', 'shadow');
+  }
+}

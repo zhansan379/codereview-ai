@@ -173,15 +173,15 @@ onMounted(load)
 }
 .policy-body .hint {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 .hint.ok {
   font-size: 12px;
-  color: #67c23a;
+  color: var(--el-color-success);
 }
 .hint {
   font-size: 12px;
-  color: #e6a23c;
+  color: var(--el-color-warning);
 }
 .toolbar {
   margin-bottom: 12px;
@@ -193,7 +193,7 @@ onMounted(load)
 .sha {
   font-family: monospace;
   font-size: 12px;
-  background: #f4f4f5;
+  background: var(--el-fill-color);
   padding: 0 4px;
   border-radius: 3px;
 }

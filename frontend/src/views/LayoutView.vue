@@ -54,6 +54,13 @@
       <el-header class="header">
         <div class="header-title"></div>
         <div class="header-right">
+          <el-switch
+            v-model="isDark"
+            class="dark-switch"
+            :active-action-icon="Moon"
+            :inactive-action-icon="Sunny"
+            :aria-label="isDark ? '切换到亮色模式' : '切换到暗色模式'"
+          />
           <el-dropdown>
             <span class="user-chip">
               <el-icon><UserFilled /></el-icon>
@@ -90,12 +97,16 @@ import {
   User,
   Key,
   UserFilled,
+  Moon,
+  Sunny,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
+import { useDark } from '../composables/useDark'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const { isDark } = useDark()
 
 // 高亮当前菜单：审查详情页归属到「审查记录」（含 /reviews/prs 旧聚合链接）。
 const activeMenu = computed(() => {
@@ -119,8 +130,8 @@ function onLogout() {
   height: 100vh;
 }
 .aside {
-  background: #fff;
-  border-right: 1px solid #ebeef5;
+  background: var(--el-bg-color);
+  border-right: 1px solid var(--el-border-color-lighter);
 }
 .logo {
   height: 60px;
@@ -129,7 +140,7 @@ function onLogout() {
   justify-content: center;
   font-size: 18px;
   font-weight: 700;
-  color: #409eff;
+  color: var(--el-color-primary);
 }
 .menu {
   border-right: none;
@@ -138,24 +149,29 @@ function onLogout() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #fff;
-  border-bottom: 1px solid #ebeef5;
+  background: var(--el-bg-color);
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 .user-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  color: #303133;
+  color: var(--el-text-color-primary);
 }
 .role-tag {
   font-size: 12px;
-  color: #909399;
-  background: #f0f2f5;
+  color: var(--el-text-color-secondary);
+  background: var(--el-bg-color-page);
   border-radius: 4px;
   padding: 1px 6px;
 }
 .main {
-  background: #f0f2f5;
+  background: var(--el-bg-color-page);
 }
 </style>

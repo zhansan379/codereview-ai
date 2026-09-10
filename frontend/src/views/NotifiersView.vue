@@ -386,7 +386,7 @@ onMounted(() => {
 }
 .form-tip {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-top: 2px;
 }
 .member-tag {

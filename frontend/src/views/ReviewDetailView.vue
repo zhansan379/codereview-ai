@@ -295,12 +295,12 @@ onMounted(load)
   border-radius: 6px;
 }
 .analysis-fail {
-  border: 1px solid #fbc4c4;
-  background: #fef0f0;
+  border: 1px solid var(--el-color-danger-light-7);
+  background: var(--el-color-danger-light-9);
 }
 .analysis-skip {
-  border: 1px solid #d3dce6;
-  background: #f4f4f5;
+  border: 1px solid var(--el-border-color);
+  background: var(--el-fill-color);
 }
 .analysis-text {
   margin: 8px 0 0;
@@ -322,7 +322,7 @@ onMounted(load)
 }
 .toolbar-hint {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 .summary {
   white-space: pre-wrap;
@@ -331,7 +331,7 @@ onMounted(load)
 }
 .finding-detail {
   padding: 8px 16px;
-  background: #fafafa;
+  background: var(--el-fill-color-lighter);
 }
 .finding-actions {
   display: flex;
@@ -342,25 +342,25 @@ onMounted(load)
 .finding-meta {
   margin-left: 8px;
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 .code-block {
   margin: 8px 0;
 }
 .code-label {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin-bottom: 4px;
 }
 .code-fix {
-  color: #67c23a;
+  color: var(--el-color-success);
 }
 .code-text {
   margin: 0;
   padding: 10px 12px;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 4px;
-  background: #fff;
+  background: var(--el-bg-color);
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 12.5px;
   line-height: 1.6;
