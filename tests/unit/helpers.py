@@ -48,6 +48,7 @@ async def make_admin_app(
         "secret_key": "s", "encryption_key": _fernet_key(),
         "push_review_enabled": False,  # §7.7 全局默认 env；无落库行时回落此值
         "mr_review_enabled": False,    # §7.7 MR 轨全局默认 env（与 push 对称）
+        "poll_include_closed": False,  # §9 补拉范围全局默认 env（无落库行时回落此值）
     })()
     async with session_factory(engine)() as s:
         await seed_rbac(s, password)

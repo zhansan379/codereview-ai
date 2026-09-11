@@ -16,6 +16,8 @@ export default {
     capabilityDetailCol: '说明',
     capOk: '可用',
     capMissing: '缺权限',
+    capTokenEnvWarn:
+      '本次测试使用的是环境变量 {env}，并非页面保存的 Token；若你刚改了页面 Token 的权限，请先清除/更新该环境变量再测。',
     saveForge: '保存配置',
     forgeSaved: '已保存并热更生效',
     testOk: '「{name}」连接正常',
@@ -50,6 +52,17 @@ export default {
     mrAutoOn: '已开启 MR 自动审查（即时生效）',
     mrAutoOff: '已关闭 MR 自动审查（即时生效）',
 
+    pollScopeTitle: '补拉范围',
+    pollScopeIntro: '主动补拉（手动按钮 / 定时轮询）拉取哪些状态的 PR/MR。开启后同时拉取已关闭、已合并的 PR/MR，便于补审历史合入/关掉的改动；关闭则只拉取打开中的。保存后即时生效，无需重启后端。',
+    includeClosed: '包含已关闭/已合并的 PR/MR',
+    pollScopeTip: '默认关：仅拉打开中的；开启后补拉一遍会把历史已关闭的 PR/MR 也扫进来。',
+    pollScopeOn: '已开启补拉已关闭的 PR/MR（即时生效）',
+    pollScopeOff: '已关闭补拉已关闭的 PR/MR（即时生效）',
+    pollScopeSaved: '补拉范围已保存',
+    pollScopeSourceHint: '未落库，由 {env} 决定；保存后以这里为准。',
+    savePollScope: '保存补拉范围',
+    pollScopeSourceLabel: '范围来源',
+
     securityTitle: '安全说明',
     webhookSecretLabel: 'Webhook 签名密钥',
     webhookSecretText: '由后端环境变量配置，出于安全考虑不在管理后台展示明文。',
@@ -76,6 +89,8 @@ export default {
     capabilityDetailCol: 'Details',
     capOk: 'Available',
     capMissing: 'Missing permission',
+    capTokenEnvWarn:
+      'This test used environment variable {env}, not the token saved on this page. If you just changed the page token permissions, clear/update that env var and test again.',
     saveForge: 'Save configuration',
     forgeSaved: 'Saved and applied immediately',
     testOk: '"{name}" connection is healthy',
@@ -112,6 +127,19 @@ export default {
     pushAutoOff: 'Automatic review disabled (effective immediately)',
     mrAutoOn: 'Automatic MR review enabled (effective immediately)',
     mrAutoOff: 'Automatic MR review disabled (effective immediately)',
+
+    pollScopeTitle: 'Backfill scope',
+    pollScopeIntro:
+      'Which PR/MR states the active backfill (manual button / scheduled polling) pulls. When enabled, closed and merged PR/MRs are pulled too, so historic changes can be reviewed after merge/close; when disabled, only open ones are pulled. Changes take effect immediately after saving, no backend restart needed.',
+    includeClosed: 'Include closed/merged PR/MRs',
+    pollScopeTip:
+      'Off by default: only open ones are pulled. Once enabled, a backfill also scans historic closed PR/MRs.',
+    pollScopeOn: 'Backfill of closed PR/MRs enabled (effective immediately)',
+    pollScopeOff: 'Backfill of closed PR/MRs disabled (effective immediately)',
+    pollScopeSaved: 'Backfill scope saved',
+    pollScopeSourceHint: 'Not stored yet, determined by {env}; the value here takes over once saved.',
+    savePollScope: 'Save backfill scope',
+    pollScopeSourceLabel: 'Scope source',
 
     securityTitle: 'Security notes',
     webhookSecretLabel: 'Webhook signing secret',

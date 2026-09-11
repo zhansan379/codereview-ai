@@ -209,17 +209,21 @@ class GitHubForge(ForgeAdapter):
             title=str(body.get("title") or pr.title),
         )
 
-    async def list_open_pulls(self, repo_id: str) -> list[PullRequest]:
-        """主动补拉：GET /repos/{owner}/{repo}/pulls?state=open 列出打开 PR（DESIGN §9）。
+    async def list_pulls(
+        self, repo_id: str, *, include_closed: bool = False
+    ) -> list[PullRequest]:
+        """主动补拉：GET /repos/{owner}/{repo}/pulls?state=... 列出 PR（DESIGN §9）。
 
+        `include_closed=False` → `state=open` 仅打开态；`True` → `state=all` 含已关闭/已合并。
         逐项归一成中立 PullRequest（含 head_sha/base_sha），供 `review_pull_request` 复用；
-        已审过的同 head 由增量决策短路，天然幂等。仅返回打开态（补拉目标）。
+        已审过的同 head 由增量决策短路，天然幂等。
         """
         owner, repo = _owner_repo(repo_id)
         if not owner or not repo:
             return []
+        state = "all" if include_closed else "open"
         resp = await self._http.get(
-            f"{self._base}/repos/{owner}/{repo}/pulls?state=open&per_page=100",
+            f"{self._base}/repos/{owner}/{repo}/pulls?state={state}&per_page=100",
             headers=self._auth_headers(),
         )
         resp.raise_for_status()

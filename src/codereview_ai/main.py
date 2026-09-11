@@ -264,7 +264,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # M5.7 日报 + §9 补拉：统一由 ScheduleManager 按 schedule_job 表驱动（落 DB + 热更）
             reporter = DailyReporter(engine, notifier)
             # 补拉只发现+落 queued 行+入队到 worker 队列异步审查，递 enqueuer 即可。
-            poll = PRPoller(engine, forge_registry, app.state.enqueuer)
+            poll = PRPoller(
+                engine, forge_registry, app.state.enqueuer,
+                include_closed_default=settings.poll_include_closed,
+            )
             app.state.poller = poll
             # 手动补拉的后台任务状态（POST /pulls/poll → run_once 放入后台，/status 读取）
             app.state.poll_running = False

@@ -201,7 +201,7 @@ def test_fetch_pull_request_returns_pr_when_no_diff_refs():
     assert pr.diff_refs is None
 
 
-# ── 主动补拉 list_open_pulls ─────────────────────────────────────────────
+# ── 主动补拉 list_pulls ─────────────────────────────────────────────
 
 
 def test_list_open_pulls_maps_items():
@@ -220,7 +220,7 @@ def test_list_open_pulls_maps_items():
             }
         ])
 
-    prs = asyncio.run(_forge(handler).list_open_pulls("7"))
+    prs = asyncio.run(_forge(handler).list_pulls("7"))
     assert len(prs) == 1
     pr = prs[0]
     assert pr.provider == GITLAB
@@ -233,14 +233,33 @@ def test_list_open_pulls_maps_items():
     assert pr.diff_refs == {"base_sha": "b0", "head_sha": "h1", "start_sha": "s0"}
 
 
-def test_list_open_pulls_empty_body():
-    assert asyncio.run(_forge(lambda r: httpx.Response(200, json=[])).list_open_pulls("7")) == []
+def test_list_pulls_empty_body():
+    assert asyncio.run(_forge(lambda r: httpx.Response(200, json=[])).list_pulls("7")) == []
 
 
-def test_list_open_pulls_empty_repo_id_returns_empty():
+def test_list_pulls_empty_repo_id_returns_empty():
     # repo_id 为空 → 不发请求直接空
     f = _forge(lambda r: httpx.Response(500, json={}))
-    assert asyncio.run(f.list_open_pulls("")) == []
+    assert asyncio.run(f.list_pulls("")) == []
+
+
+def test_list_pulls_include_closed_uses_state_all():
+    def handler(r: httpx.Request) -> httpx.Response:
+        assert "state=all" in str(r.url)
+        return httpx.Response(200, json=[{
+            "iid": 101,
+            "title": "feat: closed",
+            "sha": "h1",
+            "source_branch": "feat-polling",
+            "target_branch": "main",
+            "web_url": "https://gitlab.example.com/acme/widgets/-/merge_requests/101",
+            "diff_refs": {"base_sha": "b0", "head_sha": "h1", "start_sha": "s0"},
+            "author": {"username": "bob"},
+        }])
+
+    prs = asyncio.run(_forge(handler).list_pulls("7", include_closed=True))
+    assert len(prs) == 1
+    assert prs[0].pr_number == 101
 
 
 # ── 评论回写 ────────────────────────────────────────────────────────────

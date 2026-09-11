@@ -1,4 +1,4 @@
-"""全局运行时设置 REST（当前：审查并发数 + push 自动审查默认开关）。
+"""全局运行时设置 REST（当前：审查并发数 + push/MR 自动审查默认开关 + 补拉范围）。
 
 - 并发值存 `app_setting["worker_concurrency"]`（落 DB，重启保留）；改动经
   `request.app.state.worker_pool.resize(n)` 即时热更生效，无需重启后端。
@@ -12,6 +12,9 @@
 - `GET /settings/push-review-default`：读全局 push 自动审查默认开关；`source` 标
   `"db"`（落库生效）或 `"env"`（无落库行，由 env `CR_PUSH_REVIEW_ENABLED` 决定）。
 - `POST /settings/push-review-default`：写库并热更（worker 每事件热读即生效，不依赖重启）。
+- `GET/POST /settings/poll-include-closed`：补拉范围开关（是否同时拉取已关闭/已合并 PR/MR），
+  存 `app_setting["poll_include_closed"]`；缺行回落 env `CR_POLL_INCLUDE_CLOSED`，
+  poller 每轮热读即生效。
 读/写无需 worker 也允许。
 """
 
@@ -24,6 +27,7 @@ from codereview_ai.api.deps import get_current_user, require_permission
 from codereview_ai.queue.concurrency import WORKER_LOOP_CAP
 from codereview_ai.storage.setting_repo import (
     MR_REVIEW_DEFAULT_KEY,
+    POLL_INCLUDE_CLOSED_KEY,
     PUSH_REVIEW_DEFAULT_KEY,
     SettingRepository,
 )
@@ -138,3 +142,33 @@ async def set_mr_review_default(
     await _repo(request).set(MR_REVIEW_DEFAULT_KEY, "1" if body.enabled else "0")
     # worker 每次 MR 事件热读本键即生效，无需重启后端
     return MrReviewDefaultOut(enabled=body.enabled, source="db")
+
+
+# —— 补拉范围开关（§9：是否同时拉取已关闭/已合并的 PR/MR）——
+
+class PollIncludeClosedOut(BaseModel):
+    enabled: bool
+    source: str  # "db"（落库生效）| "env"（无落库行，跟随 CR_POLL_INCLUDE_CLOSED）
+
+
+class PollIncludeClosedWrite(BaseModel):
+    enabled: bool
+
+
+@router.get("/poll-include-closed", response_model=PollIncludeClosedOut)
+async def get_poll_include_closed(request: Request) -> PollIncludeClosedOut:
+    repo = _repo(request)
+    env_default = request.app.state.settings.poll_include_closed
+    db_value = await repo.get_bool_optional(POLL_INCLUDE_CLOSED_KEY)
+    if db_value is not None:
+        return PollIncludeClosedOut(enabled=db_value, source="db")
+    return PollIncludeClosedOut(enabled=env_default, source="env")
+
+
+@router.post("/poll-include-closed", response_model=PollIncludeClosedOut)
+async def set_poll_include_closed(
+    body: PollIncludeClosedWrite, request: Request
+) -> PollIncludeClosedOut:
+    await _repo(request).set(POLL_INCLUDE_CLOSED_KEY, "1" if body.enabled else "0")
+    # poller 每轮热读本键即生效，无需重启后端
+    return PollIncludeClosedOut(enabled=body.enabled, source="db")

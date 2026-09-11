@@ -168,14 +168,17 @@ async def test_forge(
     provider = _provider_or_404(provider)
     url = (body.url or "").strip() or None
     token = (body.token or "").strip() or None
+    token_source = "manual" if token else ""
     if not url or not token:
-        # 未传凭据 → 用当前有效配置（env 优先、DB 兜底）
+        # 未传凭据 → 用当前有效配置（env 优先、DB 兜底），并记录来源供前端提示
         repo = getattr(request.app.state, "config_repository", None)
         if repo is not None:
             resolved = await repo.resolve_forge(provider)
             if resolved:
                 url = url or resolved.url or None
-                token = token or resolved.token or None
+                if not token:
+                    token = resolved.token or None
+                    token_source = resolved.source
     if not url or not token:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "未配置该平台凭据，无法测试")
     try:
@@ -186,7 +189,7 @@ async def test_forge(
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"测试失败: {exc}") from exc
     # 兼容旧前端：`ok` 语义 = 平台连通通过（不必全能力 ok，读/写缺权也先告诉「连上了」）。
     ok = any(c.name == "connect" and c.status == "ok" for c in caps)
-    return {"ok": ok, "capabilities": [c.__dict__ for c in caps]}
+    return {"ok": ok, "capabilities": [c.__dict__ for c in caps], "token_source": token_source}
 
 
 @router.post("/resolve-repo", response_model=ResolveRepoOut)

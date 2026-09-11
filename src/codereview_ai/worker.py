@@ -454,7 +454,7 @@ async def _do_review_pull_request(
     """审查一条**已解析**的 PR（mr 轨核心，webhook 与主动补拉共用，DESIGN §7.3/§9）。
 
     入参是中立 `PullRequest`（webhook 由 `parse_merge_request` 产出；补拉由
-    `forge.list_open_pulls` 产出），避免两条入口各写一份审查编排。**不重做**动作门控
+    `forge.list_pulls` 产出），避免两条入口各写一份审查编排。**不重做**动作门控
     （调用方负责：webhook 先过 `should_review(action)`，补拉天然审打开 PR）。其余全部
     逻辑与 webhook 原 mr 轨一致：增量决策(`decide_from_ref`)→ 幂等 ensure_task →
     fetch→过滤→审查→对账落库→commit status→通知。`raw_payload` 仅在 webhook 路径真传

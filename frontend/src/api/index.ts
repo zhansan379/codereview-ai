@@ -97,6 +97,7 @@ export interface ForgeCapability {
 export interface ForgeProbeResult {
   ok: boolean
   capabilities: ForgeCapability[]
+  token_source?: 'env' | 'db' | 'manual' | ''
 }
 
 export interface ReviewFinding {
@@ -338,6 +339,18 @@ export function getMrReviewDefault(): Promise<MrReviewDefaultSetting> {
 }
 export function setMrReviewDefault(data: { enabled: boolean }): Promise<MrReviewDefaultSetting> {
   return client.post('/settings/mr-review-default', data).then((r) => r.data)
+}
+
+// ===== 补拉范围开关（§9：是否同时拉取已关闭/已合并的 PR/MR）=====
+export interface PollIncludeClosedSetting {
+  enabled: boolean
+  source: 'db' | 'env'
+}
+export function getPollIncludeClosed(): Promise<PollIncludeClosedSetting> {
+  return client.get('/settings/poll-include-closed').then((r) => r.data)
+}
+export function setPollIncludeClosed(data: { enabled: boolean }): Promise<PollIncludeClosedSetting> {
+  return client.post('/settings/poll-include-closed', data).then((r) => r.data)
 }
 
 // ===== 主动补拉 PR/MR =====

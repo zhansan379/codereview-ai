@@ -41,6 +41,14 @@
           <div class="capability-title">
             {{ $t('settings.capabilityTitle') }}<span class="capability-hint">{{ $t('settings.capabilityHint') }}</span>
           </div>
+          <el-alert
+            v-if="capSources[prov] === 'env'"
+            type="warning"
+            :closable="false"
+            show-icon
+            class="capability-alert"
+            :title="$t('settings.capTokenEnvWarn', { env: `CR_${prov.toUpperCase()}_TOKEN` })"
+          />
           <el-table :data="caps[prov]" size="small" border>
             <el-table-column prop="label" :label="$t('settings.capabilityCol')" min-width="160" />
             <el-table-column :label="$t('common.status')" width="110">
@@ -128,6 +136,29 @@
       </div>
     </el-card>
 
+    <el-card class="push-card">
+      <template #header>{{ $t('settings.pollScopeTitle') }}</template>
+      <p class="intro">{{ $t('settings.pollScopeIntro') }}</p>
+      <el-form label-width="auto">
+        <el-form-item :label="$t('settings.includeClosed')">
+          <el-switch v-model="pollIncludeClosed" />
+          <span class="form-tip" style="margin-left: 8px">
+            {{ $t('settings.pollScopeTip') }}
+          </span>
+        </el-form-item>
+        <el-form-item v-if="pollScopeSource === 'env'" :label="$t('settings.pollScopeSourceLabel')">
+          <span class="hint">
+            <i18n-t keypath="settings.pollScopeSourceHint" scope="global">
+              <template #env><code>CR_POLL_INCLUDE_CLOSED</code></template>
+            </i18n-t>
+          </span>
+        </el-form-item>
+      </el-form>
+      <div class="save-bar">
+        <el-button type="primary" :loading="pollScopeSaving" @click="onSavePollScope">{{ $t('settings.savePollScope') }}</el-button>
+      </div>
+    </el-card>
+
     <el-card class="note-card">
       <template #header>{{ $t('settings.securityTitle') }}</template>
       <el-descriptions :column="1" border>
@@ -149,7 +180,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { listForges, updateForge, testForge, getConcurrency, setConcurrency, getPushReviewDefault, setPushReviewDefault, getMrReviewDefault, setMrReviewDefault } from '../api'
+import { listForges, updateForge, testForge, getConcurrency, setConcurrency, getPushReviewDefault, setPushReviewDefault, getMrReviewDefault, setMrReviewDefault, getPollIncludeClosed, setPollIncludeClosed } from '../api'
 import type { ForgeCapability } from '../api'
 
 const { t } = useI18n()
@@ -175,6 +206,10 @@ const form: Record<'github' | 'gitlab', ForgeForm> = reactive({
 const envActive = reactive({ github: false, gitlab: false })
 const testing = reactive({ github: false, gitlab: false })
 const caps = reactive<Record<string, ForgeCapability[] | undefined>>({ github: undefined, gitlab: undefined })
+const capSources = reactive<Record<string, 'env' | 'db' | 'manual' | '' | undefined>>({
+  github: undefined,
+  gitlab: undefined,
+})
 const saving = ref(false)
 
 // —— 审查并发 ——
@@ -191,6 +226,37 @@ const pushSaving = ref(false)
 const mrEnabled = ref(false)
 const mrSource = ref<'db' | 'env'>('db')
 const mrSaving = ref(false)
+
+// —— 补拉范围（§9：是否同时拉取已关闭/已合并的 PR/MR）——
+const pollIncludeClosed = ref(false)
+const pollScopeSource = ref<'db' | 'env'>('db')
+const pollScopeSaving = ref(false)
+
+async function loadPollScope() {
+  try {
+    const s = await getPollIncludeClosed()
+    pollIncludeClosed.value = s.enabled
+    pollScopeSource.value = s.source
+  } catch {
+    /* 后端未暴露该接口时（旧版）静默跳过，不阻塞平台页加载 */
+  }
+}
+
+async function onSavePollScope() {
+  pollScopeSaving.value = true
+  try {
+    const s = await setPollIncludeClosed({ enabled: pollIncludeClosed.value })
+    pollIncludeClosed.value = s.enabled
+    pollScopeSource.value = s.source
+    ElMessage.success(
+      s.enabled ? t('settings.pollScopeOn') : t('settings.pollScopeOff'),
+    )
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || t('common.saveFailed'))
+  } finally {
+    pollScopeSaving.value = false
+  }
+}
 
 async function loadMrDefault() {
   try {
@@ -284,6 +350,7 @@ async function onTest(provider: 'github' | 'gitlab') {
     const body = f.token && f.token !== MASK ? { url: f.url, token: f.token } : {}
     const result = await testForge(provider, body)
     caps[provider] = result.capabilities
+    capSources[provider] = result.token_source || ''
     ElMessage.success(t('settings.testOk', { name: provLabels[provider] }))
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || t('settings.testFailed'))
@@ -312,6 +379,7 @@ onMounted(() => {
   loadConcurrency()
   loadPushDefault()
   loadMrDefault()
+  loadPollScope()
 })
 </script>
 
@@ -346,6 +414,9 @@ onMounted(() => {
 }
 .capability-matrix {
   margin-top: 12px;
+}
+.capability-alert {
+  margin-bottom: 8px;
 }
 .capability-title {
   font-size: 13px;

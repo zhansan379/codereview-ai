@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from codereview_ai.ops.poller import PRPoller
 from codereview_ai.storage.db import create_engine, init_db, session_factory
-from codereview_ai.storage.models import Project, ReviewTask
+from codereview_ai.storage.models import AppSetting, Project, ReviewTask
 
 
 class FakeRegistry:
@@ -35,8 +35,10 @@ class FakeForge:
     def __init__(self, prs: list | None = None, *, raise_on_list: Exception | None = None) -> None:
         self.prs = prs or []
         self.raise_on_list = raise_on_list
+        self.list_calls: list[tuple[str, bool]] = []  # (repo_id, include_closed)
 
-    async def list_open_pulls(self, repo_id: str):
+    async def list_pulls(self, repo_id: str, *, include_closed: bool = False):
+        self.list_calls.append((repo_id, include_closed))
         if self.raise_on_list:
             raise self.raise_on_list
         return self.prs
@@ -230,7 +232,7 @@ async def test_run_once_isolates_list_error(engine):
     assert report["projects"] == 1
     assert report["prs"] == 0
     assert len(report["errors"]) == 1
-    assert "列打开 PR 失败" in report["errors"][0]
+    assert "列 PR 失败" in report["errors"][0]
 
 
 async def test_run_once_conflicts_when_another_running(engine):
@@ -257,3 +259,37 @@ async def test_run_once_conflicts_when_another_running(engine):
     assert res1["new"] == 1
     # 逐条进度已累计（含 total/done），供 /status 展示
     assert poller.progress == {"done": 1, "total": 1, "new": 1, "skipped": 0}
+
+
+async def test_run_once_include_closed_default_off(engine):
+    """无落库行时回落 env 默认（False）→ 调适配器 include_closed=False。"""
+    await _seed_project(engine)
+    forge = FakeForge([_pr(101, "h1")])
+    poller = PRPoller(engine, FakeRegistry({"github": forge}), FakeEnqueuer())
+    await poller.run_once()
+    assert forge.list_calls == [("acme/widgets", False)]
+
+
+async def test_run_once_include_closed_from_db(engine):
+    """落库 `poll_include_closed=1` → 调适配器 include_closed=True（含已关闭 PR）。"""
+    await _seed_project(engine)
+    session = session_factory(engine)
+    async with session() as s:
+        s.add(AppSetting(key="poll_include_closed", value="1"))
+        await s.commit()
+    forge = FakeForge([_pr(101, "h1")])
+    poller = PRPoller(engine, FakeRegistry({"github": forge}), FakeEnqueuer())
+    await poller.run_once()
+    assert forge.list_calls == [("acme/widgets", True)]
+
+
+async def test_run_once_include_closed_env_default_true(engine):
+    """无落库行且 env 默认 True → 回落到 include_closed=True。"""
+    await _seed_project(engine)
+    forge = FakeForge([_pr(101, "h1")])
+    poller = PRPoller(
+        engine, FakeRegistry({"github": forge}), FakeEnqueuer(),
+        include_closed_default=True,
+    )
+    await poller.run_once()
+    assert forge.list_calls == [("acme/widgets", True)]

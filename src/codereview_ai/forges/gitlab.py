@@ -163,18 +163,22 @@ class GitLabForge(ForgeAdapter):
             )
         return pr
 
-    async def list_open_pulls(self, repo_id: str) -> list[PullRequest]:
-        """主动补拉：GET /projects/{id}/merge_requests?state=opened 列出打开 MR（DESIGN §9）。
+    async def list_pulls(
+        self, repo_id: str, *, include_closed: bool = False
+    ) -> list[PullRequest]:
+        """主动补拉：GET /projects/{id}/merge_requests?state=... 列出 MR（DESIGN §9）。
 
+        `include_closed=False` → `state=opened` 仅打开态；`True` → `state=all` 含已关闭/已合并。
         逐项归一成中立 PullRequest；`diff_refs` 一并填入（GitLab 行级评论 position 必填，
         见 `post_inline`）。`sha` 即 head_sha（gitlab 列表项无独立 base_sha，由补拉后的
-        `fetch_pull_request` 补齐 diff_refs 即可）。仅返回 opened 态（补拉目标）。
+        `fetch_pull_request` 补齐 diff_refs 即可）。
         """
         if not repo_id:
             return []
+        state = "all" if include_closed else "opened"
         resp = await self._http.get(
             f"{self._base}/api/v4/projects/{repo_id}/merge_requests"
-            "?state=opened&scope=all&per_page=100",
+            f"?state={state}&scope=all&per_page=100",
             headers=self._auth_headers(),
         )
         resp.raise_for_status()

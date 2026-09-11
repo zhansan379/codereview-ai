@@ -79,7 +79,7 @@ def test_parse_missing_number_is_none():
     assert parse_pull_request_payload(payload) is None
 
 
-# ── 主动补拉 list_open_pulls ─────────────────────────────────────────────
+# ── 主动补拉 list_pulls ─────────────────────────────────────────────
 
 
 def _open_pulls_body() -> list[dict]:
@@ -96,13 +96,13 @@ def _open_pulls_body() -> list[dict]:
     ]
 
 
-def test_list_open_pulls_maps_items():
+def test_list_pulls_maps_items():
     def handler(request: httpx.Request):
         assert "state=open" in str(request.url)
         return httpx.Response(200, json=_open_pulls_body())
 
     forge = _forge(handler)
-    prs = asyncio.run(forge.list_open_pulls("acme/widgets"))
+    prs = asyncio.run(forge.list_pulls("acme/widgets"))
     assert len(prs) == 1
     pr = prs[0]
     assert pr.provider == GITHUB
@@ -116,15 +116,25 @@ def test_list_open_pulls_maps_items():
     assert pr.author == "bob"
 
 
-def test_list_open_pulls_empty_body():
+def test_list_pulls_empty_body():
     forge = _forge(lambda req: httpx.Response(200, json=[]))
-    assert asyncio.run(forge.list_open_pulls("acme/widgets")) == []
+    assert asyncio.run(forge.list_pulls("acme/widgets")) == []
 
 
-def test_list_open_pulls_bad_repo_id_returns_empty():
+def test_list_pulls_bad_repo_id_returns_empty():
     # repo_id 不构成 owner/name → 不发请求直接空（防炸 URL）
     forge = _forge(lambda req: httpx.Response(200, json=[]))
-    assert asyncio.run(forge.list_open_pulls("not-a-slash")) == []
+    assert asyncio.run(forge.list_pulls("not-a-slash")) == []
+
+
+def test_list_pulls_include_closed_uses_state_all():
+    def handler(request: httpx.Request):
+        assert "state=all" in str(request.url)
+        return httpx.Response(200, json=_open_pulls_body())
+
+    forge = _forge(handler)
+    prs = asyncio.run(forge.list_pulls("acme/widgets", include_closed=True))
+    assert len(prs) == 1
 
 
 def test_parse_pr_non_dict_repo_head_base():

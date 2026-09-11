@@ -1,8 +1,9 @@
 """主动补拉 PR/MR（DESIGN §9 补拉通道）：手动按钮 + 定时轮询共用。
 
-webhook 之外补一条**主动通道**：按启用项目调 `ForgeAdapter.list_open_pulls` 列出打开 PR/MR，
-给每个未审过的 PR 落一条 `queued` 审计行（入 DB），再入队到 worker 队列，**立即返回**——审查由
-worker 异步消费（与 webhook 同一条审查核心 `review_pull_request`，见 worker.py）。补拉本身不再
+webhook 之外补一条**主动通道**：按启用项目调 `ForgeAdapter.list_pulls` 列出 PR/MR
+（默认仅打开态；设置页「补拉范围」开关开启后同时含已关闭/已合并），给每个未审过的 PR
+落一条 `queued` 审计行（入 DB），再入队到 worker 队列，**立即返回**——审查由 worker
+异步消费（与 webhook 同一条审查核心 `review_pull_request`，见 worker.py）。补拉本身不再
 阻塞在 LLM 耗时上，页面只需要在「入队」这一瞬间等待几秒。
 
 复用跳过靠 `ReviewRepository.poll_skip`：同 head 已有「已处理」的 mr 行（`completed` 已审过 /
@@ -27,24 +28,31 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from codereview_ai.forges.registry import ForgeRegistry
 from codereview_ai.storage.project_repo import ProjectRepository
 from codereview_ai.storage.review_repo import ReviewRepository
+from codereview_ai.storage.setting_repo import POLL_INCLUDE_CLOSED_KEY, SettingRepository
 from codereview_ai.worker import QueueEnqueuer
 
 logger = logging.getLogger("codereview_ai.ops.poller")
 
 
 class PRPoller:
-    """按启用项目主动补拉打开 PR/MR：发现 → 落 queued 行 → 入队异步审查，立即返回。"""
+    """按启用项目主动补拉 PR/MR：发现 → 落 queued 行 → 入队异步审查，立即返回。"""
 
     def __init__(
         self,
         engine: AsyncEngine,
         registry: ForgeRegistry,
         enqueuer: QueueEnqueuer,
+        *,
+        include_closed_default: bool = False,
     ) -> None:
         self._engine = engine
         self._registry = registry
         self._enqueuer = enqueuer
         self._project_repo = ProjectRepository(engine)
+        # 补拉范围默认值（env `CR_POLL_INCLUDE_CLOSED`）；每轮优先读库键
+        # `poll_include_closed`，缺行则回落此默认（与 push/mr 默认开关同一套热读语义）。
+        self._include_closed_default = include_closed_default
+        self._setting_repo = SettingRepository(engine)
         # 手动(`/pulls/poll`)与定时(`run_forever`)共用一把互斥锁：非阻塞抢占，
         # 撞上已在跑的一轮 → 本轮返回 conflict 跳过，杜绝两轮重叠扫同批 PR。
         self._run_lock = asyncio.Lock()
@@ -65,9 +73,9 @@ class PRPoller:
         return {"conflict": True, "projects": 0, "prs": 0, "new": 0, "skipped": 0, "errors": []}
 
     async def _run_once_locked(self) -> dict[str, Any]:
-        """扫全部启用项目一轮：列打开 PR → 逐条（跳过已审 + 落 queued 行 + 入队），返回汇总。
+        """扫全部启用项目一轮：列 PR → 逐条（跳过已审 + 落 queued 行 + 入队），返回汇总。
 
-        报告字段：`projects`（成功扫描的项目数）、`prs`（打开 PR 总数）、`new`（本次新入队待审）、
+        报告字段：`projects`（成功扫描的项目数）、`prs`（列出的 PR 总数）、`new`（本次新入队待审）、
         `skipped`（同 head 已审过跳过）、`errors`（每项/每 PR 的失败描述，单向隔离）。
         同时逐条累加 `self.progress`，供前端展示进行中进度（done 含失败项，保证进度前进）。
         """
@@ -76,6 +84,9 @@ class PRPoller:
         projects = await self._project_repo.list_enabled()
         if not projects:
             return report
+        # 补拉范围开关：库键优先，缺行回落 env 默认（每轮热读，改设置即时生效）。
+        db_closed = await self._setting_repo.get_bool_optional(POLL_INCLUDE_CLOSED_KEY)
+        include_closed = self._include_closed_default if db_closed is None else db_closed
         review_repo = ReviewRepository(self._engine)
         for proj in projects:
             forge = self._registry.get(proj.provider)
@@ -83,9 +94,9 @@ class PRPoller:
                 continue  # 该平台未配置适配器 → 跳过该项目，不报错
             report["projects"] += 1
             try:
-                prs = await forge.list_open_pulls(proj.repo_id)
+                prs = await forge.list_pulls(proj.repo_id, include_closed=include_closed)
             except Exception as exc:  # noqa: BLE001  单项目列 PR 失败不中断整轮
-                report["errors"].append(f"{proj.provider}@{proj.repo_id} 列打开 PR 失败：{exc}")
+                report["errors"].append(f"{proj.provider}@{proj.repo_id} 列 PR 失败：{exc}")
                 continue
             report["prs"] += len(prs)
             self.progress["total"] = report["prs"]
@@ -143,7 +154,7 @@ class PRPoller:
                                        report["new"], report["skipped"], len(report["errors"]),
                                        report["errors"][0])
                     else:
-                        logger.info("补拉完成：新入队 %s/跳过 %s/共查 %s 个打开 PR",
+                        logger.info("补拉完成：新入队 %s/跳过 %s/共查 %s 个 PR",
                                     report["new"], report["skipped"], report["prs"])
                 except Exception as exc:  # noqa: BLE001  定时轮询失败只记日志，不炸进程
                     logger.error("补拉异常：%s", exc, exc_info=True)

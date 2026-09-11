@@ -99,6 +99,8 @@ class Settings(BaseSettings):
     # —— 主动补拉 PR/MR（DESIGN §9 补拉通道）：默认关；开启后按间隔后台轮询启用项目——
     poll_enabled: bool = False
     poll_interval_seconds: int = 3600  # 轮询间隔秒；手动「补拉」按钮不受此开关限制
+    # 补拉范围：False=仅打开态；True=同时拉取已关闭/已合并（补拉通道与手动按钮同受此控制）
+    poll_include_closed: bool = False
 
     # —— 平台 / LLM（可选；未配齐则 worker 不启动，仅 webhook 可入队）——
     gitlab_url: str = ""
