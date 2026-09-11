@@ -2,7 +2,7 @@
 
 `schedule_job` 表由后台「定时任务」页 CRUD 驱动，运行时由 `ScheduleManager` 热更
 （保存即生效，无需重启）。`job_type` 限定现存动作：`poll`（补拉轮询，params 含
-interval_seconds）| `daily`（日报，params 含 hour）。
+interval_seconds）| `daily`（日报，params 含 cron 表达式，兼容旧 hour）。
 
 - `GET /schedules`：列出全部任务 + `worker_active`（scheduler 是否在跑）。
 - `POST /schedules` / `PUT /schedules/{id}` / `DELETE /schedules/{id}`：CRUD，保存后
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -52,18 +53,29 @@ class ScheduleWrite(BaseModel):
 
 
 def _validate(job_type: str, params: dict[str, Any]) -> dict[str, Any]:
-    """按 job_type 校验并归一化 params；非法抛 400。"""
+    """按 job_type 校验并归一化 params；非法抛 400。
+
+    `daily` **落库统一为 cron 字符串**（兼容旧 `hour`：写入时转 `"0 {hour} * * *"`）；
+    cron 经 `CronTrigger.from_crontab` 校验，非法表达式直接 400。
+    """
     if job_type == "poll":
         return {"interval_seconds": max(1, int(params.get("interval_seconds", 3600)))}
     if job_type == "daily":
+        if "cron" in params:
+            cron = str(params["cron"]).strip()
+            try:
+                CronTrigger.from_crontab(cron)
+            except ValueError as exc:
+                raise HTTPException(400, f"非法 cron 表达式：{cron}（{exc}）") from exc
+            return {"cron": cron}
         hour = int(params.get("hour", 9))
         if not 0 <= hour <= 23:
             raise HTTPException(400, "日报时刻 hour 需在 0-23 之间")
-        return {"hour": hour}
+        return {"cron": f"0 {hour} * * *"}
     raise HTTPException(400, f"不支持的定时任务类型：{job_type}")
 
 
-def _scheduler(request: Request):
+def _scheduler(request: Request) -> Any:
     return getattr(request.app.state, "scheduler", None)
 
 
@@ -146,7 +158,7 @@ async def delete_schedule(
     job_id: int,
     request: Request,
     session: AsyncSession = Depends(get_db),
-) -> dict:
+) -> dict[str, object]:
     row = (await session.execute(
         select(ScheduleJob).where(ScheduleJob.id == job_id)
     )).scalar_one_or_none()
@@ -165,7 +177,7 @@ async def run_schedule(
     job_id: int,
     request: Request,
     session: AsyncSession = Depends(get_db),
-) -> dict:
+) -> dict[str, object]:
     sched = _scheduler(request)
     if sched is None:
         raise HTTPException(503, "运行器未启动，无法立即执行")

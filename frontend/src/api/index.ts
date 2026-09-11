@@ -237,7 +237,7 @@ export interface ScheduleJob {
   name: string
   job_type: 'poll' | 'daily'
   enabled: boolean
-  params: { interval_seconds?: number; hour?: number }
+  params: { interval_seconds?: number; cron?: string; hour?: number }
 }
 export interface ScheduleList {
   items: ScheduleJob[]

@@ -16,7 +16,7 @@
             <el-tag>{{ typeLabel(row.job_type) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('schedules.params')" min-width="150">
+        <el-table-column :label="$t('schedules.params')" min-width="180">
           <template #default="{ row }">
             {{ paramText(row) }}
           </template>
@@ -38,7 +38,7 @@
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="isEdit ? $t('schedules.editTitle') : $t('schedules.create')" width="560px">
+    <el-dialog v-model="dialogVisible" :title="isEdit ? $t('schedules.editTitle') : $t('schedules.create')" width="600px">
       <el-form :model="form" label-width="auto">
         <el-form-item :label="$t('schedules.jobName')" required>
           <el-input v-model="form.name" :placeholder="$t('schedules.namePlaceholder')" />
@@ -50,14 +50,37 @@
           </el-select>
           <div class="form-tip">{{ $t('schedules.typeFixed') }}</div>
         </el-form-item>
-        <el-form-item v-if="form.job_type === 'poll'" :label="$t('schedules.interval')" required>
-          <el-input-number v-model="form.interval_seconds" :min="1" :step="60" />
-          <div class="form-tip">{{ $t('schedules.intervalTip') }}</div>
-        </el-form-item>
-        <el-form-item v-else :label="$t('schedules.hour')" required>
-          <el-input-number v-model="form.hour" :min="0" :max="23" />
-          <div class="form-tip">{{ $t('schedules.hourTip') }}</div>
-        </el-form-item>
+
+        <!-- 主动补拉：间隔 + 单位 -->
+        <template v-if="form.job_type === 'poll'">
+          <el-form-item :label="$t('schedules.interval')" required>
+            <el-input-number v-model="form.interval_value" :min="1" style="width: 140px" />
+            <el-select v-model="form.interval_unit" style="width: 120px; margin-left: 8px">
+              <el-option v-for="u in units" :key="u.value" :label="u.label" :value="u.value" />
+            </el-select>
+            <div class="form-tip">{{ $t('schedules.intervalTip') }}</div>
+          </el-form-item>
+        </template>
+
+        <!-- 日报：快捷预设 / Cron 高级 -->
+        <template v-else>
+          <el-form-item :label="$t('schedules.schedule')" required>
+            <el-radio-group v-model="form.cron_mode">
+              <el-radio value="preset">{{ $t('schedules.cronPreset') }}</el-radio>
+              <el-radio value="cron">{{ $t('schedules.cronAdvanced') }}</el-radio>
+            </el-radio-group>
+            <div v-if="form.cron_mode === 'preset'" class="preset-row">
+              <el-input-number v-model="form.daily_hour" :min="0" :max="23" controls-position="right" style="width: 120px" />
+              <span class="colon">:</span>
+              <el-input-number v-model="form.daily_min" :min="0" :max="59" controls-position="right" style="width: 120px" />
+            </div>
+            <div v-else>
+              <el-input v-model="form.cron" :placeholder="'0 9 * * *'" style="width: 100%" />
+              <div class="form-tip">{{ $t('schedules.cronTip') }}</div>
+            </div>
+          </el-form-item>
+        </template>
+
         <el-form-item :label="$t('common.enabled')">
           <el-switch v-model="form.enabled" />
         </el-form-item>
@@ -94,22 +117,55 @@ const dialogVisible = ref(false)
 const isEdit = ref(false)
 const editingId = ref<number | null>(null)
 
+// 间隔单位 → 秒
+const units = [
+  { value: 's', label: t('schedules.unitS'), sec: 1 },
+  { value: 'm', label: t('schedules.unitM'), sec: 60 },
+  { value: 'h', label: t('schedules.unitH'), sec: 3600 },
+  { value: 'd', label: t('schedules.unitD'), sec: 86400 },
+]
+
 // 后端若新增 job_type，没有词条时回退显示原始值
 const typeLabel = (jobType: string) =>
   te(`schedules.type.${jobType}`) ? t(`schedules.type.${jobType}`) : jobType
 
+// 「每日 H:M」cron（分 时 * * *）→ true 则画廊展示友好文案
+const DAILY_CHRON = /^(\d{1,2}) ([01]?\d|2[0-3]) \* \* \*$/
+
 const paramText = (row: ScheduleJob): string => {
-  if (row.job_type === 'poll') return t('schedules.paramPoll', { n: row.params?.interval_seconds ?? '-' })
-  if (row.job_type === 'daily') return t('schedules.paramDaily', { n: row.params?.hour ?? '-' })
+  if (row.job_type === 'poll') {
+    const sec = row.params?.interval_seconds ?? 0
+    const { value, unit } = splitSeconds(sec)
+    return t('schedules.paramPollValue', { n: value, unit: t(`schedules.unit.${unit}`) })
+  }
+  if (row.job_type === 'daily') {
+    const cron = row.params?.cron
+    if (cron && DAILY_CHRON.test(cron)) {
+      const [, min, hour] = DAILY_CHRON.exec(cron)!
+      return `${t('schedules.paramDaily')} ${hour.padStart(2, '0')}:${min.padStart(2, '0')}`
+    }
+    return cron || t('schedules.paramNoCron')
+  }
   return ''
+}
+
+// 秒数 → (值, 单位)：选能整除的最大友好单位
+function splitSeconds(sec: number): { value: number; unit: string } {
+  if (sec > 0 && sec % 3600 === 0) return { value: sec / 3600, unit: 'h' }
+  if (sec > 0 && sec % 60 === 0) return { value: sec / 60, unit: 'm' }
+  return { value: sec, unit: 's' }
 }
 
 const emptyForm = () => ({
   name: '',
   job_type: 'poll' as 'poll' | 'daily',
   enabled: true,
-  interval_seconds: 3600,
-  hour: 9,
+  interval_value: 60,
+  interval_unit: 'm',
+  cron_mode: 'preset' as 'preset' | 'cron',
+  daily_hour: 9,
+  daily_min: 0,
+  cron: '0 9 * * *',
 })
 const form = reactive(emptyForm())
 
@@ -133,31 +189,58 @@ function openCreate() {
 function openEdit(row: ScheduleJob) {
   isEdit.value = true
   editingId.value = row.id
-  Object.assign(form, {
-    name: row.name,
-    job_type: row.job_type,
-    enabled: row.enabled,
-    interval_seconds: row.params?.interval_seconds ?? 3600,
-    hour: row.params?.hour ?? 9,
-  })
+  if (row.job_type === 'poll') {
+    const { value, unit } = splitSeconds(row.params?.interval_seconds ?? 3600)
+    Object.assign(form, {
+      job_type: row.job_type,
+      interval_value: value,
+      interval_unit: unit,
+      cron_mode: 'preset',
+    })
+  } else {
+    const cron = row.params?.cron ?? '0 9 * * *'
+    const m = cron.match(DAILY_CHRON)
+    Object.assign(form, {
+      job_type: row.job_type,
+      cron_mode: m ? 'preset' : 'cron',
+      cron: cron,
+      daily_hour: m ? Number(m[2]) : 9,
+      daily_min: m ? Number(m[1]) : 0,
+    })
+  }
+  Object.assign(form, { name: row.name, enabled: row.enabled })
   dialogVisible.value = true
 }
 
 function payload() {
+  if (form.job_type === 'poll') {
+    const unit = units.find((u) => u.value === form.interval_unit)!
+    return {
+      name: form.name,
+      job_type: form.job_type,
+      enabled: form.enabled,
+      params: { interval_seconds: form.interval_value * unit.sec },
+    }
+  }
+  const cron =
+    form.cron_mode === 'cron'
+      ? form.cron.trim()
+      : `${String(form.daily_min).padStart(2, '0')} ${String(form.daily_hour)} * * *`
   return {
     name: form.name,
     job_type: form.job_type,
     enabled: form.enabled,
-    params:
-      form.job_type === 'poll'
-        ? { interval_seconds: form.interval_seconds }
-        : { hour: form.hour },
+    params: { cron },
   }
 }
 
 async function onSave() {
   if (!form.name.trim()) {
     ElMessage.warning(t('schedules.nameRequired'))
+    return
+  }
+  if (form.job_type === 'daily' && form.cron_mode === 'cron' && !form.cron.trim()) {
+    ElMessage.warning(t('schedules.cronRequired'))
     return
   }
   saving.value = true
@@ -212,5 +295,14 @@ onMounted(load)
   font-size: 12px;
   color: var(--el-text-color-secondary);
   margin-top: 2px;
+}
+.preset-row {
+  display: flex;
+  align-items: center;
+  margin-top: 4px;
+}
+.colon {
+  margin: 0 8px;
+  font-weight: 600;
 }
 </style>

@@ -1,10 +1,13 @@
-"""定时任务调度器（主动补拉 / 日报；DESIGN §9 + M5.7）。
+"""定时任务调度器（主动补拉 / 日报；DESIGN §9 + M5.7），基于 APScheduler。
 
-`ScheduleManager` 以 `schedule_job` 表为唯一事实源：每条 **enabled** 任务维护一个
-独立 asyncio 循环任务，到点执行对应动作（`poll`→`PRPoller.run_once`，`daily`→
-`DailyReporter.run_once`）。任何 CRUD/DB 变更通过 `notify_config_changed()` 唤起
-`_reconcile_loop`，按 id+job_type+enabled+params 指纹对比——新增则 spawn、停用/删改则
-cancel，**配置变更即运行时热更（无需重启）**。单任务异常隔离，不炸整轮。
+`ScheduleManager` 以 `schedule_job` 表为唯一事实源，把每条 **enabled** 任务映射成
+一个 APScheduler job：`poll` → `IntervalTrigger`（间隔秒），`daily` → `CronTrigger`
+（落库统一为 cron 字符串，兼容旧 `hour`）。任何 CRUD/DB 变更通过 `notify_config_changed()`
+唤起 `_reconcile_loop`，按 id+job_type+enabled+params 指纹对比——新增/改参则
+`add_job(replace_existing=True)`、停用/删除则 `remove_job`，**配置变更即热更（无需重启）**。
+
+相较手写 asyncio sleep 循环：获得完整 cron 时间粒度（分/时/日/周几/月）与 interval 单位；
+`misfire_grace_time` 放大避免「事件循环稍有延迟即跳过」。
 """
 
 from __future__ import annotations
@@ -15,9 +18,14 @@ import json
 import logging
 from typing import Any
 
+from apscheduler.job import Job
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.base import BaseTrigger
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy.ext.asyncio import AsyncEngine
+from tzlocal import get_localzone
 
-from codereview_ai.ops.periodic import _seconds_until_hour
 from codereview_ai.storage.models import ScheduleJob
 from codereview_ai.storage.schedule_repo import ScheduleJobRepository
 
@@ -25,10 +33,12 @@ logger = logging.getLogger("codereview_ai.ops.scheduler")
 
 #: 外部 DB 直改（不经 API）时的兜底 reconcile 周期；API 侧变更经 _changed 即刻反映
 _RECONCILE_FALLBACK_SECONDS = 60.0
+#: 到点执行出现延迟时的宽限秒数：循环繁忙/事件循环稍有饥饿也不丢触发（不跳跑）
+_MISFIRE_GRACE_SECONDS = 3600
 
 
 class ScheduleManager:
-    """按 `schedule_job` 表驱动定时任务；执行委托给现有 PRPoller / DailyReporter。"""
+    """按 `schedule_job` 表驱动 APScheduler 任务；执行委托给现有 PRPoller / DailyReporter。"""
 
     def __init__(
         self,
@@ -44,9 +54,10 @@ class ScheduleManager:
         #: {job_type: {"enabled": bool, "params": {...}}}——空表首次启动时的 env 播种默认
         self._seed_defaults = seed_defaults or {}
 
+        self._sched = AsyncIOScheduler(timezone=get_localzone())
         self._stop = asyncio.Event()
         self._changed = asyncio.Event()  # CRUD 后置位，唤起 reconcile
-        self._tasks: dict[int, asyncio.Task[None]] = {}  # job_id -> 运行循环
+        self._tasks: dict[int, Job] = {}  # job_id -> apscheduler Job（热更判定/测试用）
         self._fingerprint: dict[int, str] = {}  # job_id -> 配置指纹（供热更判定）
         self._reconcile_task: asyncio.Task[None] | None = None
 
@@ -55,21 +66,23 @@ class ScheduleManager:
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
-        """空表按 env 播种默认任务，随后启动 reconcile 循环。"""
+        """空表按 env 播种默认任务，启动 APScheduler，随后拉起 reconcile。"""
         await self._seed_if_empty()
-        self._reconcile_task = asyncio.create_task(self._reconcile_loop())
+        self._sched.start()
         await self.reconcile()
+        self._reconcile_task = asyncio.create_task(self._reconcile_loop())
 
     async def stop(self) -> None:
-        """停所有任务并退出 reconcile 循环；幂等。"""
+        """停 APScheduler 并退出 reconcile 循环；幂等。"""
         self._stop.set()
         if self._reconcile_task is not None:
             self._reconcile_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._reconcile_task
             self._reconcile_task = None
-        for jid in list(self._tasks):
-            await self._cancel_task(jid)
+        self._sched.shutdown(wait=False)
+        self._tasks.clear()
+        self._fingerprint.clear()
 
     async def _seed_if_empty(self) -> None:
         if not self._seed_defaults:
@@ -86,7 +99,7 @@ class ScheduleManager:
         logger.info("定时任务空表播种：%s", ", ".join(self._seed_defaults))
 
     # ------------------------------------------------------------------
-    # 热更：reconcile 循环 + 指纹对比
+    # 热更：reconcile 循环 + 指纹对比 → APScheduler add/remove
     # ------------------------------------------------------------------
 
     def notify_config_changed(self) -> None:
@@ -106,22 +119,23 @@ class ScheduleManager:
                 await self.reconcile()
 
     async def reconcile(self) -> None:
-        """按表重算任务集合：新增 spawn、删改 cancel+respawn、停用/删除 cancel。"""
+        """按表重算任务集合：新增/改参 add（replace_existing）、停用/删除 remove。"""
         rows = await self._repo.list()
-        desired = {r.id: r for r in rows}
+        desired = {r.id: r for r in rows if r.enabled}
+        # 先移除 DB 中已不存在/停用的任务
         for jid in list(self._tasks):
-            if jid not in desired:
-                await self._cancel_task(jid)
-        for r in rows:
+            row = desired.get(jid)
+            if row is None:
+                await self._remove_job(jid)
+            elif self._fingerprint.get(jid) != self._fingerprint_of(row):
+                await self._remove_job(jid)  # 指纹变了，下面按新参数重建
+        # 新增/重建
+        for r in desired.values():
             fp = self._fingerprint_of(r)
-            existing = self._tasks.get(r.id)
-            if existing is not None and not existing.done() and self._fingerprint.get(r.id) == fp:
+            if self._tasks.get(r.id) is not None and self._fingerprint.get(r.id) == fp:
                 continue  # 未变更，保持运行
-            if existing is not None:
-                await self._cancel_task(r.id)
-            if r.enabled:
-                self._tasks[r.id] = asyncio.create_task(self._run_job(r))
-                self._fingerprint[r.id] = fp
+            await self._add_job(r)
+            self._fingerprint[r.id] = fp
             await asyncio.sleep(0)  # 让出事件循环，避免长表阻塞 reconcile
 
     @staticmethod
@@ -130,47 +144,62 @@ class ScheduleManager:
             [job.job_type, job.enabled, job.params or {}], sort_keys=True, default=str
         )
 
-    async def _cancel_task(self, job_id: int) -> None:
-        task = self._tasks.pop(job_id, None)
-        self._fingerprint.pop(job_id, None)
-        if task is None:
-            return
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-
     # ------------------------------------------------------------------
-    # 单任务循环 + 执行
+    # APScheduler 任务装配
     # ------------------------------------------------------------------
 
-    async def _run_job(self, job: ScheduleJob) -> None:
-        while not self._stop.is_set():
-            delay = self._delay_for(job)
-            try:
-                await asyncio.wait_for(self._stop.wait(), timeout=delay)
-                return  # 置位 → 退出
-            except asyncio.CancelledError:
-                return  # 热更/删除 → 由 reconcile 接管替换
-            except TimeoutError:
-                pass  # 到点 → 执行一轮
-            try:
-                await self._run_once(job)
-            except asyncio.CancelledError:
-                return
-            except Exception as exc:  # noqa: BLE001  单任务异常隔离，不炸循环
-                logger.error("定时任务 %s 执行失败：%s", job.name, exc, exc_info=True)
+    def _trigger_for(self, job: ScheduleJob) -> BaseTrigger:
+        """按 job_type 构造 APScheduler 触发器。
 
-    def _delay_for(self, job: ScheduleJob) -> float:
-        """返回距下一次执行的等待秒数（poll→interval；daily→到点小时）。"""
+        - `poll`：interval（`interval_seconds`）。
+        - `daily`：优先 `params.cron`（cron 字符串）；兼容旧 `hour`（seed/存量）→ 每日整点；
+          缺省 → 每日 9 点。
+        """
         params = job.params or {}
         if job.job_type == "poll":
-            return max(1.0, float(params.get("interval_seconds", 3600)))
-        return max(
-            0.0, _seconds_until_hour(int(params.get("hour", 9)))
+            secs = params.get("interval_seconds", 3600)
+            seconds = max(1, int(secs)) if isinstance(secs, (int, str)) else 3600
+            return IntervalTrigger(seconds=seconds)
+        cron = params.get("cron")
+        hour = params.get("hour")
+        try:
+            if cron:
+                return CronTrigger.from_crontab(str(cron))
+            if isinstance(hour, (int, str)):
+                return CronTrigger(hour=int(hour), minute=0)
+            return CronTrigger(hour=9, minute=0)
+        except (ValueError, KeyError):
+            # 非法 cron/hour（DB 直改绕过 API 校验）→ 回退每日 9 点，不炸 reconcile
+            logger.warning("定时任务 %s 时间参数非法，回退每日 9 点：params=%s", job.name, params)
+            return CronTrigger(hour=9, minute=0)
+
+    async def _add_job(self, job: ScheduleJob) -> None:
+        jid = f"job-{job.id}"
+        job_ref = job  # 闭包捕获本轮 DB 行；指纹变化会重建，闭包不持旧参
+
+        async def _run() -> None:
+            await self._run_once(job_ref)
+
+        self._sched.add_job(
+            _run,
+            trigger=self._trigger_for(job),
+            id=jid,
+            replace_existing=True,
+            misfire_grace_time=_MISFIRE_GRACE_SECONDS,
+            max_instances=1,
+            coalesce=True,
         )
+        existing = self._sched.get_job(jid)
+        self._tasks[job.id] = existing
+
+    async def _remove_job(self, job_id: int) -> None:
+        self._tasks.pop(job_id, None)
+        self._fingerprint.pop(job_id, None)
+        with contextlib.suppress(Exception):  # noqa: BLE001  JobLookupError 等
+            self._sched.remove_job(f"job-{job_id}")
 
     async def run_job_now(self, job: ScheduleJob) -> None:
-        """立即执行一次该任务对应的动作（供「立即执行」按钮）。"""
+        """立即执行一次该任务对应的动作（供「立即执行」按钮，不排队）。"""
         await self._run_once(job)
 
     async def _run_once(self, job: ScheduleJob) -> None:
