@@ -62,8 +62,10 @@ class AgentTurn:
     content: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     #: DeepSeek thinking 模式下的思考链。API 要求后续轮次重发 assistant 消息时**原样带回**
-    #: 本回合的 reasoning_content，否则抛校验错；非 thinking 模型为空（循环据此省略 key）。
-    reasoning_content: str = ""
+    #: 本回合的 reasoning_content，否则抛校验错。**语义：`None`=响应无该字段（非 thinking
+    #: 模型，省略 key）；`""`=响应有该字段但 thinking 为空（思考模型一轮没展开，仍须带
+    #: key 重放，否则下一轮直接被拒）**。循环以 `is not None` 决定是否落 key。
+    reasoning_content: str | None = None
 
 
 class AgentLLM(Protocol):
@@ -227,8 +229,10 @@ async def run_agent_session(
             # 工具结果消息用 `tool_call_id` 指回它配对（真实 LLM 靠此还原引用的参数）。
             # 带 tool_calls 且无正文时 content 置 null（OpenAI/DeepSeek 契约，空串或会触发校验）。
             assistant: dict[str, Any] = {"role": "assistant", "content": turn.content or None}
-            if turn.reasoning_content:
-                # DeepSeek thinking 契约：assistant 带思考链时必须原样带回，否则重发历史被拒
+            if turn.reasoning_content is not None:
+                # DeepSeek thinking 契约：assistant 带该字段时必须**原样带回**，即便 thinking
+                # 为空（纯工具调用回合常见）也不能删 key——删了下一轮重放抛校验错。非 thinking
+                # 模型为 None，据此省略 key（避免 API 误读未知字段）。
                 assistant["reasoning_content"] = turn.reasoning_content
             if turn.tool_calls:
                 assistant["tool_calls"] = [

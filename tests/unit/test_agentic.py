@@ -710,3 +710,39 @@ def test_agent_loop_omits_reasoning_content_for_plain_model(tmp_path):
     assistant = next(m for m in seen[1] if m.get("role") == "assistant")
     assert "reasoning_content" not in assistant
     assert assistant["content"] is None  # 带工具调用的 assistant content 为 null（OpenAI/DeepSeek 契约）
+
+
+def test_agent_loop_keeps_reasoning_content_key_when_empty_for_thinking_model(tmp_path):
+    # 回归：DeepSeek thinking 的**纯工具调用**回合可能返回空 `reasoning_content`（字段在、
+    # 值为空）。契约仍要求下一轮重放时带该 key（可为空），**不能因判空而删 key**
+    # —— 删了下一轮被 API 拒（BadRequestError: reasoning_content must be passed back）。
+    # 曾实锤：失败轮历史里最新 tool_call 回合缺 key，其余带 thinking 的回合全有。
+    ctx = _new_ctx(tmp_path)
+    seen: list[list[dict]] = []
+
+    class _EmptyThinkingLLM:
+        def __init__(self) -> None:
+            self._played = False
+
+        async def chat(self, messages, tools):
+            seen.append(list(messages))
+            if not self._played:
+                self._played = True
+                # 模拟 thinking 模型某轮没展开思考：replaying 时该回合 reasoning 为空但字段存在。
+                return AgentTurn(
+                    content="",
+                    tool_calls=[ToolCall(name="grep_repo", args={"search_text": "foo"})],
+                    reasoning_content="",
+                )
+            return AgentTurn(content="审毕", tool_calls=[ToolCall(name="task_done", args={})])
+
+        async def summarize(self, _f, _c) -> str:
+            return "sum"
+
+    asyncio.run(run_agent_session(_EmptyThinkingLLM(), ToolRunner(ctx, ToolState()), "审查 a.py"))
+    # 第 2 轮历史里，带工具调用的第一条 assistant 必须仍带 reasoning_content（这里为空串）。
+    tool_assistant = next(
+        m for m in seen[1] if m.get("role") == "assistant" and m.get("tool_calls")
+    )
+    assert tool_assistant["reasoning_content"] == ""
+    assert tool_assistant["content"] is None

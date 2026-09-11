@@ -108,9 +108,12 @@ class ToolCallingLLM:
         message = resp.choices[0].message
         content = getattr(message, "content", None) or ""
         # DeepSeek thinking 模式：assistant 还会带 `reasoning_content`（思考链）。API 契约
-        # 要求后续轮次重发时**原样带回**本回合的 reasoning_content，否则抛校验错。若非
-        # thinking 模型，该字段为空，循环据此省略 key（不影响非 thinking 模型）。
-        reasoning_content = str(getattr(message, "reasoning_content", None) or "")
+        # 要求在后续轮次重发时**原样带回**本回合的 reasoning_content，否则抛校验错；即便
+        # 某轮 thinking 为空，只要响应带了该字段就要带空串 key 重放（不能省略）。这里用
+        # None（响应无该字段＝非 thinking 模型）与 ""（有字段但 thinking 空）区分，供循环
+        # 以 `is not None` 决定是否落 key。
+        raw_rc = getattr(message, "reasoning_content", None)
+        reasoning_content = None if raw_rc is None else str(raw_rc)
         calls = [] if not getattr(message, "tool_calls", None) else message.tool_calls
         tool_calls: list[ToolCall] = []
         for call in calls:

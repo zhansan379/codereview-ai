@@ -221,8 +221,12 @@ async def test_wecom_render_v2_uses_markdown_v2_with_table_no_link():
     await client.aclose()
 
 
-async def test_wecom_review_keeps_at_but_drops_link():
-    """review 风味（render_v2 缺省 False）：仍是 markdown、@ 保留，但不再附查看完整报告链接。"""
+async def test_wecom_review_keeps_link_to_mr():
+    """review 风味（render_v2 缺省 False）：markdown、能真 @，且附「查看完整报告」跳转到 MR 页。
+
+    与 report 风味（render_v2，无链接）区分：审查结果有具体跳转目标 `pr.web_url`，
+    值得保留入口；日报 url="" 不给链接。
+    """
     captured: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -239,9 +243,28 @@ async def test_wecom_review_keeps_at_but_drops_link():
     body = _req_json(captured[0])
     assert body["msgtype"] == "markdown"
     content = body["markdown"]["content"]
-    assert "<@zhangsan>" in content           # 去链接不影响 @
+    assert "<@zhangsan>" in content                       # 链接不影响真 @
+    assert "[查看完整报告](https://x/mr)" in content       # 跳 MR 页
+    await client.aclose()
+
+
+async def test_wecom_review_omits_link_when_url_empty():
+    """review 风味 url 为空时不附空壳链接（等价日报无跳转目标的情形）。"""
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"errcode": 0})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        notifier = WeComNotifier(
+            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=x", http=client
+        )
+        msg = build_review_notification(_pr(), _result(85, []))
+        msg.url = ""
+        await notifier.send(msg)
+    content = _req_json(captured[0])["markdown"]["content"]
     assert "查看完整报告" not in content
-    assert "http" not in content              # web_url 不再以链接附上
     await client.aclose()
 
 

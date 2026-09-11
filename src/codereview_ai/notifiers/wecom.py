@@ -43,7 +43,7 @@ class WeComNotifier:
           端渲染。正文按剩余预算截断。
         - markdown（review 类）：`at_users`（wecom userid）拼 `<@userid>` 触发真@提醒，
           `at_all` 时嵌 `<@all>`；分数用 `<font color>`；`mention_names` 仅文案点名。
-          同样截断正文，不附「查看完整报告」链接。
+          正文按剩余预算截断；`url` 非空时附「查看完整报告」链接跳转到 MR 页。
         """
         header = f"# {msg.title}\n"
         if getattr(msg, "render_v2", False):
@@ -68,12 +68,14 @@ class WeComNotifier:
         mentions = ""
         if msg.mention_names:
             mentions = f"> 相关：{'、'.join(msg.mention_names)}\n"
+        # 链接提前拼好并计入固定字节，保证截断正文时链接不被裁掉。
+        link = f"\n\n[查看完整报告]({msg.url})" if msg.url else ""
         fixed_bytes = len(
-            (header + score_part + counts + at_line + mentions).encode("utf-8")
+            (header + score_part + counts + at_line + mentions + link).encode("utf-8")
         )
         budget = max(0, self.max_text_bytes - fixed_bytes)
         body = truncate_utf8(msg.summary_md, budget) if budget > 0 else ""
-        return f"{header}{score_part}{counts}{at_line}{mentions}{body}"
+        return f"{header}{score_part}{counts}{at_line}{mentions}{body}{link}"
 
     async def send(self, msg: ReviewNotification) -> None:
         content = self._render_content(msg)
