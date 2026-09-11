@@ -121,7 +121,8 @@ def test_project_review_isolation(ctx):
 
 
 def test_stats_scoped_to_membership(ctx):
-    d = _c(ctx, ctx.tok_dev).get("/api/stats").json()
+    # viewer 有 stats:view 且仅 P1 成员 → 统计只见 P1 的一条任务
+    d = _c(ctx, ctx.tok_view).get("/api/stats").json()
     assert d["total_tasks"] == 1  # 只见 P1 的一条任务
 
 
