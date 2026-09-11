@@ -17,6 +17,11 @@ CR_DB_PASSWORD=<换一个强密码>
 CR_DATABASE_URL=postgresql+asyncpg://codereview:<换一个强密码>@postgres:5432/codereview
 ```
 
+> **为什么方式 A 比方式 B 多两条（`CR_DB_USER` / `CR_DB_PASSWORD`）？** 方式 A 连的是**要现起的
+> 空 postgres 容器**：它第一次建数据卷时，必须有人告诉它建什么用户、设什么密码（容器据此把
+> 账密写进 `pgdata`）。app 从头到尾只用 `CR_DATABASE_URL` 连库，这两条是**给 postgres 容器
+> 初始化**用的，只在空卷时生效一次；方式 B 连的是早已存在的实例，账密已建好，故只需 URL。
+
 启动：
 
 ```bash
@@ -60,6 +65,28 @@ CR_DATABASE_URL=postgresql+asyncpg://myuser:mypass@localhost:5432/codereview
    ```
 
 建表自动完成，无需手动建。
+
+## `CR_DATABASE_URL` 怎么改
+
+连接串整体结构是：
+
+```
+postgresql+asyncpg://<用户>:<密码>@<主机>:<端口>/<库名>
+```
+
+逐段对照怎么改：
+
+| 段 | 含义 | 方式 A（compose） | 方式 B（已有实例） |
+|---|---|---|---|
+| `postgresql+asyncpg` | 方言 + 异步驱动，**固定不用改** | — | — |
+| `<用户>` / `<密码>` | 连库账密 | 同 `CR_DB_USER`/`CR_DB_PASSWORD` | 实例里已有的账密 |
+| `<主机>` | 数据库地址 | **服务名** `postgres`（compose 内网） | IP 或域名，如 `localhost` |
+| `<端口>` | PG 端口 | `5432` | 实例实际端口 |
+| `<库名>` | 连哪个库 | `codereview`（须与 `POSTGRES_DB` 一致） | 你建的那个库名 |
+
+改的时候只需动**密码、主机、端口、库名**这几段；前面的 `postgresql+asyncpg://` 是固定的，
+`<用户>:<密码>` 要和库的实际账密对得上。compose 里主机写**服务名 `postgres`**、方式 B 本地写
+`localhost`，两者不通用。
 
 ## 从 SQLite 迁移
 
