@@ -107,6 +107,14 @@ python -c 'import secrets;print(secrets.token_urlsafe(24))'                     
 
 Sign in, configure a model and a forge, then add a webhook pointing at `POST http://<your-host>:5001/webhook` and open a PR.
 
+Docs:
+
+[How to use the webhook](docs/how_use_webhook.md)
+
+[How to apply for a Secret](docs/how_apply_for_secret.md)
+
+[Use PostgreSQL storage (standard tier)](docs/how_use_postgres.md)
+
 ## Install
 
 Without Docker:
@@ -145,7 +153,7 @@ What is planned next, in priority order.
 - [ ] **Project-level rule engine** — inject additional review rules matched by `path` / glob, first match wins, so review policy can be configured per directory and per file. The schema is already in place (the `ProjectRule` table carries `path_glob` / `priority` / `system_merge`) but nothing references it yet: it needs a repository layer, an admin API, and the match-and-inject step at review time.
 - [ ] **Native suggestion blocks** — render the `suggestion_code` we already capture as GitHub `suggestion` fences (`start_line` for multi-line) so a fix can be applied from the diff in one click instead of only read.
 - [ ] **Four review voices** — professional / sarcastic / gentle / humorous, wording only, never the score. The config field and plumbing exist; the per-voice prompt presets do not.
-- [ ] **standard storage / queue tier** — PostgreSQL + Redis + arq for multi-instance deployments. Both interfaces are already abstracted; the backends are not wired (the single-node simple tier is entirely sufficient for now).
+- [ ] **standard queue tier** — Redis + arq for multi-instance deployments. Storage is wired to PostgreSQL already (see [tutorial](docs/how_use_postgres.md)); the queue still runs the single-node asyncio backend with the interface abstracted, not wired. (The single-node simple tier is entirely sufficient for now.)
 
 **Later**
 
