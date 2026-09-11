@@ -117,6 +117,10 @@ python -c 'import secrets;print(secrets.token_urlsafe(24))'                     
 
 [如何申请 Secret](docs/how_apply_for_secret.md)
 
+IM通道配置参考：
+
+[企业微信群机器人获取 Webhook](https://www.tencentcloud.com/zh/document/product/1254/78645)
+
 ## 安装
 
 不用 Docker 的话：
