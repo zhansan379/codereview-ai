@@ -107,6 +107,8 @@ python -c 'import secrets;print(secrets.token_urlsafe(24))'                     
 
 [如何申请 Secret](docs/how_apply_for_secret.md)
 
+[使用 PostgreSQL 存储（standard 档）](docs/how_use_postgres.md)
+
 IM通道配置参考：
 
 [企业微信群机器人获取 Webhook](https://www.tencentcloud.com/zh/document/product/1254/78645)
@@ -149,7 +151,7 @@ uv run pytest tests --cov=codereview_ai --cov-fail-under=70
 - [ ] **项目级规则引擎** — 按 `path` / glob 注入追加规则、首个匹配者胜，让审查策略能逐目录逐文件配置。数据层已就位（`ProjectRule` 表带 `path_glob` / `priority` / `system_merge`），但全树尚无引用：缺仓储层、管理接口，以及审查时的规则匹配与 prompt 注入。
 - [ ] **平台原生 suggestion 建议块** — 把已经拿到的 `suggestion_code` 渲染成 GitHub 的 `suggestion` 代码围栏（多行用 `start_line`），让建议能在 diff 上一键 Apply，而不是只能读。
 - [ ] **四种审查风格** — 专业 / 毒舌 / 绅士 / 幽默，只影响措辞不影响评分。配置入口与字段都在，缺各风格的 prompt 预设。
-- [ ] **standard 存储 / 队列档** — PostgreSQL + Redis + arq，支撑多实例部署。队列与存储的接口已抽象好，后端未打通（单机 simple 档当前完全够用）。
+- [ ] **standard 队列档** — Redis + arq 支撑多实例部署。存储层已打通 PostgreSQL（见[教程](docs/how_use_postgres.md)）；队列仍是单机 asyncio 后端、接口已抽象好，未打通。（单机 simple 档当前完全够用。）
 
 **之后**
 
