@@ -28,22 +28,23 @@ That baseline wasn't built from nothing — which parts can safely be left to th
 
 **Strengths**
 
-- **The most robust line anchoring** — the model only pastes a code snippet and the engine pins the line. OCR also re-anchors, but it's "model gives a line + post-hoc relocation"; this project never accepts a line number from the model at all. That is the sharpest split from tools like pr-agent that take inline positions from model line numbers — a hallucinated coordinate never even enters the comment.
-- **One service that runs every project** — pr-agent / OCR is a "run once per PR" command or Action; this project is a resident service: verified webhook → async queue → inline write-back + IM push + dashboard + daily report, with multi-project, backfill polling, crash replay and a per-project on/off all in one admin panel.
-- **An agent failure is never an incident** — agentic repo reasoning is read-only, and any hitch drops the whole review back to diff instead of leaving a "task failed" with no conclusion anyone owns. OCR also degrades gracefully, but it has no service-level guarantee of "go back to the diff, which is a sure outcome".
-- **No paying twice across rounds** — unchanged files between adjacent rounds are reused by content hash; a one-shot review request has no "previous round" to reuse.
-- **A complete admin UI** — easier day-to-day operation, with the dashboard, review records, projects, IM notifiers, the clone-cache page, and more.
-
-## What you get
-
 <img alt="Core capabilities" src="./assets/features.webp">
 
-- **Reviewed the moment it opens** — signature-verified events are queued and answered `202` immediately; the review runs async and anchors findings to line numbers on the new head.
-- **Nothing falls through** — a webhook that never arrived, events during a restart, PRs already open before you onboarded the project: sweep for them by hand, or schedule a poll that scans every enabled project on an interval. Heads already reviewed are skipped rather than queued twice.
-- **Code stays inside** — SQLite + Docker self-hosted deployment; platform and model credentials are Fernet-encrypted at rest and hot-reload the moment you save them.
-- **A three-layer pipeline** — LLM diff review, optional agentic whole-repo reasoning (clone + read-only tools across file groups), and semgrep static analysis, fused into one set of findings.
-- **No paying twice** — files unchanged between rounds are reused by content hash instead of being sent to the model again.
-- **Built to stay up** — asyncio queue plus a worker pool with runtime-adjustable concurrency; pending tasks are replayed after a restart.
+- **The most robust line anchoring** — the model only pastes a code snippet and the engine pins the line. OCR is "model gives a line + post-hoc relocation"; this project never accepts a line number from the model at all. That is the sharpest split from tools like pr-agent that take inline positions from model line numbers — a hallucinated coordinate never even enters the comment.
+
+- **One service that runs every project** — not a "run once per PR" Action but a resident service: webhook verification → async queue → inline write-back, with multi-project, backfill polling, crash replay and a per-project on/off in one admin panel. Value: events don't get lost, state is recoverable, team-level operation.
+
+- **Nothing falls through** — a webhook that never arrived, events during a restart, PRs already open before you onboarded the project: pull them back by hand, or schedule a poll that scans every enabled project on an interval. Heads already reviewed are skipped. Value: this is the resident service's core edge over an Action.
+
+- **An agent failure is never an incident** — agentic whole-repo reasoning is read-only; any hitch drops the whole review back to diff. OCR also degrades gracefully, but it has no service-level guarantee of "fall back to the diff, a sure conclusion". Value: there's always a deliverable conclusion — a "task failed" with no one owning it never happens.
+
+- **Code stays inside** — SQLite + Docker self-hosted deployment; platform and model credentials are Fernet-encrypted at rest and hot-reload the moment you save them. Value: enterprise onboarding, especially finance, government, and mid-to-large teams.
+
+- **A three-layer pipeline, fused on demand** — LLM diff review, optional agentic whole-repo reasoning, and semgrep static analysis merge into one set of findings; but you don't run all three for every PR — LLM + semgrep by default, agentic triggered on high-risk / large PRs. Value: coverage, determinism and cost in one, without making the user face three reports.
+
+- **A minimal admin loop** — dashboard, review records, projects, IM notifiers, clone cache don't all need to exist; the essentials are project config, review records, manual backfill, credential management and IM setup. Value: operable, diagnosable, closes the loop.
+
+- **No paying twice across rounds** — unchanged files between adjacent rounds are reused by content hash; a one-shot review has no "previous round" to reuse. Value: saves money on high-frequency PRs, but the cache key must include the model, the rules and the config version.
 
 ## How it works
 
