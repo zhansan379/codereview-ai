@@ -113,6 +113,10 @@ python -c 'import secrets;print(secrets.token_urlsafe(24))'                     
 
 后台登录后配置模型与平台，然后在 GitHub / GitLab 添加 webhook 指向 `POST http://<你的主机>:5001/webhook`，打开一个 PR 即可看到审查评论。
 
+[如何使用 Webhook](docs/how_use_webhook.md)
+
+[如何申请 Secret](docs/how_apply_for_secret.md)
+
 ## 安装
 
 不用 Docker 的话：
