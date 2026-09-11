@@ -112,6 +112,7 @@ class PRPoller:
                         head_sha=pr.head_sha,
                         base_sha=pr.base_sha,
                         pr_title=pr.title,
+                        pr_author=pr.author,
                         web_url=pr.web_url,
                         payload="",  # 已解析 PR 直接入队，无需原始 body
                     )

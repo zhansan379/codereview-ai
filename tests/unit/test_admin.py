@@ -322,14 +322,15 @@ def test_reviews_export_xlsx_filters(app):
         ws = load_workbook(BytesIO(resp.content)).active
         assert ws.max_row == 4  # 表头 + 3
         assert ws["A1"].value == "评审ID"
-        # review 信息列已带上（PR号/仓库）；task_id DESC 所以 t2 在前、t1 high 在第三行。
-        assert ws["D2"].value == 2 and ws["D3"].value == 1 and ws["G3"].value == "高"
+        # review 信息列已带上（PR号/作者/仓库）；task_id DESC 所以 t2 在前、t1 high 在第三行。
+        # 表头：D=PR号、G=分支、H=严重度（「作者」列插在 PR号 之后）。
+        assert ws["D2"].value == 2 and ws["D3"].value == 1 and ws["H3"].value == "高"
 
         # 严重度+状态过滤 → 只剩 high/active 那条（t1 的第一条）。
         ws2 = load_workbook(BytesIO(c.get(
             "/api/reviews/export", params={"severities": "high", "statuses": "active"}
         ).content)).active
-        assert ws2.max_row == 2 and ws2["G2"].value == "高" and ws2["L2"].value == "待处理"
+        assert ws2.max_row == 2 and ws2["H2"].value == "高" and ws2["M2"].value == "待处理"
 
         # state 过滤 → 只剩 t2 的那条（PR号=2）。
         ws3 = load_workbook(BytesIO(c.get(

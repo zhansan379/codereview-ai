@@ -3,6 +3,9 @@
     <el-table-column prop="id" label="ID" width="50" />
     <el-table-column prop="pr_number" label="PR" width="50" />
     <el-table-column prop="pr_title" :label="$t('reviewsTable.title')" min-width="180" show-overflow-tooltip />
+    <el-table-column :label="$t('reviewsTable.author')" width="120" show-overflow-tooltip>
+      <template #default="{ row }">{{ row.pr_author || '—' }}</template>
+    </el-table-column>
     <el-table-column prop="provider" :label="$t('reviewsTable.provider')" :width="colWidth(80)" />
     <el-table-column prop="repo_id" :label="$t('reviewsTable.repoId')" min-width="200" show-overflow-tooltip />
     <el-table-column v-if="showProcess" prop="event_type" :label="$t('reviewsTable.event')" :width="colWidth(60)" />

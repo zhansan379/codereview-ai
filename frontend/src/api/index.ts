@@ -123,6 +123,7 @@ export interface ReviewItem {
   repo_id: string
   pr_number: number | null
   pr_title: string | null
+  pr_author: string | null
   web_url: string | null
   push_commits: string | null
   event_type: string | null
@@ -478,6 +479,7 @@ export interface ReviewPr {
   repo_id: string
   pr_number: number
   pr_title: string
+  pr_author: string
   web_url: string
   branch: string
   rounds_count: number

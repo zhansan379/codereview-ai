@@ -189,6 +189,7 @@ class ReviewRepository:
         head_sha: str,
         base_sha: str = "",
         pr_title: str = "",
+        pr_author: str = "",
         web_url: str = "",
         push_commits: str = "",
         payload: str = "",
@@ -235,8 +236,9 @@ class ReviewRepository:
             task = ReviewTask(
                 provider=provider, repo_id=repo_id, pr_number=pr_number,
                 event_type=event_type, branch=branch, head_sha=head_sha,
-                base_sha=base_sha, pr_title=pr_title, web_url=web_url,
-                push_commits=push_commits, state="queued", payload=payload,
+                base_sha=base_sha, pr_title=pr_title, pr_author=pr_author,
+                web_url=web_url, push_commits=push_commits, state="queued",
+                payload=payload,
                 trace_id=trace_id, diff_snapshot=diff_snapshot,
                 project_id=project_id,
             )

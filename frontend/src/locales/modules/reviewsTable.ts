@@ -2,6 +2,7 @@
 export default {
   'zh-CN': {
     title: '标题',
+    author: '作者',
     provider: '平台',
     repoId: '仓库 ID',
     event: '事件',
@@ -18,6 +19,7 @@ export default {
   },
   en: {
     title: 'Title',
+    author: 'Author',
     provider: 'Provider',
     repoId: 'Repo ID',
     event: 'Event',

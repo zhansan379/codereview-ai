@@ -10,6 +10,7 @@ export default {
     copyFailed: '复制失败，请手动选择文本复制',
     field: {
       title: '标题',
+      author: '作者',
       provider: '平台',
       repoId: '仓库 ID',
       prNumber: 'PR 号',
@@ -63,6 +64,7 @@ export default {
       eventType: '事件类型：{v}',
       prNumber: 'PR/MR 号：{v}',
       title: '标题：{v}',
+      author: '作者：{v}',
       branch: '分支：{v}',
       headSha: '提交 SHA：{v}',
       baseSha: '比对基线：{v}',
@@ -91,6 +93,7 @@ export default {
     copyFailed: 'Copy failed, please select and copy the text manually',
     field: {
       title: 'Title',
+      author: 'Author',
       provider: 'Platform',
       repoId: 'Repo ID',
       prNumber: 'PR number',
@@ -144,6 +147,7 @@ export default {
       eventType: 'Event type: {v}',
       prNumber: 'PR/MR number: {v}',
       title: 'Title: {v}',
+      author: 'Author: {v}',
       branch: 'Branch: {v}',
       headSha: 'Commit SHA: {v}',
       baseSha: 'Compare base: {v}',

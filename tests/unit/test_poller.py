@@ -72,6 +72,7 @@ def _pr(number: int, head: str, *, full_name: str = "") -> object:
     p.source_branch = "feature/x"
     p.base_sha = "abcdef0"
     p.title = f"PR #{number}"
+    p.author = "alice"
     p.web_url = f"https://example/{number}"
     p.repo_full_name = full_name
     p.provider = "github"

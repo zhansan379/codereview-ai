@@ -93,6 +93,7 @@ class ReviewTask(Base):
     head_sha: Mapped[str] = mapped_column(String(64))
     base_sha: Mapped[str] = mapped_column(String(64), default="")
     pr_title: Mapped[str] = mapped_column(String(255), default="")  # PR/MR 标题（展示用；push 轨留空）
+    pr_author: Mapped[str] = mapped_column(String(255), default="")  # PR/MR 创建者（push 轨留空）
     # 直达原页 URL：mr 轨为 forge 给出的 MR/PR 页面；push 轨为「{项目 web_url}/commit/{head_sha}」
     web_url: Mapped[str] = mapped_column(String(1024), default="")
     # push 轨提交消息（多行、太长不当标题）；详情页单独展示，不占 pr_title/表格列

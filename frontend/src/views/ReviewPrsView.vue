@@ -75,6 +75,7 @@
             </div>
             <div class="pr-meta">
               <el-tag size="small" effect="plain">{{ pr.provider }}</el-tag>
+              <el-tag v-if="pr.pr_author" size="small" effect="plain">{{ pr.pr_author }}</el-tag>
               <span class="branch">{{ pr.branch }}</span>
               <span class="rounds-count">{{ $t('reviewPrs.roundsCount', { n: pr.rounds_count }) }}</span>
               <span

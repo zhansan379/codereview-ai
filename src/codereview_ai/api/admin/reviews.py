@@ -73,6 +73,7 @@ class ReviewListItem(BaseModel):
     repo_id: str
     pr_number: int | None
     pr_title: str
+    pr_author: str = ""
     web_url: str = ""  # mr: MR/PR 页 URL；push: {仓库}/commit/{head_sha}
     push_commits: str = ""
     event_type: str
@@ -142,6 +143,7 @@ class ReviewPr(BaseModel):
     repo_id: str
     pr_number: int
     pr_title: str
+    pr_author: str = ""
     web_url: str = ""
     branch: str = ""
     rounds_count: int
@@ -221,6 +223,7 @@ _EXPORT_HEADERS: list[tuple[str, str]] = [
     ("平台", "provider"),
     ("仓库", "repo_id"),
     ("PR号", "pr_number"),
+    ("作者", "pr_author"),
     ("事件类型", "event_type"),
     ("分支", "branch"),
     ("严重度", "severity"),
@@ -418,7 +421,8 @@ async def list_review_prs(
         t = next(t for t in tasks if f"{t.provider}:{t.repo_id}:{t.pr_number}" == p.key)
         items.append(ReviewPr(
             key=p.key, provider=t.provider, repo_id=t.repo_id,
-            pr_number=t.pr_number or 0, pr_title=t.pr_title, web_url=t.web_url,
+            pr_number=t.pr_number or 0, pr_title=t.pr_title, pr_author=t.pr_author,
+            web_url=t.web_url,
             branch=t.branch, rounds_count=len(p.rounds),
             rounds=[PrRoundOut(id=r.id, head_sha=r.head_sha, delta=r.delta)
                     for r in p.rounds],

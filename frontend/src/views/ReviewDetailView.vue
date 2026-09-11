@@ -12,6 +12,7 @@
     <el-card v-if="detail" class="info-card">
       <el-descriptions :column="3" border>
         <el-descriptions-item :label="$t('reviewDetail.field.title')">{{ detail.event_type === 'push' ? '—' : (detail.pr_title || '—') }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('reviewDetail.field.author')">{{ detail.event_type === 'push' ? '—' : (detail.pr_author || '—') }}</el-descriptions-item>
         <el-descriptions-item :label="$t('common.id')">{{ detail.id }}</el-descriptions-item>
         <el-descriptions-item :label="$t('reviewDetail.field.provider')">{{ detail.provider }}</el-descriptions-item>
         <el-descriptions-item :label="$t('reviewDetail.field.repoId')">{{ detail.repo_id }}</el-descriptions-item>
@@ -197,6 +198,7 @@ function buildMarkdown(d: ReviewDetail): string {
   L.push(`- ${t('reviewDetail.md.eventType', { v: d.event_type || '—' })}`)
   if (d.pr_number != null) L.push(`- ${t('reviewDetail.md.prNumber', { v: d.pr_number })}`)
   if (d.pr_title) L.push(`- ${t('reviewDetail.md.title', { v: d.pr_title })}`)
+  if (d.event_type !== 'push' && d.pr_author) L.push(`- ${t('reviewDetail.md.author', { v: d.pr_author })}`)
   if (d.branch) L.push(`- ${t('reviewDetail.md.branch', { v: d.branch })}`)
   if (d.head_sha) L.push(`- ${t('reviewDetail.md.headSha', { v: d.head_sha })}`)
   if (d.base_sha) L.push(`- ${t('reviewDetail.md.baseSha', { v: d.base_sha })}`)

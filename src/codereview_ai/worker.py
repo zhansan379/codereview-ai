@@ -385,7 +385,7 @@ async def scribble_queued_task(
     await review_repo.ensure_task(
         provider=pr.provider, repo_id=pr.repo_id, pr_number=pr.pr_number,
         event_type="mr", branch=pr.source_branch, head_sha=pr.head_sha,
-        base_sha=pr.base_sha, pr_title=pr.title, web_url=pr.web_url,
+        base_sha=pr.base_sha, pr_title=pr.title, pr_author=pr.author, web_url=pr.web_url,
         payload=raw.decode("utf-8", "replace"),
     )
 
@@ -483,8 +483,8 @@ async def _do_review_pull_request(
         task_id = await review_repo.ensure_task(
             provider=pr.provider, repo_id=pr.repo_id, pr_number=pr.pr_number,
             event_type="mr", branch=pr.source_branch, head_sha=pr.head_sha,
-            base_sha=pr.base_sha, pr_title=pr.title, web_url=pr.web_url, payload=raw_payload,
-            trace_id=TRACE_ID.get(),
+            base_sha=pr.base_sha, pr_title=pr.title, pr_author=pr.author, web_url=pr.web_url,
+            payload=raw_payload, trace_id=TRACE_ID.get(),
         )
         if task_id is None:
             # 同 head 已被另一生产者认领（排队/在审）→ 幂等跳过，防止并发重复审查、重复
