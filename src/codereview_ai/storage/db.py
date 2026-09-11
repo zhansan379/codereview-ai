@@ -4,6 +4,8 @@
   `postgresql+asyncpg://...`（standard）。
 - SQLite 每个连接初始化 `WAL / busy_timeout / foreign_keys`（修复旧项目
   `database is locked` 与 fd 泄漏问题，见 reference/antipatterns.md）。
+- 建表统一走 `Base.metadata.create_all`（方言编译器生成 DDL），不做存量表补列
+  （schema 已稳定；SQLite/PG 首次建表即最新结构，见 init_db）。
 """
 
 from __future__ import annotations
@@ -75,65 +77,15 @@ def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(engine, expire_on_commit=False)
 
 
-#: create_all 只建新表、不 ALTER 存量表（Alembic 已移除）。此处登记【存量表增量补列】
-#: 的列定义：每次启动按 PRAGMA 检查缺失即 ALTER ADD（幂等、非破坏，保留既有数据）。
-#: push_enabled 无默认 → 存量行 NULL = 继承全局 env 默认（DESIGN §7.7 项目覆盖）。
-_COLUMN_FALLBACKS: dict[str, list[tuple[str, str, str]]] = {
-    "project": [
-        ("push_enabled", "BOOLEAN", ""),          # 存量行 NULL=继承全局
-        ("push_branch_globs", "VARCHAR(255)", "DEFAULT ''"),
-        ("enforce_score_threshold", "BOOLEAN", "DEFAULT 0"),  # F3.7 评分阻塞开关
-        ("mr_enabled", "BOOLEAN", ""),            # MR 轨：存量行 NULL=继承全局
-    ],
-    "review_task": [
-        ("skip_reason", "VARCHAR(32)", "DEFAULT ''"),
-        ("force_rerun", "BOOLEAN", "DEFAULT 0"),
-        ("pr_title", "VARCHAR(255)", "DEFAULT ''"),
-        ("push_commits", "TEXT", "DEFAULT ''"),
-        ("web_url", "VARCHAR(1024)", "DEFAULT ''"),
-        # 执行态四列（exec_mode=实际路径；NULL=未执行审查；agentic 降级 diff 时落 'diff'）
-        ("exec_mode", "VARCHAR(16)", ""),
-        ("diff_lines", "INTEGER", "DEFAULT 0"),
-        ("chat_rounds", "INTEGER", "DEFAULT 0"),
-        ("tool_calls", "INTEGER", "DEFAULT 0"),
-        ("project_id", "INTEGER", ""),  # RBAC 项目级隔离：存量行 NULL，读侧按 provider+repo_id 兜底
-    ],
-    "notifier_config": [
-        ("at_all", "BOOLEAN", "DEFAULT 0"),     # 评分低于阈值时是否 @全员
-    ],
-    "review_conversation": [
-        # 文件组标记（组审查并行时逐卡区分所属组）；TEXT 不切片，存全量组 key。
-        ("file_group", "TEXT", "DEFAULT ''"),
-    ],
-}
-
-
-async def _ensure_latest_schema(engine: AsyncEngine) -> None:
-    """为存量表补上缺失的新列（SQLite）；幂等。非 SQLite 由 create_all/正式迁移负责。"""
-    if not _is_sqlite(str(engine.url)):
-        return
-    from sqlalchemy import text
-
-    async with engine.begin() as conn:
-        for table, cols in _COLUMN_FALLBACKS.items():
-            existing = {
-                row[1]
-                for row in (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()
-            }
-            for name, ddl, default in cols:
-                if name not in existing:
-                    await conn.execute(
-                        text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl} {default}")
-                    )
-
-
 async def init_db(engine: AsyncEngine) -> None:
-    """建表（create_all）+ 存量表补列（幂等，保留数据）。"""
+    """建表（create_all，只建缺失表；schema 已稳定，不做存量表补列）。
+
+    SQLite/PG 的 DDL 由方言编译器各自生成；已存在（含旧版本建）的表一律跳过。
+    """
     from codereview_ai.storage.models import Base
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    await _ensure_latest_schema(engine)
 
 
 async def get_session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:

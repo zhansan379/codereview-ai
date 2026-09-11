@@ -20,7 +20,7 @@ import os
 
 from sqlalchemy import select
 
-from codereview_ai.storage.db import _ensure_latest_schema, create_engine, session_factory
+from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.models import ReviewTask
 
 DEFAULT_URL = os.environ.get("DATABASE_URL", "sqlite:///./data/app.db")
@@ -28,7 +28,7 @@ DEFAULT_URL = os.environ.get("DATABASE_URL", "sqlite:///./data/app.db")
 
 async def main(url: str) -> None:
     engine = create_engine(url)
-    await _ensure_latest_schema(engine)  # 存量库补出新增列 push_commits（幂等）
+    await init_db(engine)  # 确保表结构与 push_commits 列存在（schema 稳定后无需补列）
     session = session_factory(engine)
     changed: int = 0
     samples: list[str] = []

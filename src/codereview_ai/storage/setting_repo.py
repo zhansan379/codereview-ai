@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -39,11 +40,12 @@ class SettingRepository:
         return row.value if row is not None else None
 
     async def set(self, key: str, value: str) -> None:
-        """写指定键（存在则覆盖）。事务内 upsert，幂等。"""
-        stmt = sqlite_insert(AppSetting).values(key=key, value=value)
-        stmt = stmt.on_conflict_do_update(index_elements=["key"], set_={"value": value})
+        """写指定键（存在则覆盖）。事务内 upsert，幂等（SQLite/PG 均走 ON CONFLICT）。"""
         session = session_factory(self._engine)
         async with session() as s:
+            insert = pg_insert if s.get_bind().dialect.name == "postgresql" else sqlite_insert
+            stmt = insert(AppSetting).values(key=key, value=value)
+            stmt = stmt.on_conflict_do_update(index_elements=["key"], set_={"value": value})
             await s.execute(stmt)
             await s.commit()
 

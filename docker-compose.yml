@@ -1,6 +1,14 @@
 # codereview-ai Composer（M6 标准 9）。
 # 密钥从宿主 .env 注入（.gitignore 已忽略 .env）；缺密钥容器启动即 fail-fast。
 # 使用：docker compose up -d；健康探测 http://localhost:5001/health。
+#
+# —— PostgreSQL（可选，standard 档）——
+# 默认 ONLY 起 app + SQLite（simple 档，行为与旧版一致）。要切 PG：
+#   1) .env 里设 CR_DB_USER / CR_DB_PASSWORD（缺密码直接报错提示）
+#   2) docker compose --profile postgres up -d
+#   3) 通过 CR_DATABASE_URL 让 app 连 PG：
+#      CR_DATABASE_URL=postgresql+asyncpg://${CR_DB_USER}:${CR_DB_PASSWORD}@postgres:5432/codereview
+# 首次空卷时 postgres 用 POSTGRES_DB 自动建库；app 端 CREATE TABLE 建表。
 
 services:
   codereview-ai:
@@ -24,8 +32,8 @@ services:
       CR_GITLAB_TOKEN: ${CR_GITLAB_TOKEN:-}
       CR_GITHUB_URL: ${CR_GITHUB_URL:-}
       CR_GITHUB_TOKEN: ${CR_GITHUB_TOKEN:-}
-      # 运行时
-      CR_DATABASE_URL: sqlite:////app/data/app.db
+      # 运行时：默认 SQLite（simple 档）；切 PG 时给 .env 设 CR_DATABASE_URL 指向 postgres
+      CR_DATABASE_URL: ${CR_DATABASE_URL:-sqlite:////app/data/app.db}
     volumes:
       - appdb:/app/data
     healthcheck:
@@ -39,5 +47,25 @@ services:
       start_period: 40s
       retries: 3
 
+  # 可选 PostgreSQL（standard 档）。profile 隔离：默认 `docker compose up` 不启动它。
+  # 启用：docker compose --profile postgres up -d（详见顶部注释）。
+  postgres:
+    image: postgres:16
+    profiles: ["postgres"]
+    container_name: codereview-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: codereview            # 空卷首次初始化自动 CREATE DATABASE
+      POSTGRES_USER: ${CR_DB_USER:-codereview}
+      POSTGRES_PASSWORD: ${CR_DB_PASSWORD:?请在 .env 设置 CR_DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CR_DB_USER:-codereview} -d codereview"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   appdb:
+  pgdata:

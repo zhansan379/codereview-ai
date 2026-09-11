@@ -46,40 +46,6 @@ async def test_tables_created(engine):
     assert expected <= set(tables)
 
 
-async def test_schema_backfill_adds_new_columns_idempotently(tmp_path):
-    """存量表缺新列时 `_ensure_latest_schema` 幂等补列，重复调用不报错、不重复加。"""
-    from codereview_ai.storage.db import _ensure_latest_schema
-
-    engine = create_engine(f"sqlite:///{tmp_path}/old.db")
-    # 模拟"旧 schema"表（仅建表、不含新列；create_all 不会 ALTER，故需补列）
-    async with engine.begin() as conn:
-        await conn.execute(text(
-            "CREATE TABLE project (id INTEGER PRIMARY KEY, provider VARCHAR(32) NOT NULL, "
-            "repo_id VARCHAR(255) NOT NULL, file_extensions VARCHAR(255) DEFAULT '')"))
-        await conn.execute(text(
-            "CREATE TABLE review_task (id INTEGER PRIMARY KEY, state VARCHAR(16) DEFAULT 'queued')"))
-        await conn.execute(text(
-            "CREATE TABLE notifier_config (id INTEGER PRIMARY KEY, channel VARCHAR(32) DEFAULT '')"))
-
-    async def _cols(table: str) -> set[str]:
-        async with engine.connect() as conn:
-            return {r[1] for r in (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()}
-
-    assert not ({"push_enabled", "push_branch_globs", "mr_enabled"} & await _cols("project"))
-    assert not ({"skip_reason", "force_rerun", "pr_title", "push_commits"} & await _cols("review_task"))
-    # 存量表不含新列（at_all 是新增的 @所有人 开关，这里制造"旧 schema"无该列）
-    assert not ({"at_all", "at_targets"} & await _cols("notifier_config"))
-
-    await _ensure_latest_schema(engine)
-    await _ensure_latest_schema(engine)  # 幂等：再跑一次不炸、不加重复列
-    assert {"push_enabled", "push_branch_globs", "mr_enabled"} <= await _cols("project")
-    assert {"skip_reason", "force_rerun", "pr_title", "push_commits"} <= await _cols("review_task")
-    # at_all 会被补列；at_targets（旧方案的列）并无此列、也不应凭空出现
-    assert {"at_all"} <= await _cols("notifier_config")
-    assert not ({"at_targets"} & await _cols("notifier_config"))
-    await engine.dispose()
-
-
 async def test_model_config_insert_read(engine):
     session = session_factory(engine)
     async with session() as s:
