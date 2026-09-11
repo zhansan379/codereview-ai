@@ -101,7 +101,7 @@ class NotifierDispatcher:
     def _apply_at_threshold(
         self, msg: ReviewNotification, route: NotifierRoute
     ) -> ReviewNotification:
-        """F4.3 门控：评分低于 at_threshold 才保留 @（静态成员 + 解析出的作者 + @全员），否则清空。"""
+        """F4.3 门控：评分低于 at_threshold 才保留 @（静态成员 + 作者 + @全员），否则清空。"""
         at = msg.at_users
         at_all = msg.at_all
         if not (route.at_threshold and msg.score is not None and msg.score < route.at_threshold):
@@ -164,6 +164,8 @@ class NotifierDispatcher:
         msg = ReviewNotification(
             project_name="代码审查日报", title=title, score=None,
             summary_md=markdown, url="",
+            # 日报/汇总类：企微走 markdown_v2（表格可渲染；无 @ 需求，v2 能力对齐）
+            render_v2=True,
         )
         routes = await self._routes(project_id)
         sent = 0

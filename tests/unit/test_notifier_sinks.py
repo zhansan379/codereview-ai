@@ -194,6 +194,57 @@ async def test_dingtalk_at_all_sets_is_at_all():
     await client.aclose()
 
 
+async def test_wecom_render_v2_uses_markdown_v2_with_table_no_link():
+    """report 风味（render_v2）：msgtype=markdown_v2，表格文本透传、无 @/字体颜色/链接。"""
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"errcode": 0})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        notifier = WeComNotifier(
+            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=x", http=client
+        )
+        msg = build_review_notification(_pr(), _result(85, []))
+        msg.render_v2 = True
+        msg.at_users = ["zhangsan"]  # v2 即使带了 also 不渲染 <@>
+        msg.summary_md = "| 状态 | 数量 |\n|---|---|\n| 完成 | 2 |"
+        await notifier.send(msg)
+    body = _req_json(captured[0])
+    assert body["msgtype"] == "markdown_v2"
+    content = body["markdown_v2"]["content"]
+    assert "| 状态 | 数量 |\n|---|---|" in content  # 表格文本透传，交企微端渲染
+    assert "<@zhangsan>" not in content        # v2 无 @ 语法
+    assert "<font" not in content              # v2 无字体颜色
+    assert "查看完整报告" not in content
+    await client.aclose()
+
+
+async def test_wecom_review_keeps_at_but_drops_link():
+    """review 风味（render_v2 缺省 False）：仍是 markdown、@ 保留，但不再附查看完整报告链接。"""
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"errcode": 0})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        notifier = WeComNotifier(
+            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=x", http=client
+        )
+        msg = build_review_notification(_pr(), _result(85, []))
+        msg.at_users = ["zhangsan"]
+        await notifier.send(msg)
+    body = _req_json(captured[0])
+    assert body["msgtype"] == "markdown"
+    content = body["markdown"]["content"]
+    assert "<@zhangsan>" in content           # 去链接不影响 @
+    assert "查看完整报告" not in content
+    assert "http" not in content              # web_url 不再以链接附上
+    await client.aclose()
+
+
 async def test_wecom_at_all_embeds_all_marker_in_content():
     """@所有人：企微 markdown 无 mentioned_list，@all 用 <@all> 嵌进 content（官方 path/91770）。"""
     captured: list[httpx.Request] = []

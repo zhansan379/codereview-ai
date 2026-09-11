@@ -1,13 +1,18 @@
 """企业微信群机器人推送 sink（reference/im_payloads.md §3）。
 
-企业微信**不支持签名**（安全性靠 webhook key 保密）；content 上限 4096 字节，
-超长截断 + 附查看完整报告链接；支持有限的 HTML 着色（`<font color="warning">`）。
+企业微信**不支持签名**（安全性靠 webhook key 保密）；content 上限 4096 字节。
 
-**@ 成员**：企微群机器人支持真@——把 `at_users`（已按渠道解析成的 wecom userid）
-以 `<@userid>` 扩展语法嵌进 content 即触发@提醒（官方文档 path/91770）；
-`mention_names` 仍是文案点名（fork 用户名企微不认识，只作显示，不参与真@）。
-**@所有人**：markdown **没有** `mentioned_list` 字段（那是 text 类型的），`at_all` 时在
-`content` 里嵌 `<@all>`（与 `<@userid>` 同一套扩展语法；`markdown_v2` 不支持）。
+按 `render_v2` 分两档（官方 path/99110，能力互斥）：
+- **markdown_v2**（render_v2=True，日报/汇总类）：支持表格/枚举/代码块等富格式，但
+  **不支持 `<@>` 也 `不支持 <font color>`** ——无 @ 需求时用它，表格才能渲染。
+- **markdown**（review 类）：支持 `<@userid>`/`<@all>` 真@ 与 `<font color>`，**无表格**。
+
+**@ 成员**：markdown 支持真@——`at_users`（wecom userid）以 `<@userid>` 嵌进 content
+即触发提醒（官方 path/91770）；`mention_names` 是文案点名（fork 用户名企微不认识）。
+**@所有人**：markdown **没有** `mentioned_list` 字段（那是 text 的），`at_all` 时在 content
+嵌 `<@all>`。markdown_v2 两种 @ 都不支持。
+
+不再附「查看完整报告」链接（报告正文已含全量内容）。
 """
 
 from __future__ import annotations
@@ -32,12 +37,19 @@ class WeComNotifier:
         self._http = http
 
     def _render_content(self, msg: ReviewNotification) -> str:
-        """组装 content；为保住「查看完整报告」链接，只把摘要部分按剩余预算截断。
+        """组装 content，按 `render_v2` 选风味（官方 path/99110 能力互斥）：
 
-        `at_users` 是该渠道可用的 wecom userid（dispatch 解析），拼成 `<@userid>` 触发
-        真@提醒；`mention_names`（fork 用户名）仅作正文点名、不发@。
+        - v2（report 类）：只发标题 + 正文，无 @、无 `<font color>`、无链接——表格由企微
+          端渲染。正文按剩余预算截断。
+        - markdown（review 类）：`at_users`（wecom userid）拼 `<@userid>` 触发真@提醒，
+          `at_all` 时嵌 `<@all>`；分数用 `<font color>`；`mention_names` 仅文案点名。
+          同样截断正文，不附「查看完整报告」链接。
         """
-        header = f"# 代码审查：{msg.title}\n"
+        header = f"# {msg.title}\n"
+        if getattr(msg, "render_v2", False):
+            budget = max(0, self.max_text_bytes - len(header.encode("utf-8")))
+            body = truncate_utf8(msg.summary_md, budget) if budget > 0 else ""
+            return f"{header}{body}"
         score_part = ""
         if msg.score is not None:
             score_part = f"> 总分 <font color=\"warning\">{msg.score}</font>\n"
@@ -49,23 +61,30 @@ class WeComNotifier:
         at_line = ""
         if msg.at_users:
             at_line = " ".join(f"<@{u}>" for u in msg.at_users) + "\n"
-        # @所有人：markdown 无 mentioned_list，@all 同 `<@userid>` 一样写进 content 触发（官方 path/91770）
+        # @所有人：markdown 无 mentioned_list；@all 同 `<@userid>` 一样写进 content 触发
+        # （官方 path/91770）
         if msg.at_all:
             at_line += "<@all>\n"
         mentions = ""
         if msg.mention_names:
             mentions = f"> 相关：{'、'.join(msg.mention_names)}\n"
-        link = f"\n\n[查看完整报告]({msg.url})"
         fixed_bytes = len(
             (header + score_part + counts + at_line + mentions).encode("utf-8")
-        ) + len(link.encode("utf-8"))
+        )
         budget = max(0, self.max_text_bytes - fixed_bytes)
         body = truncate_utf8(msg.summary_md, budget) if budget > 0 else ""
-        return f"{header}{score_part}{counts}{at_line}{mentions}{body}{link}"
+        return f"{header}{score_part}{counts}{at_line}{mentions}{body}"
 
     async def send(self, msg: ReviewNotification) -> None:
-        markdown: dict[str, object] = {"content": self._render_content(msg)}
-        payload: dict[str, object] = {"msgtype": "markdown", "markdown": markdown}
+        content = self._render_content(msg)
+        if getattr(msg, "render_v2", False):
+            # markdown_v2：支持表格，但无 @/字体颜色（官方 path/99110）
+            v2: dict[str, object] = {"content": content}
+            payload: dict[str, object] = {"msgtype": "markdown_v2", "markdown_v2": v2}
+        else:
+            # markdown：支持 <@userid>/<@all> 与 <font color>，无表格
+            markdown: dict[str, object] = {"content": content}
+            payload = {"msgtype": "markdown", "markdown": markdown}
         resp = await self._http.post(self._webhook, json=payload)
         if resp.status_code >= 300:
             raise RuntimeError(f"企业微信推送 http {resp.status_code}: {resp.text[:200]}")

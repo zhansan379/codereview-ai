@@ -41,6 +41,9 @@ class ReviewNotification:
     at_users: list[str] = field(default_factory=list)  # 该渠道可用的 @ID
     mention_names: list[str] = field(default_factory=list)  # 文案点名（非门控）
     at_all: bool = False  # 评分低于阈值时是否 @全员（各渠道原生 @all）
+    #: 企微「报告风味」：markdown_v2（支持表格，但**无 @、无字体颜色**）。
+    #: review 类（要 @）不置位走 markdown；日报/汇总类（要表格、不带 @）置位。其他渠道忽略。
+    render_v2: bool = False
 
 
 class Notifier(Protocol):
