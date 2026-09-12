@@ -26,6 +26,8 @@ Gitee 支持**两条审查触发通道**，可任选也可同时用：
    > 全部勾选最省事；最小化按上表勾即可。**Webhook 的创建在本仓库网页上手工完成，不需要 `hook` 权限。**
 3. 提交后**令牌只显示一次**，立即复制保存。
 
+<img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/2abb5a1e-f07b-4021-9961-353b885674c4" />
+
 ## 第二步：把 Token 配进本服务
 
 两种方式二选一（环境变量优先级更高，页面保存的作为兜底）。
@@ -36,6 +38,8 @@ Gitee 支持**两条审查触发通道**，可任选也可同时用：
 2. URL 保持默认 `https://gitee.com/api/v5`（自建 Gitee 企业版才需要改）；
 3. Token 粘贴第一步的令牌 → 点 **测试连接**，能力矩阵会逐项显示连通/读/写权限是否 OK；
 4. 保存，立即生效，无需重启。
+
+<img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/5d54f683-7039-4808-837b-f6f44d5820f0" />
 
 **方式 B：环境变量**
 
@@ -61,11 +65,15 @@ CR_GITEE_URL=https://gitee.com/api/v5
 4. **事件**：勾选 **Pull Request**（push 轨审查另勾 **Push**）；
 5. 添加后点 **测试**，服务日志出现 202 入队记录即通。
 
+<img width="2526" height="1190" alt="image" src="https://github.com/user-attachments/assets/b4ea480c-8d06-4338-bb78-43f76f5ec6d7" />
+
 > 本地开发时 Gitee 公网访问不到 `localhost`，需要内网穿透（frp / ngrok / 花生壳等）把服务暴露出去；或者不用 webhook，改用[主动补拉](how_use_poll.md)。
 
 ## 第五步（可选）：主动补拉（轮询轨）
 
 本地/内网部署无法暴露公网、webhook 漏了事件、或接入前已有存量 PR 时，可以不开 webhook，改用主动补拉兜底。触发配置与平台无关：三种触发方式、补拉范围与幂等说明见[主动补拉（轮询轨）](how_use_poll.md)。
+
+<img width="2560" height="1200" alt="image" src="https://github.com/user-attachments/assets/d877795e-d722-4319-9ef6-8cb1454cf919" />
 
 ## 验证闭环
 
