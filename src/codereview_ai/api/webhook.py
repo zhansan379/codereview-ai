@@ -146,8 +146,25 @@ async def webhook_entry(request: Request) -> JSONResponse:
         # 将 query 参数转换为 header 格式供 verify_signature 使用
         headers["x-gitee-token"] = query_sign
         headers["x-gitee-timestamp"] = query_ts
+        # 调试日志
+        import logging
+        logging.getLogger("codereview_ai.webhook").info(
+            "Gitee query 签名: sign=%s, timestamp=%s", query_sign, query_ts
+        )
 
     if not verify_signature(provider, secret, headers, raw):
+        # 调试日志：显示期望的签名
+        if provider == "gitee":
+            import base64
+            import hashlib
+            import hmac
+            ts = headers.get("x-gitee-timestamp", "")
+            mac = hmac.new(secret.encode("utf-8"), f"{ts}\n{secret}".encode(), hashlib.sha256)
+            expected = base64.b64encode(mac.digest()).decode("utf-8")
+            import logging
+            logging.getLogger("codereview_ai.webhook").error(
+                "Gitee 签名验证失败: expected=%s, actual=%s", expected, headers.get("x-gitee-token", "")
+            )
         raise HTTPException(401, "invalid signature")
 
     enqueuer = getattr(request.app.state, "enqueuer", None)
