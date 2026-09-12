@@ -89,18 +89,24 @@ class WebhookHelpMiddleware(BaseHTTPMiddleware):
                 )
                 return
             from codereview_ai.storage.db import session_factory
-            from codereview_ai.storage.webhook_error_repo import WebhookErrorRepository
+            from codereview_ai.storage.system_notification_repo import SystemNotificationRepository
 
             # 提取来源 IP
             source_ip = request.client.host if request.client else ""
 
             async with session_factory(engine)() as session:
-                repo = WebhookErrorRepository(session)
+                repo = SystemNotificationRepository(session)
                 await repo.create(
-                    provider=provider or "unknown",
-                    wrong_url=wrong_url,
-                    correct_url=correct_url,
-                    source_ip=source_ip,
+                    type="webhook_config_error",
+                    title=f"{provider.upper() if provider else '未知平台'} Webhook 路径配置错误",
+                    message=f"错误 URL: {wrong_url}\n正确 URL: {correct_url}",
+                    level="warning",
+                    metadata={
+                        "provider": provider or "unknown",
+                        "wrong_url": wrong_url,
+                        "correct_url": correct_url,
+                        "source_ip": source_ip,
+                    },
                 )
                 await session.commit()
                 import logging

@@ -128,7 +128,7 @@ import { useAuthStore } from '../stores/auth'
 import { useDark } from '../composables/useDark'
 import { useLocale } from '../composables/useLocale'
 import AppLogo from '../components/AppLogo.vue'
-import { listWebhookErrors, acknowledgeWebhookError, acknowledgeAllWebhookErrors, WebhookErrorItem } from '../api'
+import { listNotifications, acknowledgeNotification, acknowledgeAllNotifications, NotificationItem } from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -137,53 +137,68 @@ const { isDark } = useDark()
 const { locale, setLocale } = useLocale()
 const { t } = useI18n()
 
-// ===== Webhook 配置错误提醒（持久化）=====
-const webhookErrors = ref<WebhookErrorItem[]>([])
+// ===== 系统消息提醒（通用）=====
+const notifications = ref<NotificationItem[]>([])
 const notificationInstances = ref<Map<number, any>>(new Map())
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
-async function fetchWebhookErrors() {
+async function fetchNotifications() {
   try {
-    const res = await listWebhookErrors()
-    const newErrors = res.items.filter(
-      (e) => !webhookErrors.value.some((we) => we.id === e.id)
+    const res = await listNotifications()
+    const newNotifications = res.items.filter(
+      (n) => !notifications.value.some((nn) => nn.id === n.id)
     )
-    webhookErrors.value = res.items
-    // 为新错误显示 Notification
-    for (const error of newErrors) {
-      showNotification(error)
+    notifications.value = res.items
+    // 为新消息显示 Notification
+    for (const notification of newNotifications) {
+      showNotification(notification)
     }
   } catch {
     // 静默失败，不影响主流程
   }
 }
 
-function showNotification(error: WebhookErrorItem) {
-  const notification = ElNotification({
-    title: 'Webhook 配置错误',
-    type: 'warning',
+function showNotification(notification: NotificationItem) {
+  // 根据 level 映射到 Element Plus 的 type
+  const typeMap: Record<string, 'info' | 'warning' | 'error' | 'success'> = {
+    info: 'info',
+    warning: 'warning',
+    error: 'error',
+  }
+  const epType = typeMap[notification.level] || 'info'
+
+  // 从 metadata 中提取额外信息
+  const metadata = notification.metadata || {}
+  let detailHtml = `<p>${notification.message.replace(/\n/g, '<br>')}</p>`
+  if (metadata.wrong_url || metadata.correct_url) {
+    detailHtml = `
+      <div style="line-height: 1.6;">
+        <p>${notification.message.replace(/\n/g, '<br>')}</p>
+        ${metadata.wrong_url ? `<p style="color: #f56c6c;">错误 URL：${metadata.wrong_url}</p>` : ''}
+        ${metadata.correct_url ? `<p style="color: #67c23a;">正确 URL：${metadata.correct_url}</p>` : ''}
+      </div>
+    `
+  }
+
+  const instance = ElNotification({
+    title: notification.title,
+    type: epType,
     duration: 0, // 不自动关闭
     dangerouslyUseHTMLString: true,
-    message: `
-      <div style="line-height: 1.6;">
-        <p><strong>${error.provider.toUpperCase()}</strong> - ${new Date(error.created_at).toLocaleString()}</p>
-        <p style="color: #f56c6c;">错误：${error.wrong_url}</p>
-        <p style="color: #67c23a;">正确：${error.correct_url}</p>
-      </div>
-    `,
+    message: detailHtml,
     showClose: true,
     onClose: () => {
-      handleNotificationClose(error.id)
+      handleNotificationClose(notification.id)
     },
   })
-  notificationInstances.value.set(error.id, notification)
+  notificationInstances.value.set(notification.id, instance)
 }
 
-async function handleNotificationClose(errorId: number) {
+async function handleNotificationClose(notificationId: number) {
   try {
-    await acknowledgeWebhookError(errorId)
-    webhookErrors.value = webhookErrors.value.filter((e) => e.id !== errorId)
-    notificationInstances.value.delete(errorId)
+    await acknowledgeNotification(notificationId)
+    notifications.value = notifications.value.filter((n) => n.id !== notificationId)
+    notificationInstances.value.delete(notificationId)
   } catch {
     // 静默失败
   }
@@ -191,11 +206,11 @@ async function handleNotificationClose(errorId: number) {
 
 async function acknowledgeAll() {
   try {
-    await acknowledgeAllWebhookErrors()
+    await acknowledgeAllNotifications()
     // 关闭所有 Notification
     notificationInstances.value.forEach((n) => n.close())
     notificationInstances.value.clear()
-    webhookErrors.value = []
+    notifications.value = []
   } catch {
     // 静默失败
   }
@@ -203,7 +218,7 @@ async function acknowledgeAll() {
 
 function startPolling() {
   // 每 30 秒轮询一次
-  pollTimer = setInterval(fetchWebhookErrors, 30000)
+  pollTimer = setInterval(fetchNotifications, 30000)
 }
 
 function stopPolling() {

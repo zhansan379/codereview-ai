@@ -677,31 +677,32 @@ export function setProjectMembers(projectId: number, user_ids: number[]): Promis
   return client.put(`/projects/${projectId}/members`, { user_ids }).then((r) => r.data)
 }
 
-// ===== Webhook 配置错误提醒（持久化）=====
-export interface WebhookErrorItem {
+// ===== 系统消息提醒（通用）=====
+export interface NotificationItem {
   id: number
-  provider: string
-  wrong_url: string
-  correct_url: string
-  source_ip: string
+  type: string
+  level: string
+  title: string
+  message: string
+  metadata: Record<string, any>
   acknowledged: boolean
   acknowledged_at: string | null
   created_at: string
 }
 
-export interface WebhookErrorList {
-  items: WebhookErrorItem[]
+export interface NotificationList {
+  items: NotificationItem[]
   total: number
 }
 
-export function listWebhookErrors(): Promise<WebhookErrorList> {
-  return client.get('/webhook-errors').then((r) => r.data)
+export function listNotifications(): Promise<NotificationList> {
+  return client.get('/notifications').then((r) => r.data)
 }
 
-export function acknowledgeWebhookError(id: number): Promise<{ acknowledged: number }> {
-  return client.post(`/webhook-errors/${id}/acknowledge`).then((r) => r.data)
+export function acknowledgeNotification(id: number): Promise<{ acknowledged: number }> {
+  return client.post(`/notifications/${id}/acknowledge`).then((r) => r.data)
 }
 
-export function acknowledgeAllWebhookErrors(): Promise<{ acknowledged: number }> {
-  return client.post('/webhook-errors/acknowledge-all').then((r) => r.data)
+export function acknowledgeAllNotifications(): Promise<{ acknowledged: number }> {
+  return client.post('/notifications/acknowledge-all').then((r) => r.data)
 }

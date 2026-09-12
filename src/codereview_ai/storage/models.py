@@ -428,23 +428,30 @@ class ProjectMember(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
-class WebhookError(Base):
-    """Webhook 配置错误记录（持久化提醒）：当平台发来的 webhook 请求路径错误时落库，
-    前端轮询展示提醒，用户确认后标记已读。
+class SystemNotification(Base):
+    """系统消息提醒（通用）：用于各类系统级通知（webhook 配置错误、系统异常等）。
+
+    - type: 消息类型（如 webhook_config_error, system_error）
+    - level: 级别（info, warning, error）
+    - title: 标题
+    - message: 详细内容
+    - metadata: 额外元数据（JSON，存储 provider、wrong_url 等）
     """
 
-    __tablename__ = "webhook_error"
+    __tablename__ = "system_notification"
     __table_args__ = (
-        Index("idx_webhook_error_ack", "acknowledged"),
-        Index("idx_webhook_error_created", "created_at"),
+        Index("idx_system_notification_ack", "acknowledged"),
+        Index("idx_system_notification_type", "type"),
+        Index("idx_system_notification_created", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    provider: Mapped[str] = mapped_column(String(32))  # 平台（gitee/github/gitlab/gitea）
-    wrong_url: Mapped[str] = mapped_column(String(1024))  # 错误的完整 URL
-    correct_url: Mapped[str] = mapped_column(String(1024))  # 正确的 URL（带 /webhook）
-    source_ip: Mapped[str] = mapped_column(String(64), default="")  # 来源 IP
-    acknowledged: Mapped[bool] = mapped_column(Boolean, default=False)  # 是否已确认
+    type: Mapped[str] = mapped_column(String(64))  # 消息类型
+    level: Mapped[str] = mapped_column(String(16), default="info")  # info/warning/error
+    title: Mapped[str] = mapped_column(String(255))
+    message: Mapped[str] = mapped_column(Text, default="")
+    metadata: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    acknowledged: Mapped[bool] = mapped_column(Boolean, default=False)
     acknowledged_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None
     )
