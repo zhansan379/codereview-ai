@@ -7,7 +7,7 @@
 - `GET /pulls/poll/status` 返回当前进度：`{running, report, error}`，前端轮询直到
   `running=false` 再展示 `report`（新审 / 已审跳过 / 错误）。
 后台任务随进程存活，与页面生命周期、前端请求超时**解耦**——切页/断连都不中断补拉。
-无 poller（worker 未启动、缺 LLM/平台）→ 503，提示先配齐再补拉。
+无 poller（缺平台凭据）→ 503，提示先配齐再补拉。补拉发现 PR 后入队等待审查，
 """
 
 from __future__ import annotations
@@ -50,14 +50,33 @@ class PollStatus(BaseModel):
     progress: PollProgress | None = None
 
 
-def _poller_or_503(request: Request):
-    """取 `app.state.poller`，缺失（worker 未启动）→ 503。"""
+async def _get_or_create_poller(request: Request):
+    """获取或创建 poller，支持动态创建（凭据后配也能用）。"""
     poller = getattr(request.app.state, "poller", None)
-    if poller is None:
-        raise HTTPException(
-            503, "补拉不可用：worker 未启动（需配置可用 LLM 与平台凭据）",
-        )
-    return poller
+    if poller is not None:
+        return poller
+    # 动态创建：需要 engine, forge_registry, enqueuer
+    engine = getattr(request.app.state, "engine", None)
+    forge_registry = getattr(request.app.state, "forge_registry", None)
+    enqueuer = getattr(request.app.state, "enqueuer", None)
+    if engine is None or forge_registry is None or enqueuer is None:
+        raise HTTPException(503, "补拉不可用：服务初始化未完成")
+    if not forge_registry.available():
+        raise HTTPException(503, "补拉不可用：需配置平台凭据（GitHub/GitLab/Gitee Token）")
+    # 创建 poller
+    from codereview_ai.ops.poller import PRPoller
+    from codereview_ai.config.settings import Settings
+    settings = getattr(request.app.state, "settings", None) or Settings()
+    poll = PRPoller(
+        engine, forge_registry, enqueuer,
+        include_closed_default=settings.poll_include_closed,
+    )
+    request.app.state.poller = poll
+    request.app.state.poll_running = False
+    request.app.state.poll_last = None
+    request.app.state.poll_error = None
+    request.app.state.poll_run_task = None
+    return poll
 
 
 async def _background_poll(app: Any, poller: Any) -> None:
@@ -84,10 +103,10 @@ async def _background_poll(app: Any, poller: Any) -> None:
 @router.post("/poll", response_model=PollStatus)
 async def start_poll(request: Request) -> PollStatus:
     """触发一轮主动补拉：放入后台任务立即返回；已有一轮在跑 → 409。"""
-    _poller_or_503(request)
+    poller = await _get_or_create_poller(request)
     if getattr(request.app.state, "poll_running", False):
         raise HTTPException(409, "上一轮补拉仍在后台进行，请稍候查看状态")
-    task = asyncio.create_task(_background_poll(request.app, request.app.state.poller))
+    task = asyncio.create_task(_background_poll(request.app, poller))
     request.app.state.poll_run_task = task
     return PollStatus(running=True)
 
@@ -95,7 +114,7 @@ async def start_poll(request: Request) -> PollStatus:
 @router.get("/poll/status", response_model=PollStatus)
 async def poll_status(request: Request) -> PollStatus:
     """读取当前补拉状态：running + 最近一轮 report / 错误 + 进行中逐条进度。"""
-    poller = _poller_or_503(request)
+    poller = await _get_or_create_poller(request)
     running = bool(getattr(request.app.state, "poll_running", False))
     progress: PollProgress | None = None
     if running:

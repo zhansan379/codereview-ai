@@ -344,14 +344,14 @@ async function onResolve() {
   if (!url) return ElMessage.warning(t('projects.msg.fillUrlFirst'))
   resolving.value = true
   try {
-    if (form.provider === 'github' || form.provider === 'gitlab') {
+    if (form.provider === 'github' || form.provider === 'gitlab' || form.provider === 'gitee') {
       const meta = await resolveRepo({ provider: form.provider, url })
       form.repo_id = meta.repo_id
       form.repo_full_name = meta.repo_full_name
       if (meta.web_url) form.web_url = meta.web_url
       ElMessage.success(t('projects.msg.resolveSuccess'))
     } else {
-      // Gitea / Gitee：平台暂无后端解析，本地取 owner/repo（repo_id 同为该路径）
+      // Gitea：平台暂无后端解析，本地取 owner/repo（repo_id 同为该路径）
       const path = parseOwnerRepo(url)
       if (!path) return ElMessage.warning(t('projects.msg.resolveNoRepo'))
       form.repo_id = path

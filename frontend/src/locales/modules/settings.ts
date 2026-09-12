@@ -1,9 +1,9 @@
-// 设置页:平台接入(GitHub / GitLab)、审查并发、自动审查触发、安全说明。
+// 设置页:平台接入(GitHub / GitLab / Gitee)、审查并发、自动审查触发、安全说明。
 export default {
   'zh-CN': {
     forgeTitle: '平台接入',
     forgeIntro:
-      '配置 GitHub / GitLab 的 Token 与 URL。保存后立即热更生效（无需重启后端）。若对应环境变量（{githubEnv}/{gitlabEnv}）已设置，则以环境变量为准。',
+      '配置 GitHub / GitLab / Gitee 的 Token 与 URL。保存后立即热更生效（无需重启后端）。若对应环境变量（{githubEnv}/{gitlabEnv}/{giteeEnv}）已设置，则以环境变量为准。',
     urlTip: '自托管实例请改成你自己的地址；留空则以默认 {url} 为准。',
     tokenFromEnv: '环境变量已配置（优先）',
     tokenPlaceholder: '填写平台 Access Token',
@@ -74,7 +74,7 @@ export default {
   en: {
     forgeTitle: 'Platform access',
     forgeIntro:
-      'Configure the token and URL for GitHub / GitLab. Changes take effect immediately after saving (no backend restart needed). If the matching environment variable ({githubEnv}/{gitlabEnv}) is set, it takes precedence.',
+      'Configure the token and URL for GitHub / GitLab / Gitee. Changes take effect immediately after saving (no backend restart needed). If the matching environment variable ({githubEnv}/{gitlabEnv}/{giteeEnv}) is set, it takes precedence.',
     urlTip: 'Point this at your own address for a self-hosted instance; leave it empty to use the default {url}.',
     tokenFromEnv: 'Set via environment variable (takes precedence)',
     tokenPlaceholder: 'Enter the platform access token',

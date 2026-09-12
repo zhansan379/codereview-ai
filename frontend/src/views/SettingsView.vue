@@ -6,6 +6,7 @@
         <i18n-t keypath="settings.forgeIntro" scope="global">
           <template #githubEnv><code>CR_GITHUB_TOKEN</code></template>
           <template #gitlabEnv><code>CR_GITLAB_TOKEN</code></template>
+          <template #giteeEnv><code>CR_GITEE_TOKEN</code></template>
         </i18n-t>
       </p>
 
@@ -186,12 +187,13 @@ import type { ForgeCapability } from '../api'
 const { t } = useI18n()
 
 const MASK = '******'
-const providers = ['github', 'gitlab'] as const
+const providers = ['github', 'gitlab', 'gitee'] as const
 const defaults: Record<string, string> = {
   github: 'https://api.github.com',
   gitlab: 'https://gitlab.com',
+  gitee: 'https://gitee.com/api/v5',
 }
-const provLabels: Record<string, string> = { github: 'GitHub', gitlab: 'GitLab' }
+const provLabels: Record<string, string> = { github: 'GitHub', gitlab: 'GitLab', gitee: 'Gitee' }
 
 interface ForgeForm {
   url: string
@@ -199,16 +201,18 @@ interface ForgeForm {
   enabled: boolean
 }
 const emptyForm = (): ForgeForm => ({ url: '', token: '', enabled: true })
-const form: Record<'github' | 'gitlab', ForgeForm> = reactive({
+const form: Record<string, ForgeForm> = reactive({
   github: emptyForm(),
   gitlab: emptyForm(),
+  gitee: emptyForm(),
 })
-const envActive = reactive({ github: false, gitlab: false })
-const testing = reactive({ github: false, gitlab: false })
-const caps = reactive<Record<string, ForgeCapability[] | undefined>>({ github: undefined, gitlab: undefined })
+const envActive = reactive<Record<string, boolean>>({ github: false, gitlab: false, gitee: false })
+const testing = reactive<Record<string, boolean>>({ github: false, gitlab: false, gitee: false })
+const caps = reactive<Record<string, ForgeCapability[] | undefined>>({ github: undefined, gitlab: undefined, gitee: undefined })
 const capSources = reactive<Record<string, 'env' | 'db' | 'manual' | '' | undefined>>({
   github: undefined,
   gitlab: undefined,
+  gitee: undefined,
 })
 const saving = ref(false)
 
@@ -342,7 +346,7 @@ async function load() {
   }
 }
 
-async function onTest(provider: 'github' | 'gitlab') {
+async function onTest(provider: string) {
   testing[provider] = true
   try {
     const f = form[provider]

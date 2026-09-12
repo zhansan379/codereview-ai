@@ -581,13 +581,16 @@ def test_forges_list_synthesizes_defaults(app, monkeypatch):
     fast, token = app
     monkeypatch.delenv("CR_GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("CR_GITLAB_TOKEN", raising=False)
+    monkeypatch.delenv("CR_GITEE_TOKEN", raising=False)
     with _client(fast, token) as c:
         rows = c.get("/api/forges").json()
-        assert {r["provider"] for r in rows} == {"github", "gitlab"}
+        assert {r["provider"] for r in rows} == {"github", "gitlab", "gitee"}
         # 未配置：URL 回退默认、token 空、env_active False
         gh = next(r for r in rows if r["provider"] == "github")
         assert gh["url"] == "https://api.github.com" and gh["token"] == ""
         assert gh["env_active"] is False
+        ge = next(r for r in rows if r["provider"] == "gitee")
+        assert ge["url"] == "https://gitee.com/api/v5"
 
 
 def test_forges_upsert_encrypts_and_masks(app, monkeypatch):
@@ -679,18 +682,18 @@ def test_forges_probe_zero_network_via_injected_probe(app, monkeypatch):
 def test_forges_probe_invalid_provider_404(app):
     fast, token = app
     with _client(fast, token) as c:
-        assert c.put("/api/forges/gitee", json={"url": "u", "token": "t"}).status_code == 404
-        assert c.post("/api/forges/gitee/test", json={}).status_code == 404
+        assert c.put("/api/forges/gitea", json={"url": "u", "token": "t"}).status_code == 404
+        assert c.post("/api/forges/gitea/test", json={}).status_code == 404
 
 
 def test_pull_poll_503_and_status_without_worker(app):
-    """无 poller（worker 未启动）→ /pulls/poll 与 /pulls/poll/status 均 503。"""
+    """无 poller（缺平台凭据）→ /pulls/poll 与 /pulls/poll/status 均 503。"""
     fast, token = app
     assert getattr(fast.state, "poller", None) is None
     with _client(fast, token) as c:
         r = c.post("/api/pulls/poll")
         assert r.status_code == 503
-        assert "worker 未启动" in r.json()["detail"]
+        assert "平台凭据" in r.json()["detail"]
         assert c.get("/api/pulls/poll/status").status_code == 503
 
 

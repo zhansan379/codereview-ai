@@ -28,7 +28,7 @@ from codereview_ai.crypto import MASK, encrypt, is_masked
 from codereview_ai.forges.base import repo_path_from_url
 from codereview_ai.forges.registry import SUPPORTED_PROVIDERS
 from codereview_ai.forges.scopes import Capability, probe_capabilities
-from codereview_ai.forges.signatures import GITHUB, GITLAB
+from codereview_ai.forges.signatures import GITHUB, GITEE, GITLAB
 from codereview_ai.storage.models import ForgeConfig, _utcnow
 
 
@@ -200,14 +200,14 @@ async def resolve_repo(
 ) -> ResolveRepoOut:
     """从仓库链接解析 {repo_id, repo_full_name, web_url}，供「新增项目」自动回填。
 
-    - GitHub：repo_id = repo_full_name = "owner/name"，纯解析 URL，无需平台凭据；
+    - GitHub/Gitee：repo_id = repo_full_name = "owner/name"，纯解析 URL，无需平台凭据；
     - GitLab：repo_id 是数字项目 ID，必须在线调 ``/projects/{path}`` 换回，故用当前已配置的适配器。
-    Gitea/Gitee 不在 SUPPORTED_PROVIDERS，前端走本地解析，不在此处理。
+    Gitea 不在 SUPPORTED_PROVIDERS，前端走本地解析，不在此处理。
     """
     provider = _provider_or_404(body.provider)
 
-    if provider == GITHUB:
-        path = repo_path_from_url(body.url, GITHUB)
+    if provider in (GITHUB, GITEE):
+        path = repo_path_from_url(body.url, provider)
         if "/" not in path:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "无法解析该项目 URL")
         return ResolveRepoOut(

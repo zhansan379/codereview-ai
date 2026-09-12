@@ -5,7 +5,7 @@ export default {
     triggerFailed: '补拉触发失败',
     failed: '补拉失败：{error}',
     done: '补拉完成：扫描 {prs} 个 PR/MR，新入队 {queued} 条审查，已审过跳过 {skipped}，审查在后台进行，可在审查记录页查看',
-    doneWithErrors: '补拉完成：扫描 {prs} 个 PR/MR，新入队 {queued} 条审查，已审过跳过 {skipped}，失败 {errors}，审查在后台进行，可在审查记录页查看',
+    doneWithErrors: '补拉完成：扫描 {prs} 个 PR/MR，新入队 {queued} 条审查，已审过跳过 {skipped}，失败 {errors}（{firstError}），审查在后台进行，可在审查记录页查看',
   },
   en: {
     triggerFailed: 'Failed to start backfill',

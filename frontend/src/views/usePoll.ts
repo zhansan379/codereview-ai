@@ -44,9 +44,12 @@ async function watchOnce(): Promise<void> {
       queued: s.report.new,
       skipped: s.report.skipped,
       errors: s.report.errors.length,
+      firstError: s.report.errors[0] || '',
     }
     ElMessage.success(s.report.errors.length ? t('poll.doneWithErrors', args) : t('poll.done', args))
-    if (s.report.errors.length) console.warn('补拉失败明细', s.report.errors)
+    if (s.report.errors.length) {
+      console.warn('补拉失败明细', s.report.errors)
+    }
   }
 }
 
