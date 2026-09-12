@@ -35,14 +35,14 @@ docker compose --profile postgres up -d
 
 ```bash
 docker compose --profile postgres ps          # 两个服务都 healthy
-docker compose exec postgres pg_isready -U codereview
+docker compose --profile postgres exec postgres pg_isready -U codereview
 curl http://localhost:5001/health             # app 探活
 ```
 
 数据持久化在 `pgdata` 命名卷，`docker compose down` 不丢。彻底清空重建：
 
 ```bash
-docker compose --profile postgres down -v      # -v 才删 pgdata 卷（慎用，清空数据）
+docker compose --profile postgres down -v      # -v 会把 pgdata 和 appdb 两个卷都删掉（慎用，清空全部数据）
 ```
 
 ### 方式 B：连已有 PostgreSQL 实例（本地 / 云 / RDS）
@@ -86,7 +86,9 @@ postgresql+asyncpg://<用户>:<密码>@<主机>:<端口>/<库名>
 
 改的时候只需动**密码、主机、端口、库名**这几段；前面的 `postgresql+asyncpg://` 是固定的，
 `<用户>:<密码>` 要和库的实际账密对得上。compose 里主机写**服务名 `postgres`**、方式 B 本地写
-`localhost`，两者不通用。
+`localhost`，两者不通用。第三种组合——**容器化的 app 连宿主机/外部已有 PG**——主机写
+`host.docker.internal`（Docker Desktop）或宿主内网 IP，同样不能写 `localhost`（容器内
+`localhost` 是容器自己，连过去必然 `Connection refused`）。
 
 ## 从 SQLite 迁移
 
@@ -107,6 +109,7 @@ postgresql+asyncpg://<用户>:<密码>@<主机>:<端口>/<库名>
 | `database "codereview" does not exist` | 库没建。compose 用 `--profile postgres` 会自动建；裸连需手动 `CREATE DATABASE` |
 | `ModuleNotFoundError: asyncpg` | 环境没装。`uv sync` 后重试 |
 | 默认 `docker compose up` 没起 PG | 正常，profile 隔离，需加 `--profile postgres` |
+| 容器里的 app 连宿主机 PG 报 `Connection refused` | 主机别写 `localhost`（那是容器自己）；Docker Desktop 写 `host.docker.internal`，或宿主内网 IP |
 | app 连不上 | host 在 compose 内是 `postgres`、本地是 `localhost`；检查 `.env` |
 
 ## 说明

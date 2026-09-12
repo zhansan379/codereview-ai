@@ -94,6 +94,9 @@ CR_ENCRYPTION_KEY=<用下面的命令生成>
 CR_ADMIN_PASSWORD=<用下面的命令生成>
 EOF
 
+# 前端构建一次（dist 被 gitignore，镜像 COPY 用，缺了 build 必失败）
+cd frontend && npm install && npm run build && cd ..
+
 docker compose up -d
 open http://localhost:5001/admin
 ```
@@ -132,11 +135,13 @@ uv run uvicorn codereview_ai.main:app --host 0.0.0.0 --port 5001
 
 管理后台在 `/admin`，交互式 API 文档在 `/docs`（`CR_OPENAPI_ENABLED=0` 可关闭），健康检查在 `/health`。
 
-前端如需自行构建：
+前端构建（`/admin` 托管 `frontend/dist`，Docker 镜像也会 COPY 它；改前端代码后重新执行）：
 
 ```bash
-cd frontend && npm install && npm run build   # 产物输出到 frontend/dist，由 /admin 托管
+cd frontend && npm install && npm run build   # 产物输出到 frontend/dist
 ```
+
+Docker 部署还需重建镜像并重启：`docker compose build && docker compose up -d`。
 
 开发与质量门槛：
 

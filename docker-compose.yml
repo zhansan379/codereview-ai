@@ -4,7 +4,7 @@
 #
 # —— PostgreSQL（可选，standard 档）——
 # 默认 ONLY 起 app + SQLite（simple 档，行为与旧版一致）。要切 PG：
-#   1) .env 里设 CR_DB_USER / CR_DB_PASSWORD（缺密码直接报错提示）
+#   1) .env 里设 CR_DB_USER / CR_DB_PASSWORD
 #   2) docker compose --profile postgres up -d
 #   3) 通过 CR_DATABASE_URL 让 app 连 PG：
 #      CR_DATABASE_URL=postgresql+asyncpg://${CR_DB_USER}:${CR_DB_PASSWORD}@postgres:5432/codereview
@@ -57,7 +57,9 @@ services:
     environment:
       POSTGRES_DB: codereview            # 空卷首次初始化自动 CREATE DATABASE
       POSTGRES_USER: ${CR_DB_USER:-codereview}
-      POSTGRES_PASSWORD: ${CR_DB_PASSWORD:?请在 .env 设置 CR_DB_PASSWORD}
+      # 插值期不强校验（:? 会拦住不带 --profile 的普通 up）；空密码由 postgres 容器
+      # 首次初始化时自己报错。仅在启用 postgres profile 时才有意义。
+      POSTGRES_PASSWORD: ${CR_DB_PASSWORD:-}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

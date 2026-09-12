@@ -92,6 +92,9 @@ CR_ENCRYPTION_KEY=<generate with the commands below>
 CR_ADMIN_PASSWORD=<generate with the commands below>
 EOF
 
+# Build the frontend once (dist/ is gitignored; the image COPYs it — the build fails without it)
+cd frontend && npm install && npm run build && cd ..
+
 docker compose up -d
 open http://localhost:5001/admin
 ```
@@ -127,11 +130,13 @@ uv run uvicorn codereview_ai.main:app --host 0.0.0.0 --port 5001
 
 The admin panel is at `/admin`, interactive API docs at `/docs` (`CR_OPENAPI_ENABLED=0` turns them off), health probe at `/health`.
 
-Building the frontend yourself:
+Frontend build (`/admin` serves `frontend/dist`, and the Docker image COPYs it; re-run after changing frontend code):
 
 ```bash
-cd frontend && npm install && npm run build   # output goes to frontend/dist, served under /admin
+cd frontend && npm install && npm run build   # output goes to frontend/dist
 ```
+
+For Docker deploys, rebuild the image and restart: `docker compose build && docker compose up -d`.
 
 Development and quality gates:
 

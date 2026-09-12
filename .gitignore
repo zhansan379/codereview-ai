@@ -18,6 +18,7 @@ Thumbs.db
 
 # Env
 .env
+docker-compose.override.yml
 
 # Runtime data (SQLite)
 data/

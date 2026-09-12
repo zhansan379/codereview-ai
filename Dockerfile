@@ -18,8 +18,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-# 拷源码并完成安装
+# 拷源码并完成安装（pyproject 的 readme 字段指向 README.md，hatchling 打包项目本体时必读，缺了构建即失败）
 COPY src ./src
+COPY README.md ./
 RUN uv sync --frozen --no-dev
 
 # 拷前端构建产物（/admin SPA；mount_admin 找不到 frontend/dist 时后台页 404，见 admin_ui.py）
