@@ -29,7 +29,26 @@ class WebhookErrorRepository:
         correct_url: str,
         source_ip: str = "",
     ) -> WebhookError:
-        """记录一条 webhook 配置错误。"""
+        """记录一条 webhook 配置错误。相同 wrong_url 和 provider 的错误不重复插入。"""
+        # 检查是否已存在相同的错误记录（5 分钟内）
+        from datetime import UTC, datetime, timedelta
+        from sqlalchemy import select
+
+        threshold = datetime.now(UTC) - timedelta(minutes=5)
+        stmt = (
+            select(WebhookError)
+            .where(
+                WebhookError.provider == provider,
+                WebhookError.wrong_url == wrong_url,
+                WebhookError.created_at >= threshold,
+            )
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        existing = result.scalar_one_or_none()
+        if existing:
+            return existing
+
         row = WebhookError(
             provider=provider,
             wrong_url=wrong_url,
