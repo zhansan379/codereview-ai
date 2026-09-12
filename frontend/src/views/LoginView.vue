@@ -62,6 +62,21 @@
 
     <!-- 右栏:登录表单 -->
     <main class="right-panel">
+      <!-- 暗色 / 语言切换:与顶栏共用同一份单例状态,登录页即可直接调 -->
+      <div class="panel-toggles">
+        <el-switch
+          v-model="isDark"
+          class="dark-switch"
+          :active-action-icon="Moon"
+          :inactive-action-icon="Sunny"
+          :aria-label="isDark ? $t('menu.toLight') : $t('menu.toDark')"
+        />
+        <!-- 语言切换:只有两种语言,点击即切,芯片显示目标语言 -->
+        <button type="button" class="lang-chip" :title="$t('menu.language')" @click="toggleLocale">
+          {{ locale === 'zh-CN' ? 'EN' : '中' }}
+        </button>
+      </div>
+
       <div class="form-container">
         <div class="sparkle-icon"><AppLogo :size="32" /></div>
         <div class="form-header">
@@ -177,12 +192,24 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'v
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
+import { Moon, Sunny } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
+import { useDark } from '../composables/useDark'
+import { useLocale } from '../composables/useLocale'
 import AppLogo from '../components/AppLogo.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
 const { t } = useI18n()
+
+// 暗色与语言开关:useDark/useLocale 都是模块级单例,这里切换后
+// 登录进后台时顶栏的开关状态自然同步,无需额外通信。
+const { isDark } = useDark()
+const { locale, setLocale } = useLocale()
+
+function toggleLocale() {
+  setLocale(locale.value === 'zh-CN' ? 'en' : 'zh-CN')
+}
 
 const form = reactive({ username: 'admin', password: '' })
 const loading = ref(false)
@@ -748,10 +775,44 @@ onBeforeUnmount(() => {
 
 /* ============ 右栏:表单 ============ */
 .right-panel {
+  position: relative;
   display: flex;
   background: var(--el-bg-color);
   padding: 40px;
   overflow-y: auto;
+}
+
+/* 右上角:暗色/语言开关 */
+.panel-toggles {
+  position: absolute;
+  top: 24px;
+  right: 32px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  z-index: 10;
+}
+
+.lang-chip {
+  min-width: 36px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 13px;
+  border: 1px solid var(--el-border-color);
+  background: transparent;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    color 0.2s,
+    border-color 0.2s;
+}
+
+.lang-chip:hover {
+  color: var(--el-text-color-primary);
+  border-color: var(--el-border-color-darker);
 }
 
 .form-container {
