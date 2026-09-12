@@ -52,6 +52,7 @@ FORBIDDEN_OVERRIDE_WORDS = (
 DEFAULT_FORGE_URLS: dict[str, str] = {
     "github": "https://api.github.com",
     "gitlab": "https://gitlab.com",
+    "gitee": "https://gitee.com/api/v5",
 }
 
 #: 项目可覆盖的分节 → 允许键白名单（DESIGN §16：同一张表驱动编辑与覆盖两处校验）。

@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from codereview_ai.forges.signatures import GITHUB
+from codereview_ai.forges.signatures import GITHUB, GITEE
 
 #: 系统所需能力 → GitHub 任一满足即可的 scope（网络凭证在 HTTP 层判，见 GITHUB_REQUIRED_SCOPES）。
 GITHUB_REQUIRED_SCOPES: dict[str, tuple[str, ...]] = {
@@ -299,6 +299,32 @@ async def probe_capabilities(
             return _github_no_scope_caps(token)
         finally:
             await client.aclose()
+
+    # —— Gitee（API v5，access_token 查询参数认证）——
+    if provider == GITEE:
+        client = await _client()
+        auth = {"access_token": token}
+        try:
+            user = await client.get(f"{base}/user", params=auth)
+            repos = await client.get(f"{base}/user/repos", params={**auth, "per_page": 1})
+        finally:
+            await client.aclose()
+        if user.status_code >= 400:
+            return [
+                _cap("connect", "missing", f"认证失败（HTTP {user.status_code}）"),
+                *[_cap(n, "unknown", "认证未通过，无法判定") for n in CAPABILITY_ORDER if n != "connect"],
+            ]
+        out = [_cap("connect", "ok")]
+        if repos.status_code < 400:
+            out.append(_cap("read_pull", "ok"))
+        elif repos.status_code in (401, 403):
+            out.append(_cap("read_pull", "missing", f"读仓库列表被拒（HTTP {repos.status_code}），需 projects 权限"))
+        else:
+            out.append(_cap("read_pull", "unknown", f"读探针 HTTP {repos.status_code}"))
+        # 写探针有副作用不实际发；Gitee 不暴露 scope 头 → 诚实标 unknown（与 GitLab 同策略）
+        out.append(_cap("post_comment", "unknown", "Gitee 不暴露 scope；发评论需 projects 权限（未做写探针避免副作用）"))
+        out.append(_cap("commit_status", "unknown", "同上：写状态需 projects 权限（未做写探针）"))
+        return out
 
     # —— GitLab ——
     client = await _client()

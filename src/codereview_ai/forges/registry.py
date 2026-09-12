@@ -19,12 +19,13 @@ from codereview_ai.config.repository import ConfigRepository
 from codereview_ai.forges.base import ForgeAdapter
 from codereview_ai.forges.github import GitHubForge
 from codereview_ai.forges.gitlab import GitLabForge
-from codereview_ai.forges.signatures import GITHUB, GITLAB
+from codereview_ai.forges.gitee import GiteeForge
+from codereview_ai.forges.signatures import GITHUB, GITEE, GITLAB
 
 logger = logging.getLogger("codereview_ai.forge_registry")
 
 #: 有适配器的平台（配置页也以此为白名单）
-SUPPORTED_PROVIDERS = (GITLAB, GITHUB)
+SUPPORTED_PROVIDERS = (GITLAB, GITHUB, GITEE)
 
 
 def registered_providers(settings: Settings) -> list[str]:
@@ -34,6 +35,8 @@ def registered_providers(settings: Settings) -> list[str]:
         out.append(GITLAB)
     if settings.github_token and settings.github_url:
         out.append(GITHUB)
+    if settings.gitee_token and settings.gitee_url:
+        out.append(GITEE)
     return out
 
 
@@ -45,6 +48,8 @@ def build_adapter(
         return GitLabForge(url, token, http)
     if provider == GITHUB and url and token:
         return GitHubForge(url, token, http)
+    if provider == GITEE and url and token:
+        return GiteeForge(url, token, http)
     return None
 
 

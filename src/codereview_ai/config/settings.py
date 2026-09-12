@@ -107,6 +107,8 @@ class Settings(BaseSettings):
     gitlab_token: str = ""
     github_url: str = "https://api.github.com"
     github_token: str = ""
+    gitee_url: str = "https://gitee.com/api/v5"
+    gitee_token: str = ""
     llm_model: str = ""
 
     @model_validator(mode="after")
