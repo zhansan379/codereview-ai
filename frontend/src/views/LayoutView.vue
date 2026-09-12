@@ -150,6 +150,7 @@ async function fetchNotifications() {
       (n) => !notificationInstances.value.has(n.id)
     )
     notifications.value = res.items
+    console.log(res.items)
     // 为新消息显示 Notification
     for (const notification of newNotifications) {
       showNotification(notification)
@@ -170,15 +171,17 @@ function showNotification(notification: NotificationItem) {
 
   // 从 extra_data 中提取额外信息
   const extraData = notification.extra_data || {}
-  let detailHtml = `<p>${notification.message.replace(/\n/g, '<br>')}</p>`
+  let detailHtml: string
   if (extraData.wrong_url || extraData.correct_url) {
+    // webhook 配置错误：只显示 extra_data 中的 URL，不显示 message（避免与旧记录重复）
     detailHtml = `
       <div style="line-height: 1.6;">
-        <p>${notification.message.replace(/\n/g, '<br>')}</p>
         ${extraData.wrong_url ? `<p style="color: #f56c6c;">错误 URL：${extraData.wrong_url}</p>` : ''}
         ${extraData.correct_url ? `<p style="color: #67c23a;">正确 URL：${extraData.correct_url}</p>` : ''}
       </div>
     `
+  } else {
+    detailHtml = `<p>${notification.message.replace(/\n/g, '<br>')}</p>`
   }
 
   const instance = ElNotification({

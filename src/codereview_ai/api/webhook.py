@@ -99,7 +99,7 @@ class WebhookHelpMiddleware(BaseHTTPMiddleware):
                 await repo.create(
                     type="webhook_config_error",
                     title=f"{provider.upper() if provider else '未知平台'} Webhook 路径配置错误",
-                    message=f"错误 URL: {wrong_url}\n正确 URL: {correct_url}",
+                    message="Webhook 接收地址配置错误，请检查平台 Webhook 设置",
                     level="warning",
                     extra_data={
                         "provider": provider or "unknown",
