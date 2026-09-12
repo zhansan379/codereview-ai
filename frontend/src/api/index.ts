@@ -684,7 +684,7 @@ export interface NotificationItem {
   level: string
   title: string
   message: string
-  metadata: Record<string, any>
+  extra_data: Record<string, any>
   acknowledged: boolean
   acknowledged_at: string | null
   created_at: string

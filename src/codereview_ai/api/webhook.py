@@ -101,7 +101,7 @@ class WebhookHelpMiddleware(BaseHTTPMiddleware):
                     title=f"{provider.upper() if provider else '未知平台'} Webhook 路径配置错误",
                     message=f"错误 URL: {wrong_url}\n正确 URL: {correct_url}",
                     level="warning",
-                    metadata={
+                    extra_data={
                         "provider": provider or "unknown",
                         "wrong_url": wrong_url,
                         "correct_url": correct_url,

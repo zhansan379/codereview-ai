@@ -28,7 +28,7 @@ class NotificationOut(BaseModel):
     level: str
     title: str
     message: str
-    metadata: dict
+    extra_data: dict
     acknowledged: bool
     acknowledged_at: datetime | None
     created_at: datetime
@@ -58,7 +58,7 @@ async def list_notifications(request: Request) -> NotificationListOut:
                     level=item.level,
                     title=item.title,
                     message=item.message,
-                    metadata=item.metadata,
+                    extra_data=item.extra_data,
                     acknowledged=item.acknowledged,
                     acknowledged_at=item.acknowledged_at,
                     created_at=item.created_at,

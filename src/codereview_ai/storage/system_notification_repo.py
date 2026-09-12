@@ -28,7 +28,7 @@ class SystemNotificationRepository:
         title: str,
         message: str = "",
         level: str = "info",
-        metadata: dict[str, object] | None = None,
+        extra_data: dict[str, object] | None = None,
     ) -> SystemNotification:
         """记录一条系统消息。相同 type + title 的消息 1 分钟内不重复插入。"""
         # 去重检查：1 分钟内相同 type + title 的消息不重复插入
@@ -52,7 +52,7 @@ class SystemNotificationRepository:
             title=title,
             message=message,
             level=level,
-            metadata=metadata or {},
+            extra_data=extra_data or {},
             acknowledged=False,
         )
         self._session.add(row)

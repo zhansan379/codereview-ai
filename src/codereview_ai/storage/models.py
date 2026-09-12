@@ -435,7 +435,7 @@ class SystemNotification(Base):
     - level: 级别（info, warning, error）
     - title: 标题
     - message: 详细内容
-    - metadata: 额外元数据（JSON，存储 provider、wrong_url 等）
+    - extra_data: 额外元数据（JSON，存储 provider、wrong_url 等）
     """
 
     __tablename__ = "system_notification"
@@ -450,7 +450,7 @@ class SystemNotification(Base):
     level: Mapped[str] = mapped_column(String(16), default="info")  # info/warning/error
     title: Mapped[str] = mapped_column(String(255))
     message: Mapped[str] = mapped_column(Text, default="")
-    metadata: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    extra_data: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     acknowledged: Mapped[bool] = mapped_column(Boolean, default=False)
     acknowledged_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None

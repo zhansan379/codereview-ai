@@ -167,15 +167,15 @@ function showNotification(notification: NotificationItem) {
   }
   const epType = typeMap[notification.level] || 'info'
 
-  // 从 metadata 中提取额外信息
-  const metadata = notification.metadata || {}
+  // 从 extra_data 中提取额外信息
+  const extraData = notification.extra_data || {}
   let detailHtml = `<p>${notification.message.replace(/\n/g, '<br>')}</p>`
-  if (metadata.wrong_url || metadata.correct_url) {
+  if (extraData.wrong_url || extraData.correct_url) {
     detailHtml = `
       <div style="line-height: 1.6;">
         <p>${notification.message.replace(/\n/g, '<br>')}</p>
-        ${metadata.wrong_url ? `<p style="color: #f56c6c;">错误 URL：${metadata.wrong_url}</p>` : ''}
-        ${metadata.correct_url ? `<p style="color: #67c23a;">正确 URL：${metadata.correct_url}</p>` : ''}
+        ${extraData.wrong_url ? `<p style="color: #f56c6c;">错误 URL：${extraData.wrong_url}</p>` : ''}
+        ${extraData.correct_url ? `<p style="color: #67c23a;">正确 URL：${extraData.correct_url}</p>` : ''}
       </div>
     `
   }
