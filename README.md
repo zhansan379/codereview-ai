@@ -112,6 +112,8 @@ python -c 'import secrets;print(secrets.token_urlsafe(24))'                     
 
 [如何使用 Webhook](docs/how_use_webhook.md)
 
+[Gitee 接入教程](docs/how_use_gitee.md)
+
 [如何申请 Secret](docs/how_apply_for_secret.md)
 
 [使用 PostgreSQL 存储（standard 档）](docs/how_use_postgres.md)
@@ -162,7 +164,7 @@ uv run pytest tests --cov=codereview_ai --cov-fail-under=70
 
 **之后**
 
-- [ ] 更多平台 — Gitee / Gitea 适配器；webhook IP 白名单作为签名校验之外的第二道防线
+- [ ] 更多平台 — Gitea 适配器（Gitee 已支持：webhook + 主动补拉，见 [Gitee 接入教程](docs/how_use_gitee.md)）；webhook IP 白名单作为签名校验之外的第二道防线
 - [ ] 更深的上下文 — 仓库知识库（检索团队规范与历史结论注入 prompt）、无 diff 的整文件审计、开发者 `@bot` 追问
 - [ ] 更多出口 — 通用 webhook 与邮件通知、周报 / 月报、HTML 报告导出（现为 xlsx）
 - [ ] 后台体验 — 独立任务看板、深色模式、中英 i18n

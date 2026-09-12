@@ -158,7 +158,7 @@ What is planned next, in priority order.
 
 **Later**
 
-- [ ] More platforms — Gitee / Gitea adapters; webhook IP allowlist as a second line of defense behind signature verification
+- [ ] More platforms — Gitea adapter (Gitee is already supported: webhook + scheduled pull, see the [Gitee guide](docs/how_use_gitee.md)); webhook IP allowlist as a second line of defense behind signature verification
 - [ ] Deeper context — repo knowledge base (retrieve team conventions and past findings into the prompt), diff-less whole-file audits, `@bot` follow-up questions from developers
 - [ ] More outputs — generic webhook and email notifiers, weekly / monthly reports, HTML report export (currently xlsx)
 - [ ] Admin polish — standalone task board, dark mode, zh/en i18n
