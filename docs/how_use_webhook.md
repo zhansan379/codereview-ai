@@ -3,7 +3,7 @@
 1. 进入仓库页面，点击 **Settings → Webhooks → Add webhook**；
 2. **Payload URL** 填本服务地址：`https://<你的服务地址>/webhook`；
 3. **Content type** 选 `application/json`；
-4. **Secret** 填与后端 `CR_WEBHOOK_SECRET` 一致的值（GitHub 用该密码做 HMAC-SHA256 签名校验，不一致会被 401 拒绝）；
+4. **Secret**（在 Content type 下方，可能需要向下滚动）：填与后端 `CR_WEBHOOK_SECRET` 一致的值（GitHub 用该密码做 HMAC-SHA256 签名校验，不一致会被 401 拒绝）；
 5. **Which events would you like to trigger this webhook?** 选 **Let me select individual events**，然后勾选：
    - **Pull requests**（MR 审查必须）
    - **Pushes**（push 轨按需勾选）
