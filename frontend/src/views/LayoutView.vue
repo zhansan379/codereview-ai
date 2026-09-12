@@ -145,8 +145,9 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 async function fetchNotifications() {
   try {
     const res = await listNotifications()
+    // 用 notificationInstances 判断是否已显示，避免组件重新挂载时重复弹窗
     const newNotifications = res.items.filter(
-      (n) => !notifications.value.some((nn) => nn.id === n.id)
+      (n) => !notificationInstances.value.has(n.id)
     )
     notifications.value = res.items
     // 为新消息显示 Notification
