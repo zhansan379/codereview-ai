@@ -132,7 +132,15 @@ async def webhook_entry(request: Request) -> JSONResponse:
     if not raw:
         raise HTTPException(400, "empty body")
 
-    provider = detect_forge(request.headers)
+    # 先检查 query 参数是否有 Gitee 签名，如果有则强制识别为 Gitee
+    query_sign = request.query_params.get("sign")
+    query_ts = request.query_params.get("timestamp")
+    if query_sign and query_ts:
+        # Gitee query 参数签名模式
+        provider = "gitee"
+    else:
+        provider = detect_forge(request.headers)
+
     settings: Any = request.app.state.settings
     secret = getattr(settings, "webhook_secret", "") or ""
     if not secret:
@@ -140,8 +148,6 @@ async def webhook_entry(request: Request) -> JSONResponse:
 
     # Gitee 支持将签名放在 query 参数中（sign + timestamp），需要合并到 headers 验证
     headers = dict(request.headers)
-    query_sign = request.query_params.get("sign")
-    query_ts = request.query_params.get("timestamp")
     if query_sign and query_ts and provider == "gitee":
         # URL 解码时 %20 变成空格，但 base64 中应该是 +，需要替换回来
         query_sign = query_sign.replace(" ", "+")
