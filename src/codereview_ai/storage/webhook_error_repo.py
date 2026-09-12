@@ -29,12 +29,12 @@ class WebhookErrorRepository:
         correct_url: str,
         source_ip: str = "",
     ) -> WebhookError:
-        """记录一条 webhook 配置错误。相同 wrong_url 和 provider 的错误不重复插入。"""
-        # 检查是否已存在相同的错误记录（5 分钟内）
+        """记录一条 webhook 配置错误。相同 wrong_url 和 provider 的错误 1 分钟内不重复插入。"""
+        # 检查是否已存在相同的错误记录（1 分钟内）
         from datetime import UTC, datetime, timedelta
         from sqlalchemy import select
 
-        threshold = datetime.now(UTC) - timedelta(minutes=5)
+        threshold = datetime.now(UTC) - timedelta(minutes=1)
         stmt = (
             select(WebhookError)
             .where(
