@@ -255,8 +255,8 @@ const activeMenu = computed(() => {
 onMounted(() => {
   // 硬刷新后重同步用户与权限
   auth.refresh().catch(() => {})
-  // 启动 webhook 错误轮询
-  fetchWebhookErrors()
+  // 启动系统消息轮询
+  fetchNotifications()
   startPolling()
 })
 
