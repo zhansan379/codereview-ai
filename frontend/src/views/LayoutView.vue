@@ -112,7 +112,7 @@
   >
     <div class="webhook-error-content">
       <p style="color: #e6a23c; margin-bottom: 16px;">
-        ⚠️ 检测到 {{ webhookErrors.length }} 条 webhook 路径配置错误，请修正后重新测试。
+        检测到 {{ webhookErrors.length }} 条 webhook 路径配置错误，请修正后重新测试。
       </p>
       <el-scrollbar max-height="300px">
         <div
@@ -125,8 +125,8 @@
             <span class="error-time">{{ new Date(error.created_at).toLocaleString() }}</span>
           </div>
           <div class="error-url">
-            <div class="wrong-url">❌ 错误：{{ error.wrong_url }}</div>
-            <div class="correct-url">✅ 正确：{{ error.correct_url }}</div>
+            <div class="wrong-url">错误：{{ error.wrong_url }}</div>
+            <div class="correct-url">正确：{{ error.correct_url }}</div>
           </div>
           <div class="error-actions">
             <el-button size="small" @click="onAcknowledgeError(error)">已确认</el-button>
