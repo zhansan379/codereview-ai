@@ -81,7 +81,7 @@ Webhook 事件经 HMAC 验签后写入异步队列，立即返回 `202`，请求
 
 ### 方式一：拉取官方镜像，免克隆（推荐）
 
-镜像发布在 GitHub Container Registry，准备一个空目录，两步起服务：
+镜像发布在 GitHub Container Registry，准备一个空目录，两步起服务（命令在 bash 与 PowerShell 中均可直接执行）：
 
 ```bash
 mkdir codereview-ai && cd codereview-ai
@@ -94,20 +94,23 @@ print('CR_WEBHOOK_SECRET=' + secrets.token_urlsafe(48))
 print('CR_ENCRYPTION_KEY=' + base64.urlsafe_b64encode(os.urandom(32)).decode())
 print('CR_ADMIN_PASSWORD=' + secrets.token_urlsafe(24))
 "
+```
 
-# 2) 把终端输出的四行存成 .env（密码行可当场换成你自己的登录密码），再起容器
-cat > .env <<'EOF'
+把终端输出的四行存成当前目录的 `.env` 文件（密码行可当场换成你自己的登录密码；任意文本编辑器均可，注意别存成 `.env.txt`）：
+
+```ini
 CR_SECRET_KEY=<粘贴第 1 行>
 CR_WEBHOOK_SECRET=<粘贴第 2 行>
 CR_ENCRYPTION_KEY=<粘贴第 3 行>
 CR_ADMIN_PASSWORD=<粘贴第 4 行，或换成你自己的密码>
-EOF
-
-docker run -d --name codereview-ai -p 5001:5001 --env-file .env \
-  -v codereview-ai-data:/app/data ghcr.io/zhansan379/codereview-ai:latest
-
-open http://localhost:5001/admin
 ```
+
+```bash
+# 2) 起容器（单行命令，任何 shell 通用）
+docker run -d --name codereview-ai -p 5001:5001 --env-file .env -v codereview-ai-data:/app/data ghcr.io/zhansan379/codereview-ai:latest
+```
+
+浏览器打开 http://localhost:5001/admin，用 `CR_ADMIN_PASSWORD` 登录。
 
 默认使用 SQLite，数据持久化在 `codereview-ai-data` 卷里；需要 PostgreSQL（standard 档）见[教程](docs/how_use_postgres.md)。
 

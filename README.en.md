@@ -78,7 +78,7 @@ Sandbox off, `git` not on PATH, clone unreachable, target commit not fetchable, 
 
 ### Option 1: Pull the official image — no clone needed (recommended)
 
-The image is published on GitHub Container Registry. Grab an empty directory and bring the service up in two steps:
+The image is published on GitHub Container Registry. Grab an empty directory and bring the service up in two steps (commands work in both bash and PowerShell):
 
 ```bash
 mkdir codereview-ai && cd codereview-ai
@@ -91,20 +91,23 @@ print('CR_WEBHOOK_SECRET=' + secrets.token_urlsafe(48))
 print('CR_ENCRYPTION_KEY=' + base64.urlsafe_b64encode(os.urandom(32)).decode())
 print('CR_ADMIN_PASSWORD=' + secrets.token_urlsafe(24))
 "
+```
 
-# 2) Save the four printed lines as .env (replace the password line with your own login password if you like), then start the container
-cat > .env <<'EOF'
+Save the four printed lines as `.env` in the current directory (replace the password line with your own login password if you like; any text editor works — just don't end up with `.env.txt`):
+
+```ini
 CR_SECRET_KEY=<paste line 1>
 CR_WEBHOOK_SECRET=<paste line 2>
 CR_ENCRYPTION_KEY=<paste line 3>
 CR_ADMIN_PASSWORD=<paste line 4, or your own password>
-EOF
-
-docker run -d --name codereview-ai -p 5001:5001 --env-file .env \
-  -v codereview-ai-data:/app/data ghcr.io/zhansan379/codereview-ai:latest
-
-open http://localhost:5001/admin
 ```
+
+```bash
+# 2) Start the container (single line — works in any shell)
+docker run -d --name codereview-ai -p 5001:5001 --env-file .env -v codereview-ai-data:/app/data ghcr.io/zhansan379/codereview-ai:latest
+```
+
+Open http://localhost:5001/admin in a browser and sign in with `CR_ADMIN_PASSWORD`.
 
 SQLite is the default; data persists in the `codereview-ai-data` volume. For PostgreSQL (standard tier), see the [guide](docs/how_use_postgres.md).
 
