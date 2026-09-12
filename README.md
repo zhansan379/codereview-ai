@@ -18,7 +18,7 @@
 
 ## 这是什么
 
-一个部署在你自己机器上的代码审查服务。在 GitHub 或 GitLab 挂一个 webhook，之后每一个打开或更新的 PR / MR 都会被自动审查，意见以行级 inline 评论写回改动所在的那一行，同时推送到钉钉 / 飞书 / 企微。webhook 万一漏了事件，或者项目刚接入时已经有一批 PR 开着，后台可以主动补拉一轮把它们捞回来。配置、模型、项目、权限、统计都在自带的 Vue 管理后台里。
+一个部署在你自己机器上的代码审查服务。在 GitHub /GitLab/Gitee  挂一个 webhook，之后每一个打开或更新的 PR / MR 都会被自动审查，意见以行级 inline 评论写回改动所在的那一行，同时推送到钉钉 / 飞书 / 企微。webhook 万一漏了事件，或者项目刚接入时已经有一批 PR 开着，后台可以主动补拉一轮把它们捞回来。配置、模型、项目、权限、统计都在自带的 Vue 管理后台里。
 
 <img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/173bc789-b4a7-4a92-bcbe-e2d9a1ff8a9a" />
 
@@ -162,7 +162,7 @@ uv run pytest tests --cov=codereview_ai --cov-fail-under=70
 
 **之后**
 
-- [ ] 更多平台 — Gitea 适配器（Gitee 已支持：webhook + 主动补拉，见 [Webhook 配置教程](docs/how_use_webhook.md)）；webhook IP 白名单作为签名校验之外的第二道防线
+- [ ] 更多平台 — Gitea 适配器
 - [ ] 更深的上下文 — 仓库知识库（检索团队规范与历史结论注入 prompt）、无 diff 的整文件审计、开发者 `@bot` 追问
 - [ ] 更多出口 — 通用 webhook 与邮件通知、周报 / 月报、HTML 报告导出（现为 xlsx）
 - [ ] 后台体验 — 独立任务看板、深色模式、中英 i18n
