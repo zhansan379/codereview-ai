@@ -1,0 +1,67 @@
+name: Docker
+
+# 构建运行时镜像并发布到 GHCR（ghcr.io/zhansan379/codereview-ai）。
+# frontend/dist 被 gitignore，构建镜像前先在 CI 里产出前端构建产物。
+# tag 规则：main 分支 → latest；打 v* tag → 0.2.0 / 0.2 语义化版本。
+# 架构仅 linux/amd64：semgrep 依赖重，arm64 走 QEMU 构建极慢，有需求再加。
+# 首次发布后需到仓库 Packages 设置把可见性改为 Public，否则 docker pull 要登录。
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: build & push（GHCR）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 构建前端（dist 不进 git，镜像 COPY 需要）
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

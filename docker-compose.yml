@@ -15,7 +15,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: codereview-ai:v0.1.0
+    # 官方镜像（GHCR，由 .github/workflows/docker.yml 发布）：docker compose pull 可免构建直用；
+    # 本地没有该镜像且有 build 段时仍自动本地构建，克隆用户行为不变
+    image: ghcr.io/zhansan379/codereview-ai:latest
     container_name: codereview-ai
     restart: unless-stopped
     ports:

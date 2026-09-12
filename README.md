@@ -79,6 +79,42 @@ Webhook 事件经 HMAC 验签后写入异步队列，立即返回 `202`，请求
 
 ## 快速开始
 
+### 方式一：拉取官方镜像，免克隆（推荐）
+
+镜像发布在 GitHub Container Registry，准备一个空目录，两步起服务：
+
+```bash
+mkdir codereview-ai && cd codereview-ai
+
+# 1) 生成四枚密钥：直接借用官方镜像里的 Python，宿主机什么都不用装
+docker run --rm ghcr.io/zhansan379/codereview-ai:latest python -c "
+import os, base64, secrets
+print('CR_SECRET_KEY=' + secrets.token_urlsafe(48))
+print('CR_WEBHOOK_SECRET=' + secrets.token_urlsafe(48))
+print('CR_ENCRYPTION_KEY=' + base64.urlsafe_b64encode(os.urandom(32)).decode())
+print('CR_ADMIN_PASSWORD=' + secrets.token_urlsafe(24))
+"
+
+# 2) 把终端输出的四行存成 .env（密码行可当场换成你自己的登录密码），再起容器
+cat > .env <<'EOF'
+CR_SECRET_KEY=<粘贴第 1 行>
+CR_WEBHOOK_SECRET=<粘贴第 2 行>
+CR_ENCRYPTION_KEY=<粘贴第 3 行>
+CR_ADMIN_PASSWORD=<粘贴第 4 行，或换成你自己的密码>
+EOF
+
+docker run -d --name codereview-ai -p 5001:5001 --env-file .env \
+  -v codereview-ai-data:/app/data ghcr.io/zhansan379/codereview-ai:latest
+
+open http://localhost:5001/admin
+```
+
+默认使用 SQLite，数据持久化在 `codereview-ai-data` 卷里；需要 PostgreSQL（standard 档）见[教程](docs/how_use_postgres.md)。
+
+> 注意：重新生成 `CR_ENCRYPTION_KEY` 后，数据库里已保存的平台凭据（token 等）会解不开，需要在后台重新配置一遍。
+
+### 方式二：克隆仓库，本地构建
+
 ```bash
 git clone https://github.com/zhansan379/codereview-ai.git
 cd codereview-ai
@@ -141,7 +177,7 @@ uv run uvicorn codereview_ai.main:app --host 0.0.0.0 --port 5001
 cd frontend && npm install && npm run build   # 产物输出到 frontend/dist
 ```
 
-Docker 部署还需重建镜像并重启：`docker compose build && docker compose up -d`。
+Docker 部署：改完代码重建本地镜像并重启 `docker compose build && docker compose up -d`；只想用官方镜像的话 `docker compose pull && docker compose up -d`。
 
 开发与质量门槛：
 

@@ -76,6 +76,42 @@ Sandbox off, `git` not on PATH, clone unreachable, target commit not fetchable, 
 
 ## Quick start
 
+### Option 1: Pull the official image — no clone needed (recommended)
+
+The image is published on GitHub Container Registry. Grab an empty directory and bring the service up in two steps:
+
+```bash
+mkdir codereview-ai && cd codereview-ai
+
+# 1) Generate the four secrets: borrow the Python inside the official image — nothing to install on the host
+docker run --rm ghcr.io/zhansan379/codereview-ai:latest python -c "
+import os, base64, secrets
+print('CR_SECRET_KEY=' + secrets.token_urlsafe(48))
+print('CR_WEBHOOK_SECRET=' + secrets.token_urlsafe(48))
+print('CR_ENCRYPTION_KEY=' + base64.urlsafe_b64encode(os.urandom(32)).decode())
+print('CR_ADMIN_PASSWORD=' + secrets.token_urlsafe(24))
+"
+
+# 2) Save the four printed lines as .env (replace the password line with your own login password if you like), then start the container
+cat > .env <<'EOF'
+CR_SECRET_KEY=<paste line 1>
+CR_WEBHOOK_SECRET=<paste line 2>
+CR_ENCRYPTION_KEY=<paste line 3>
+CR_ADMIN_PASSWORD=<paste line 4, or your own password>
+EOF
+
+docker run -d --name codereview-ai -p 5001:5001 --env-file .env \
+  -v codereview-ai-data:/app/data ghcr.io/zhansan379/codereview-ai:latest
+
+open http://localhost:5001/admin
+```
+
+SQLite is the default; data persists in the `codereview-ai-data` volume. For PostgreSQL (standard tier), see the [guide](docs/how_use_postgres.md).
+
+> Heads-up: regenerating `CR_ENCRYPTION_KEY` makes the platform credentials (tokens, etc.) already stored in the database undecryptable — you'll need to re-enter them in the admin panel.
+
+### Option 2: Clone the repo and build locally
+
 ```bash
 git clone https://github.com/zhansan379/codereview-ai.git
 cd codereview-ai
@@ -136,7 +172,7 @@ Frontend build (`/admin` serves `frontend/dist`, and the Docker image COPYs it; 
 cd frontend && npm install && npm run build   # output goes to frontend/dist
 ```
 
-For Docker deploys, rebuild the image and restart: `docker compose build && docker compose up -d`.
+For Docker deploys: after code changes rebuild the local image and restart with `docker compose build && docker compose up -d`, or stick to the official image with `docker compose pull && docker compose up -d`.
 
 Development and quality gates:
 
