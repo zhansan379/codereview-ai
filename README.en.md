@@ -18,7 +18,7 @@
 
 ## What this is
 
-A code review service that runs on your own machine. Point a webhook at it from GitHub or GitLab, and every PR / MR that opens or updates gets reviewed automatically — findings land as inline comments on the exact changed lines, and get pushed to DingTalk / Feishu / WeCom. If a webhook never arrives, or a batch of PRs was already open when you onboarded the project, the admin panel can sweep the platform and pull them in. Models, projects, permissions and stats are all configured from the bundled Vue admin panel.
+A code review service that runs on your own machine. Point a webhook at it from GitHub, GitLab or Gitee, and every PR / MR that opens or updates gets reviewed automatically — findings land as inline comments on the exact changed lines, and get pushed to DingTalk / Feishu / WeCom. If a webhook never arrives, or a batch of PRs was already open when you onboarded the project, the admin panel can sweep the platform and pull them in. Models, projects, permissions and stats are all configured from the bundled Vue admin panel.
 
 ## Why it exists
 
@@ -110,11 +110,11 @@ Sign in, configure a model and a forge, then add a webhook pointing at `POST htt
 
 Docs:
 
-[How to use the webhook](docs/how_use_webhook.md)
-
-[How to apply for a Secret](docs/how_apply_for_secret.md)
-
-[Use PostgreSQL storage (standard tier)](docs/how_use_postgres.md)
+- [GitHub onboarding guide](docs/how_use_github.md)
+- [Gitee onboarding guide](docs/how_use_gitee.md)
+- [Scheduled pull (backfill)](docs/how_use_poll.md)
+- [Use PostgreSQL storage (standard tier)](docs/how_use_postgres.md)
+- [WeCom group robot webhook](https://www.tencentcloud.com/zh/document/product/1254/78645) (Chinese)
 
 ## Install
 
@@ -158,7 +158,7 @@ What is planned next, in priority order.
 
 **Later**
 
-- [ ] More platforms — Gitea adapter (Gitee is already supported: webhook + scheduled pull, see the [Webhook guide](docs/how_use_webhook.md)); webhook IP allowlist as a second line of defense behind signature verification
+- [ ] More platforms — Gitea adapter (Gitee is already supported: webhook + scheduled pull, see the [Gitee guide](docs/how_use_gitee.md)); webhook IP allowlist as a second line of defense behind signature verification
 - [ ] Deeper context — repo knowledge base (retrieve team conventions and past findings into the prompt), diff-less whole-file audits, `@bot` follow-up questions from developers
 - [ ] More outputs — generic webhook and email notifiers, weekly / monthly reports, HTML report export (currently xlsx)
 - [ ] Admin polish — standalone task board, dark mode, zh/en i18n
