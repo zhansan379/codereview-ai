@@ -1,7 +1,7 @@
 """系统消息提醒 REST（通用）。
 
 - `GET /notifications`：查询未确认的消息列表（前端轮询展示）
-- `GET /notifications/stream`：SSE 实时推送新消息
+- `GET /notifications/stream`：SSE 实时推送新消息（单独路由，通过 query 参数认证）
 - `POST /notifications/{id}/acknowledge`：标记指定消息为已确认
 - `POST /notifications/acknowledge-all`：标记所有未确认消息为已确认
 """
@@ -25,6 +25,9 @@ router = APIRouter(
     prefix="/notifications",
     dependencies=[Depends(get_current_user), Depends(require_permission("settings:manage"))],
 )
+
+# SSE 单独路由（不带全局认证，因为 EventSource 不支持自定义 header）
+sse_router = APIRouter(prefix="/notifications")
 
 
 class NotificationOut(BaseModel):
@@ -73,7 +76,7 @@ class NotificationBroadcaster:
 broadcaster = NotificationBroadcaster()
 
 
-@router.get("/stream")
+@sse_router.get("/stream")
 async def stream_notifications(request: Request, token: str = "") -> StreamingResponse:
     """SSE 实时推送新消息。通过 query 参数传递 token（EventSource 不支持自定义 header）。"""
     # 验证 token

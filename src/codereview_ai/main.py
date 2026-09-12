@@ -364,6 +364,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(users.router, prefix="/api")
     app.include_router(roles.router, prefix="/api")
     app.include_router(notifications.router, prefix="/api")
+    app.include_router(notifications.sse_router, prefix="/api")
     app.include_router(webhook_router)
     return app
 
