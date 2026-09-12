@@ -137,7 +137,17 @@ async def webhook_entry(request: Request) -> JSONResponse:
     secret = getattr(settings, "webhook_secret", "") or ""
     if not secret:
         raise HTTPException(500, "webhook_secret not configured")
-    if not verify_signature(provider, secret, dict(request.headers), raw):
+
+    # Gitee 支持将签名放在 query 参数中（sign + timestamp），需要合并到 headers 验证
+    headers = dict(request.headers)
+    query_sign = request.query_params.get("sign")
+    query_ts = request.query_params.get("timestamp")
+    if query_sign and query_ts and provider == "gitee":
+        # 将 query 参数转换为 header 格式供 verify_signature 使用
+        headers["x-gitee-token"] = query_sign
+        headers["x-gitee-timestamp"] = query_ts
+
+    if not verify_signature(provider, secret, headers, raw):
         raise HTTPException(401, "invalid signature")
 
     enqueuer = getattr(request.app.state, "enqueuer", None)
