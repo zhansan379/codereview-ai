@@ -57,7 +57,32 @@ class SystemNotificationRepository:
         )
         self._session.add(row)
         await self._session.flush()
+
+        # 广播给所有 SSE 客户端
+        await self._broadcast_notification(row)
+
         return row
+
+    async def _broadcast_notification(self, notification: SystemNotification) -> None:
+        """广播新通知给所有 SSE 客户端。"""
+        try:
+            from codereview_ai.api.admin.notifications import broadcaster
+
+            data = {
+                "id": notification.id,
+                "type": notification.type,
+                "level": notification.level,
+                "title": notification.title,
+                "message": notification.message,
+                "extra_data": notification.extra_data,
+                "acknowledged": notification.acknowledged,
+                "acknowledged_at": notification.acknowledged_at,
+                "created_at": notification.created_at,
+            }
+            await broadcaster.broadcast(data)
+        except ImportError:
+            # 循环导入时忽略（broadcaster 未初始化）
+            pass
 
     async def list_unacknowledged(self, limit: int = 50) -> list[SystemNotification]:
         """查询未确认的消息列表（按创建时间倒序）。"""

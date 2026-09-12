@@ -137,26 +137,63 @@ const { isDark } = useDark()
 const { locale, setLocale } = useLocale()
 const { t } = useI18n()
 
-// ===== 系统消息提醒（通用）=====
+// ===== 系统消息提醒（SSE 实时推送）=====
 const notifications = ref<NotificationItem[]>([])
 const notificationInstances = ref<Map<number, any>>(new Map())
-let pollTimer: ReturnType<typeof setInterval> | null = null
+let eventSource: EventSource | null = null
 
+// 初始化：加载已有的未确认消息
 async function fetchNotifications() {
   try {
     const res = await listNotifications()
-    // 用 notificationInstances 判断是否已显示，避免组件重新挂载时重复弹窗
-    const newNotifications = res.items.filter(
-      (n) => !notificationInstances.value.has(n.id)
-    )
     notifications.value = res.items
-    console.log(res.items)
-    // 为新消息显示 Notification
-    for (const notification of newNotifications) {
-      showNotification(notification)
+    // 为所有未显示的消息显示 Notification
+    for (const notification of res.items) {
+      if (!notificationInstances.value.has(notification.id)) {
+        showNotification(notification)
+      }
     }
   } catch {
     // 静默失败，不影响主流程
+  }
+}
+
+// 启动 SSE 连接
+function startSSE() {
+  // 获取 token 用于 SSE 连接
+  const token = sessionStorage.getItem('cr_token')
+  if (!token) return
+
+  // 创建 EventSource，通过 query 参数传递 token（SSE 不支持自定义 header）
+  const url = `/api/notifications/stream?token=${encodeURIComponent(token)}`
+  eventSource = new EventSource(url)
+
+  eventSource.onmessage = (event) => {
+    try {
+      const notification: NotificationItem = JSON.parse(event.data)
+      // 如果还没显示过，就显示
+      if (!notificationInstances.value.has(notification.id)) {
+        notifications.value.push(notification)
+        showNotification(notification)
+      }
+    } catch {
+      // 解析失败忽略
+    }
+  }
+
+  eventSource.onerror = () => {
+    // 连接断开，5 秒后重连
+    eventSource?.close()
+    eventSource = null
+    setTimeout(startSSE, 5000)
+  }
+}
+
+// 停止 SSE 连接
+function stopSSE() {
+  if (eventSource) {
+    eventSource.close()
+    eventSource = null
   }
 }
 
@@ -220,18 +257,6 @@ async function acknowledgeAll() {
   }
 }
 
-function startPolling() {
-  // 每 30 秒轮询一次
-  pollTimer = setInterval(fetchNotifications, 30000)
-}
-
-function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-}
-
 // 面包屑：从当前路由的 meta.titleKey 出发，顺着 meta.parent 往上串出层级
 // （路由表是平铺的，route.matched 只有 layout+叶子，串不出 审查记录 > 审查详情）。
 // t() 在 computed 里调用，切语言会自动重算，不用额外接线。
@@ -259,13 +284,14 @@ const activeMenu = computed(() => {
 onMounted(() => {
   // 硬刷新后重同步用户与权限
   auth.refresh().catch(() => {})
-  // 启动系统消息轮询
+  // 加载已有的未确认消息
   fetchNotifications()
-  startPolling()
+  // 启动 SSE 实时推送
+  startSSE()
 })
 
 onUnmounted(() => {
-  stopPolling()
+  stopSSE()
 })
 
 function onLogout() {
