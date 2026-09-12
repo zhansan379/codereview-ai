@@ -35,7 +35,6 @@ from codereview_ai.api.admin import (
     stats,
     tasks,
     users,
-    webhook_errors,
 )
 from codereview_ai.api.admin import (
     settings as admin_settings,  # 全局运行时设置（并发数）
