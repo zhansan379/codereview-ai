@@ -372,16 +372,28 @@ async def scribble_queued_task(
     排队不可见的窗口极小。
     """
     if forge is None:
+        logger.warning("scribble_queued_task: forge is None")
         return
     try:
         data = json.loads(raw)
     except ValueError:
+        logger.warning("scribble_queued_task: JSON parse failed")
         return
     if not isinstance(data, dict):
+        logger.warning("scribble_queued_task: data is not dict")
         return
+
+    # 调试日志
+    action = _event_action(data)
+    logger.info("scribble_queued_task: action=%s, keys=%s", action, list(data.keys()))
+
     pr = forge.parse_merge_request(data)
-    if pr is None or not forge.should_review(_event_action(data)):
-        return  # 非 mr 或 close/merge 等不审动作：process 同样不建行，保持一致
+    if pr is None:
+        logger.warning("scribble_queued_task: parse_merge_request returned None")
+        return
+    if not forge.should_review(action):
+        logger.warning("scribble_queued_task: should_review(%s) returned False", action)
+        return
     await review_repo.ensure_task(
         provider=pr.provider, repo_id=pr.repo_id, pr_number=pr.pr_number,
         event_type="mr", branch=pr.source_branch, head_sha=pr.head_sha,
