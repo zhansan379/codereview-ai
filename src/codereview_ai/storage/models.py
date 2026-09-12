@@ -426,3 +426,26 @@ class ProjectMember(Base):
     project_id: Mapped[int] = mapped_column(ForeignKey("project.id", ondelete="CASCADE"))
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class WebhookError(Base):
+    """Webhook 配置错误记录（持久化提醒）：当平台发来的 webhook 请求路径错误时落库，
+    前端轮询展示提醒，用户确认后标记已读。
+    """
+
+    __tablename__ = "webhook_error"
+    __table_args__ = (
+        Index("idx_webhook_error_ack", "acknowledged"),
+        Index("idx_webhook_error_created", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(32))  # 平台（gitee/github/gitlab/gitea）
+    wrong_url: Mapped[str] = mapped_column(String(1024))  # 错误的完整 URL
+    correct_url: Mapped[str] = mapped_column(String(1024))  # 正确的 URL（带 /webhook）
+    source_ip: Mapped[str] = mapped_column(String(64), default="")  # 来源 IP
+    acknowledged: Mapped[bool] = mapped_column(Boolean, default=False)  # 是否已确认
+    acknowledged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

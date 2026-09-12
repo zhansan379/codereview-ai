@@ -102,12 +102,50 @@
       </el-main>
     </el-container>
   </el-container>
+
+  <!-- Webhook 配置错误提醒对话框 -->
+  <el-dialog
+    v-model="showDialog"
+    title="Webhook 配置错误"
+    width="600px"
+    :close-on-click-modal="false"
+  >
+    <div class="webhook-error-content">
+      <p style="color: #e6a23c; margin-bottom: 16px;">
+        ⚠️ 检测到 {{ webhookErrors.length }} 条 webhook 路径配置错误，请修正后重新测试。
+      </p>
+      <el-scrollbar max-height="300px">
+        <div
+          v-for="error in webhookErrors"
+          :key="error.id"
+          class="webhook-error-item"
+        >
+          <div class="error-header">
+            <strong>{{ error.provider.toUpperCase() }}</strong>
+            <span class="error-time">{{ new Date(error.created_at).toLocaleString() }}</span>
+          </div>
+          <div class="error-url">
+            <div class="wrong-url">❌ 错误：{{ error.wrong_url }}</div>
+            <div class="correct-url">✅ 正确：{{ error.correct_url }}</div>
+          </div>
+          <div class="error-actions">
+            <el-button size="small" @click="onAcknowledgeError(error)">已确认</el-button>
+          </div>
+        </div>
+      </el-scrollbar>
+    </div>
+    <template #footer>
+      <el-button @click="showDialog = false">关闭</el-button>
+      <el-button type="primary" @click="onAcknowledgeAll">全部确认</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { ElDialog, ElButton } from 'element-plus'
 import {
   DataBoard,
   Document,
@@ -126,6 +164,7 @@ import { useAuthStore } from '../stores/auth'
 import { useDark } from '../composables/useDark'
 import { useLocale } from '../composables/useLocale'
 import AppLogo from '../components/AppLogo.vue'
+import { listWebhookErrors, acknowledgeWebhookError, acknowledgeAllWebhookErrors, WebhookErrorItem } from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -133,6 +172,57 @@ const auth = useAuthStore()
 const { isDark } = useDark()
 const { locale, setLocale } = useLocale()
 const { t } = useI18n()
+
+// ===== Webhook 配置错误提醒（持久化）=====
+const webhookErrors = ref<WebhookErrorItem[]>([])
+const showDialog = ref(false)
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
+async function fetchWebhookErrors() {
+  try {
+    const res = await listWebhookErrors()
+    webhookErrors.value = res.items
+    if (res.items.length > 0) {
+      showDialog.value = true
+    }
+  } catch {
+    // 静默失败，不影响主流程
+  }
+}
+
+async function onAcknowledgeError(error: WebhookErrorItem) {
+  try {
+    await acknowledgeWebhookError(error.id)
+    webhookErrors.value = webhookErrors.value.filter((e) => e.id !== error.id)
+    if (webhookErrors.value.length === 0) {
+      showDialog.value = false
+    }
+  } catch {
+    // 静默失败
+  }
+}
+
+async function onAcknowledgeAll() {
+  try {
+    await acknowledgeAllWebhookErrors()
+    webhookErrors.value = []
+    showDialog.value = false
+  } catch {
+    // 静默失败
+  }
+}
+
+function startPolling() {
+  // 每 30 秒轮询一次
+  pollTimer = setInterval(fetchWebhookErrors, 30000)
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
 
 // 面包屑：从当前路由的 meta.titleKey 出发，顺着 meta.parent 往上串出层级
 // （路由表是平铺的，route.matched 只有 layout+叶子，串不出 审查记录 > 审查详情）。
@@ -161,6 +251,13 @@ const activeMenu = computed(() => {
 onMounted(() => {
   // 硬刷新后重同步用户与权限
   auth.refresh().catch(() => {})
+  // 启动 webhook 错误轮询
+  fetchWebhookErrors()
+  startPolling()
+})
+
+onUnmounted(() => {
+  stopPolling()
 })
 
 function onLogout() {
@@ -251,5 +348,61 @@ function onLogout() {
 }
 .main {
   background: var(--el-bg-color-page);
+}
+
+/* Webhook 配置错误提醒对话框样式 */
+.webhook-error-content {
+  padding: 0 4px;
+}
+
+.webhook-error-item {
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.webhook-error-item:last-child {
+  margin-bottom: 0;
+}
+
+.error-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.error-header strong {
+  color: var(--el-color-warning);
+  font-size: 14px;
+}
+
+.error-time {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.error-url {
+  margin-bottom: 8px;
+}
+
+.wrong-url {
+  color: var(--el-color-danger);
+  font-size: 13px;
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+
+.correct-url {
+  color: var(--el-color-success);
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.error-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 </style>

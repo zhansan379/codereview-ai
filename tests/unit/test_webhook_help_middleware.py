@@ -15,15 +15,18 @@ def app_with_middleware():
     app = FastAPI()
     app.add_middleware(WebhookHelpMiddleware)
     app.include_router(router)
+    # 模拟 app.state.settings（webhook_entry 需要）
+    from unittest.mock import MagicMock
+    app.state.settings = MagicMock(webhook_secret="test-secret")
     return app
 
 
 def test_webhook_path_correct_passes_through(app_with_middleware):
     """正确路径 /webhook 应该正常处理，不触发提示。"""
     client = TestClient(app_with_middleware)
-    # 不带 headers 的普通 POST 到 /webhook，会因为空 body 返回 400（不是 404 提示页）
+    # 不带 headers 的普通 POST 到 /webhook，会因为签名错误返回 401（不是 404 提示页）
     r = client.post("/webhook", content=b"{}")
-    assert r.status_code == 400  # empty body 或 signature 错误
+    assert r.status_code == 401  # signature 错误
     assert "Webhook 路径配置错误" not in r.text
 
 

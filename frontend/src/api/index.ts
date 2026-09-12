@@ -676,3 +676,32 @@ export function listProjectMembers(projectId: number): Promise<ProjectMember[]> 
 export function setProjectMembers(projectId: number, user_ids: number[]): Promise<ProjectMember[]> {
   return client.put(`/projects/${projectId}/members`, { user_ids }).then((r) => r.data)
 }
+
+// ===== Webhook 配置错误提醒（持久化）=====
+export interface WebhookErrorItem {
+  id: number
+  provider: string
+  wrong_url: string
+  correct_url: string
+  source_ip: string
+  acknowledged: boolean
+  acknowledged_at: string | null
+  created_at: string
+}
+
+export interface WebhookErrorList {
+  items: WebhookErrorItem[]
+  total: number
+}
+
+export function listWebhookErrors(): Promise<WebhookErrorList> {
+  return client.get('/webhook-errors').then((r) => r.data)
+}
+
+export function acknowledgeWebhookError(id: number): Promise<{ acknowledged: number }> {
+  return client.post(`/webhook-errors/${id}/acknowledge`).then((r) => r.data)
+}
+
+export function acknowledgeAllWebhookErrors(): Promise<{ acknowledged: number }> {
+  return client.post('/webhook-errors/acknowledge-all').then((r) => r.data)
+}

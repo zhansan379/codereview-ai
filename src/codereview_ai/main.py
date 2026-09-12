@@ -34,6 +34,7 @@ from codereview_ai.api.admin import (
     stats,
     tasks,
     users,
+    webhook_errors,
 )
 from codereview_ai.api.admin import (
     settings as admin_settings,  # 全局运行时设置（并发数）
@@ -362,6 +363,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(stats.router, prefix="/api")
     app.include_router(users.router, prefix="/api")
     app.include_router(roles.router, prefix="/api")
+    app.include_router(webhook_errors.router, prefix="/api")
     app.include_router(webhook_router)
     return app
 

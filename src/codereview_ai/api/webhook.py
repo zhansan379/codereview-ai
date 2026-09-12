@@ -175,6 +175,8 @@ class WebhookHelpMiddleware(BaseHTTPMiddleware):
     1. 请求方法是 POST
     2. 请求路径不是 /webhook
     3. 请求带有 webhook 相关的 headers（说明是平台发来的 webhook 请求）
+
+    同时会将错误记录落库，供前端轮询展示持久化提醒。
     """
 
     async def dispatch(self, request: Request, call_next):
@@ -194,12 +196,45 @@ class WebhookHelpMiddleware(BaseHTTPMiddleware):
         provider = detect_forge(request.headers)
         host = request.headers.get("host", "你的服务地址")
         scheme = request.url.scheme
+        wrong_url = f"{scheme}://{host}{request.url.path}"
+        correct_url = f"{scheme}://{host}/webhook"
+
+        # 落库：持久化错误记录，供前端轮询展示
+        await self._persist_error(request, provider, wrong_url, correct_url)
+
         html = _WEBHOOK_HELP_HTML.format(
             provider=provider.upper() if provider else "代码托管平台",
-            wrong_url=f"{scheme}://{host}{request.url.path}",
+            wrong_url=wrong_url,
             correct_url=f"{scheme}://{host}",
         )
         return HTMLResponse(content=html, status_code=404)
+
+    async def _persist_error(
+        self, request: Request, provider: str, wrong_url: str, correct_url: str
+    ) -> None:
+        """将错误记录落库（异步，不阻塞响应）。"""
+        try:
+            engine = getattr(request.app.state, "engine", None)
+            if engine is None:
+                return
+            from codereview_ai.storage.db import session_factory
+            from codereview_ai.storage.webhook_error_repo import WebhookErrorRepository
+
+            # 提取来源 IP
+            source_ip = request.client.host if request.client else ""
+
+            async with session_factory(engine)() as session:
+                repo = WebhookErrorRepository(session)
+                await repo.create(
+                    provider=provider or "unknown",
+                    wrong_url=wrong_url,
+                    correct_url=correct_url,
+                    source_ip=source_ip,
+                )
+                await session.commit()
+        except Exception:
+            # 落库失败不影响主流程，静默忽略
+            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
