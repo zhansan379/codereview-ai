@@ -42,6 +42,7 @@ from codereview_ai.api.admin.notifier_members import router as members  # 系统
 from codereview_ai.api.admin_ui import mount_admin
 from codereview_ai.api.auth import router as auth_router
 from codereview_ai.api.webhook import router as webhook_router
+from codereview_ai.api.webhook import WebhookHelpMiddleware
 from codereview_ai.config import Settings
 from codereview_ai.config.repository import ConfigRepository
 from codereview_ai.forges.registry import ForgeRegistry
@@ -57,7 +58,7 @@ from codereview_ai.queue.asyncio import AsyncioTaskQueue
 from codereview_ai.queue.concurrency import WorkerPool
 from codereview_ai.review.static_analysis import StaticAnalyzer
 from codereview_ai.storage.clone_cache_repo import CloneCacheRepoRepository
-from codereview_ai.storage.db import create_engine, init_db, session_factory
+from codereview_ai.storage.db import create_engine, init_db, raise_for_connect_failure, session_factory
 from codereview_ai.storage.project_repo import ProjectRepository
 from codereview_ai.storage.review_repo import ReviewRepository
 from codereview_ai.storage.seed import (
@@ -97,7 +98,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         setup_logging(log_level=settings.log_level)
         engine = create_engine(settings.database_url)
-        await init_db(engine)
+        try:
+            await init_db(engine)
+        except Exception as exc:
+            # 连接层失败（拒绝/超时/DNS/认证）→ 兜底提示 + 干净退出，不甩 traceback；
+            # 其他数据库异常原样上抛，保留完整异常栈便于定位。
+            raise_for_connect_failure(settings.database_url, exc)
+            raise
         app.state.engine = engine
         app.state.settings = settings
 
@@ -148,6 +155,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         forge_registry = ForgeRegistry(provider_repo, http)
         await forge_registry.refresh_all()
         app.state.forge_registry = forge_registry
+        # 补拉功能不依赖 LLM，只要 forge 可用就可以创建
+        if forge_registry.available():
+            poll = PRPoller(
+                engine, forge_registry, app.state.enqueuer,
+                include_closed_default=settings.poll_include_closed,
+            )
+            app.state.poller = poll
+            app.state.poll_running = False
+            app.state.poll_last = None
+            app.state.poll_error = None
+            app.state.poll_run_task = None
         if reviewer is not None and forge_registry.available():
             review_repo = ReviewRepository(engine)
             # —— 入队即建 mr 审计行（DESIGN §9.2）：让队列里等待的 PR 从入队起就可见为
@@ -264,16 +282,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # M5.7 日报 + §9 补拉：统一由 ScheduleManager 按 schedule_job 表驱动（落 DB + 热更）
             reporter = DailyReporter(engine, notifier)
             # 补拉只发现+落 queued 行+入队到 worker 队列异步审查，递 enqueuer 即可。
-            poll = PRPoller(
-                engine, forge_registry, app.state.enqueuer,
-                include_closed_default=settings.poll_include_closed,
-            )
-            app.state.poller = poll
-            # 手动补拉的后台任务状态（POST /pulls/poll → run_once 放入后台，/status 读取）
-            app.state.poll_running = False
-            app.state.poll_last = None
-            app.state.poll_error = None
-            app.state.poll_run_task = None
             scheduler = ScheduleManager(
                 engine, poller=poll, reporter=reporter,
                 seed_defaults={
@@ -334,6 +342,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url=None if docs_disabled else "/redoc",
         openapi_url=None if docs_disabled else "/openapi.json",
     )
+    # 兜底提示中间件：webhook 路径配置错误时返回友好页面
+    app.add_middleware(WebhookHelpMiddleware)
     app.add_middleware(TraceMiddleware)
     app.include_router(health_router)
     mount_admin(app, settings.frontend_dist)

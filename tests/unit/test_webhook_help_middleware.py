@@ -1,0 +1,88 @@
+"""webhook 路径配置错误提示中间件测试。"""
+
+from __future__ import annotations
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from codereview_ai.api.webhook import WebhookHelpMiddleware, router
+
+
+@pytest.fixture()
+def app_with_middleware():
+    """构造带中间件的测试 app。"""
+    app = FastAPI()
+    app.add_middleware(WebhookHelpMiddleware)
+    app.include_router(router)
+    return app
+
+
+def test_webhook_path_correct_passes_through(app_with_middleware):
+    """正确路径 /webhook 应该正常处理，不触发提示。"""
+    client = TestClient(app_with_middleware)
+    # 不带 headers 的普通 POST 到 /webhook，会因为空 body 返回 400（不是 404 提示页）
+    r = client.post("/webhook", content=b"{}")
+    assert r.status_code == 400  # empty body 或 signature 错误
+    assert "Webhook 路径配置错误" not in r.text
+
+
+def test_root_path_with_webhook_headers_shows_help(app_with_middleware):
+    """根路径 / 带 webhook headers 应该返回提示页面。"""
+    client = TestClient(app_with_middleware)
+    r = client.post("/", content=b"{}", headers={"X-Gitee-Event": "Pull Request"})
+    assert r.status_code == 404
+    assert "Webhook 路径配置错误" in r.text
+    assert "GITEE" in r.text
+    assert "/webhook" in r.text
+
+
+def test_arbitrary_path_with_webhook_headers_shows_help(app_with_middleware):
+    """任意错误路径带 webhook headers 都应该返回提示页面。"""
+    client = TestClient(app_with_middleware)
+    r = client.post(
+        "/some/wrong/path",
+        content=b"{}",
+        headers={"X-GitHub-Event": "push"},
+    )
+    assert r.status_code == 404
+    assert "Webhook 路径配置错误" in r.text
+    assert "GITHUB" in r.text
+
+
+def test_wrong_path_without_webhook_headers_passes_through(app_with_middleware):
+    """错误路径但没有 webhook headers 应该返回普通 404（不是提示页）。"""
+    client = TestClient(app_with_middleware)
+    r = client.post("/wrong", content=b"{}")
+    assert r.status_code == 404
+    assert "Webhook 路径配置错误" not in r.text  # 不是提示页面
+    assert "detail" in r.text or r.text == "Not Found"  # 标准 404
+
+
+def test_get_request_not_intercepted(app_with_middleware):
+    """GET 请求不应该被中间件拦截。"""
+    client = TestClient(app_with_middleware)
+    r = client.get("/", headers={"X-Gitee-Event": "Pull Request"})
+    # GET 请求直接返回 404（前端可能有自己的处理）
+    assert "Webhook 路径配置错误" not in r.text
+
+
+def test_all_platforms_detected(app_with_middleware):
+    """各平台 headers 都应该被识别。"""
+    client = TestClient(app_with_middleware)
+
+    # GitHub
+    r = client.post("/", headers={"X-GitHub-Event": "push"})
+    assert "GITHUB" in r.text
+
+    # GitLab
+    r = client.post("/", headers={"X-Gitlab-Token": "xxx"})
+    assert "GITLAB" in r.text
+
+    # Gitea
+    r = client.post("/", headers={"X-Gitea-Event": "push"})
+    assert "GITEA" in r.text
+
+    # Gitee
+    r = client.post("/", headers={"X-Gitee-Event": "Pull Request"})
+    assert "GITEE" in r.text
