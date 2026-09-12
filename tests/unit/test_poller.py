@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from codereview_ai.domain.models import PullRequest
 from codereview_ai.ops.poller import PRPoller
 from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.models import AppSetting, Project, ReviewTask
@@ -50,7 +51,9 @@ class FakeForge:
 class FakeEnqueuer:
     """替身事件核：只记录入队调用，或按需阻塞/抛错，验证 poller 的编排而非审查本身。"""
 
-    def __init__(self, *, raise_on: set[int] | None = None, hold: asyncio.Event | None = None) -> None:
+    def __init__(
+        self, *, raise_on: set[int] | None = None, hold: asyncio.Event | None = None
+    ) -> None:
         self.calls: list[tuple[str, object]] = []
         self.raise_on = raise_on or set()
         self.hold = hold
@@ -64,22 +67,14 @@ class FakeEnqueuer:
         return f"task-{pr.pr_number}"
 
 
-def _pr(number: int, head: str, *, full_name: str = "") -> object:
-    """构造一个足够像 PullRequest 的对象（poller 只读字段 + 回填 repo_full_name）。"""
-    class _PR:
-        pass
-    p = _PR()
-    p.pr_number = number
-    p.head_sha = head
-    p.source_branch = "feature/x"
-    p.base_sha = "abcdef0"
-    p.title = f"PR #{number}"
-    p.author = "alice"
-    p.web_url = f"https://example/{number}"
-    p.repo_full_name = full_name
-    p.provider = "github"
-    p.repo_id = "acme/widgets"
-    return p
+def _pr(number: int, head: str, *, full_name: str = "") -> PullRequest:
+    """构造真实的 frozen PullRequest（poller 只读字段；缺 full_name 由项目行 replace 回填）。"""
+    return PullRequest(
+        provider="github", repo_id="acme/widgets", repo_full_name=full_name,
+        web_url=f"https://example/{number}", pr_number=number, title=f"PR #{number}",
+        source_branch="feature/x", target_branch="main", head_sha=head,
+        base_sha="abcdef0", author="alice",
+    )
 
 
 @pytest.fixture
@@ -129,9 +124,8 @@ async def test_run_once_scans_and_enqueues_new(engine, tmp_path):
     assert report["skipped"] == 0
     assert report["errors"] == []
     assert [c[1].pr_number for c in enqueuer.calls] == [101, 102]
-    # 补拉项缺 repo_full_name 时用项目行回填
-    assert pr_new.repo_full_name == "acme/widgets"
-    assert pr_old.repo_full_name == "acme/widgets"
+    # 补拉项缺 repo_full_name 时用项目行回填：frozen dataclass，入队的是 replace 后的新实例
+    assert [c[1].repo_full_name for c in enqueuer.calls] == ["acme/widgets", "acme/widgets"]
 
 
 async def _seed_skipped_review(engine: AsyncEngine, *, provider="github", repo_id="acme/widgets",

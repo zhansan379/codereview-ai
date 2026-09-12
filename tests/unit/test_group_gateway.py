@@ -33,7 +33,11 @@ def test_adapter_sends_template_and_metadata():
 
     gw = LLMGateway(model="fake/model", backend=backend)
     adapter = LLMGroupAdapter(gw)
-    out = _run(adapter.group_metadata(["M  msg_en.properties (+1/-0)", "M  msg_zh.properties (+1/-0)"], 10))
+    out = _run(
+        adapter.group_metadata(
+            ["M  msg_en.properties (+1/-0)", "M  msg_zh.properties (+1/-0)"], 10
+        )
+    )
     assert out == [["msg_en.properties", "msg_zh.properties"]]
     # system 是 OCR grouping 模板；user 里带元数据行
     assert seen[0][0]["role"] == "system"
@@ -43,7 +47,9 @@ def test_adapter_sends_template_and_metadata():
 
 
 def test_adapter_returns_path_groups_only():
-    gw = _gateway_returning('[{"label": "a", "files": ["a.py"]}, {"label": "c", "files": ["b.py", "c.py"]}]')
+    gw = _gateway_returning(
+        '[{"label": "a", "files": ["a.py"]}, {"label": "c", "files": ["b.py", "c.py"]}]'
+    )
     out = _run(LLMGroupAdapter(gw).group_metadata(["a.py", "b.py", "c.py"], 10))
     assert out == [["a.py"], ["b.py", "c.py"]]
 

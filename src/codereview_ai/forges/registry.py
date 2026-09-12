@@ -17,10 +17,10 @@ import httpx
 from codereview_ai.config import Settings
 from codereview_ai.config.repository import ConfigRepository
 from codereview_ai.forges.base import ForgeAdapter
+from codereview_ai.forges.gitee import GiteeForge
 from codereview_ai.forges.github import GitHubForge
 from codereview_ai.forges.gitlab import GitLabForge
-from codereview_ai.forges.gitee import GiteeForge
-from codereview_ai.forges.signatures import GITHUB, GITEE, GITLAB
+from codereview_ai.forges.signatures import GITEE, GITHUB, GITLAB
 
 logger = logging.getLogger("codereview_ai.forge_registry")
 

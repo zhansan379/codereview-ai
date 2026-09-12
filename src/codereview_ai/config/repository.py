@@ -325,6 +325,7 @@ class ConfigRepository:
         chain = await self.resolve_llm_chain()
         if not chain:
             return None
-        self.apply_env_replay(chain[0])  # 保留 host-env 优先（back-compat，其余链节点显式传 key/url）
+        # 保留 host-env 优先（back-compat，其余链节点显式传 key/url）
+        self.apply_env_replay(chain[0])
         gateway = wrap_fallback(chain, backend=backend)
         return Reviewer(gateway)

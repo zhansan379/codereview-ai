@@ -130,7 +130,8 @@ async def test_diff_usage_sink_writes_model_usage(engine: AsyncEngine):
         "completion_tokens": 25,
         "total_tokens": 125,
     })
-    await sink({"model": "", "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})  # 空值不抛
+    # 空值不抛
+    await sink({"model": "", "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
 
     session = session_factory(engine)
     async with session() as s:

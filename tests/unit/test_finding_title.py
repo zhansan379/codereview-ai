@@ -8,14 +8,14 @@
 from __future__ import annotations
 
 import sqlalchemy as sa
+from scripts.backfill_finding_titles import _Backend
+from scripts.backfill_finding_titles import main as backfill_main
 
 from codereview_ai.domain.models import Category, Finding, Severity
 from codereview_ai.review.llm_gateway import _coerce_finding
 from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.models import ReviewFinding, ReviewTask
 from codereview_ai.storage.review_repo import ReviewRepository
-
-from scripts.backfill_finding_titles import _Backend, main as backfill_main
 
 MR = dict(provider="gitlab", repo_id="9", pr_number=7, event_type="mr", branch="f")
 

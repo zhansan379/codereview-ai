@@ -43,7 +43,9 @@ def _req_json(req: httpx.Request) -> dict:
     return json.loads(req.content)
 
 
-def _route(channel: str = "dingtalk", at_threshold: int = 60, at_all: bool = False) -> NotifierRoute:
+def _route(
+    channel: str = "dingtalk", at_threshold: int = 60, at_all: bool = False
+) -> NotifierRoute:
     return NotifierRoute(channel=channel, webhook="https://oapi.dingtalk.com/robot/send?access_token=x",
                          secret="s", project_id=None, at_threshold=at_threshold, at_all=at_all)
 

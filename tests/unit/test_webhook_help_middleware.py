@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from unittest.mock import MagicMock
 
 from codereview_ai.api.webhook import WebhookHelpMiddleware, router
 

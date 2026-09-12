@@ -11,6 +11,7 @@ review_task/review_finding 落库**：两轨（mr/push）幂等抢占靠部分�
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -33,7 +34,7 @@ def _finding_title(f: Finding) -> str:
     return c if len(c) <= _MAX_TITLE else c[:_MAX_TITLE - 1] + "…"
 
 
-def _cast(value: str | None, enum_type: type, fallback):
+def _cast(value: str | None, enum_type: type, fallback: Any) -> Any:
     """把入库的中立字符串安全转回 StrEnum；异常值回落 fallback，绝不因脏数据崩重发。"""
     if not value:
         return fallback
@@ -294,7 +295,11 @@ class ReviewRepository:
             await s.commit()
 
     async def insert_findings(
-        self, task_id: int, findings: list[Finding], *, skip_fingerprints: frozenset[str] = frozenset()
+        self,
+        task_id: int,
+        findings: list[Finding],
+        *,
+        skip_fingerprints: frozenset[str] = frozenset(),
     ) -> None:
         """把一轮 findings 落成 `review_finding` 行（含 source 区分 llm/static/agent）。
 
@@ -425,7 +430,8 @@ class ReviewRepository:
         return out
 
     async def mark_writeback(self, task_id: int, failed: bool) -> None:
-        """翻转任务的 `writeback_failed`（回写失败置 True 供前端展示「重新发送」；重发成功归位）。"""
+        """翻转任务的 `writeback_failed`（回写失败置 True 供前端展示「重新发送」；重发成功归位）。
+        """
         session = session_factory(self._engine)
         async with session() as s:
             row = (await s.execute(
@@ -488,7 +494,7 @@ class ReviewRepository:
         except (json.JSONDecodeError, TypeError):
             return None
 
-    async def findings_for_task(self, task_id: int) -> list[ReviewFinding]:
+    async def finding_rows_for_task(self, task_id: int) -> list[ReviewFinding]:
         """任务全部 finding 行（供 compare 取 after 集）。"""
         session = session_factory(self._engine)
         async with session() as s:

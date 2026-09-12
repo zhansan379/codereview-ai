@@ -409,6 +409,7 @@ async def list_review_prs(
     # 按 (provider, repo_id, pr_number) 分组；组内已按 task.id 升序。
     grouped: dict[tuple[str, str, int], list[tuple[int, str, list[_FindRow], set[str]]]] = {}
     for t in tasks:
+        assert t.pr_number is not None  # 查询已按 pr_number.is_not(None) 过滤
         grouped.setdefault((t.provider, t.repo_id, t.pr_number), []).append(
             (t.id, t.head_sha, findings_by_task.get(t.id, []), _covered_paths(t))
         )
@@ -432,7 +433,9 @@ async def list_review_prs(
 
 
 @router.get("/{review_id}", response_model=ReviewDetail)
-async def get_review(review_id: int, user: CurrentUser, session: AsyncSession = Depends(get_db)) -> ReviewDetail:
+async def get_review(
+    review_id: int, user: CurrentUser, session: AsyncSession = Depends(get_db)
+) -> ReviewDetail:
     row = (await session.execute(select(ReviewTask).where(ReviewTask.id == review_id))).scalar_one_or_none()  # noqa: E501
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "审查记录不存在")
@@ -462,7 +465,9 @@ async def get_review(review_id: int, user: CurrentUser, session: AsyncSession = 
 
 
 @router.delete("/{review_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_review(review_id: int, user: CurrentUser, session: AsyncSession = Depends(get_db)) -> None:
+async def delete_review(
+    review_id: int, user: CurrentUser, session: AsyncSession = Depends(get_db)
+) -> None:
     """删除一条审查记录（含其 findings，级联）。管理员清理脏数据用。
 
     `review_finding.task_id` 为 `ondelete="CASCADE"`（SQLite 已开 foreign_keys），

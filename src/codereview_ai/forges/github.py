@@ -21,8 +21,10 @@ import httpx
 from codereview_ai.domain.models import ChangeType, CommitInfo, FileDiff, PullRequest, PushEvent
 from codereview_ai.forges.base import (
     ForgeAdapter,
-    new_file_content_from_patch as _new_file_content_from_patch,
     repo_path_from_url,
+)
+from codereview_ai.forges.base import (
+    new_file_content_from_patch as _new_file_content_from_patch,
 )
 from codereview_ai.forges.signatures import GITHUB
 

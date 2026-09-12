@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncGenerator
 from datetime import datetime
-from typing import AsyncGenerator
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -36,7 +37,7 @@ class NotificationOut(BaseModel):
     level: str
     title: str
     message: str
-    extra_data: dict
+    extra_data: dict[str, Any]
     acknowledged: bool
     acknowledged_at: datetime | None
     created_at: datetime
@@ -56,18 +57,18 @@ class NotificationBroadcaster:
     """管理所有 SSE 连接，新消息创建时广播给所有客户端。"""
 
     def __init__(self) -> None:
-        self._clients: list[asyncio.Queue] = []
+        self._clients: list[asyncio.Queue[dict[str, Any]]] = []
 
-    def subscribe(self) -> asyncio.Queue:
-        queue: asyncio.Queue = asyncio.Queue()
+    def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._clients.append(queue)
         return queue
 
-    def unsubscribe(self, queue: asyncio.Queue) -> None:
+    def unsubscribe(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
         if queue in self._clients:
             self._clients.remove(queue)
 
-    async def broadcast(self, notification: dict) -> None:
+    async def broadcast(self, notification: dict[str, Any]) -> None:
         for queue in self._clients:
             await queue.put(notification)
 
@@ -87,9 +88,9 @@ async def stream_notifications(request: Request, token: str = "") -> StreamingRe
     settings = Settings()
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
-    except jwt.PyJWTError:
+    except jwt.PyJWTError as exc:
         from fastapi import HTTPException
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=401, detail="Invalid token") from exc
 
     if not payload.get("sub"):
         from fastapi import HTTPException
@@ -106,7 +107,7 @@ async def stream_notifications(request: Request, token: str = "") -> StreamingRe
                     # 等待新消息，超时 30 秒发送心跳
                     notification = await asyncio.wait_for(queue.get(), timeout=30.0)
                     yield f"data: {json.dumps(notification, default=str)}\n\n"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # 发送心跳保持连接
                     yield ": heartbeat\n\n"
         finally:

@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -34,7 +36,9 @@ class ScheduleJobRepository:
                 select(ScheduleJob).where(ScheduleJob.id == job_id)
             )).scalar_one_or_none()
 
-    async def create(self, *, name: str, job_type: str, enabled: bool, params: dict) -> ScheduleJob:
+    async def create(
+    self, *, name: str, job_type: str, enabled: bool, params: dict[str, Any],
+) -> ScheduleJob:
         session = session_factory(self._engine)
         async with session() as s:
             row = ScheduleJob(name=name, job_type=job_type, enabled=enabled, params=params or {})
@@ -44,7 +48,7 @@ class ScheduleJobRepository:
             return row
 
     async def update(
-        self, job_id: int, *, name: str | None, enabled: bool | None, params: dict | None,
+        self, job_id: int, *, name: str | None, enabled: bool | None, params: dict[str, Any] | None,
     ) -> ScheduleJob | None:
         session = session_factory(self._engine)
         async with session() as s:

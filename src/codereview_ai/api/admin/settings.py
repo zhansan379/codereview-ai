@@ -20,6 +20,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
@@ -56,7 +58,7 @@ def _repo(request: Request) -> SettingRepository:
     return SettingRepository(request.app.state.engine)
 
 
-def _pool(request: Request):
+def _pool(request: Request) -> Any:
     """已启动的 worker 池；未启动（缺 LLM/平台）返回 None。"""
     return getattr(request.app.state, "worker_pool", None)
 

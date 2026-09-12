@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -102,7 +103,8 @@ class PRPoller:
             self.progress["total"] = report["prs"]
             for pr in prs:
                 if not pr.repo_full_name:
-                    pr.repo_full_name = proj.repo_full_name  # 补拉项无路径 → 用项目行
+                    # PullRequest 是 frozen dataclass：用 replace 生成补全路径的新实例
+                    pr = replace(pr, repo_full_name=proj.repo_full_name)
                 label = f"{pr.repo_full_name or proj.repo_full_name} pr#{pr.pr_number}"
                 try:
                     # 1) 同 head 已有「已处理」的 mr 行（completed 已审 / skipped 门控跳过 /

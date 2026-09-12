@@ -21,6 +21,7 @@ import contextlib
 import logging
 from typing import Any
 
+from codereview_ai.queue.base import TaskQueue
 from codereview_ai.queue.worker import run_worker
 
 logger = logging.getLogger("codereview_ai.queue.concurrency")
@@ -79,7 +80,7 @@ class WorkerPool:
 
     def __init__(
         self,
-        queue: object,  # TaskQueue：run_worker 只用到其 claim/complete/fail/recover_stale
+        queue: TaskQueue,  # run_worker 只用到其 claim/complete/fail/recover_stale
         process: Any,
         *,
         loop_count: int = WORKER_LOOP_CAP,

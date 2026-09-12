@@ -27,8 +27,8 @@ from codereview_ai.forges.gitlab import parse_push_event_payload
 from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.models import ReviewFinding, ReviewTask
 from codereview_ai.storage.project_repo import ProjectConfig
-from codereview_ai.storage.setting_repo import PUSH_REVIEW_DEFAULT_KEY, SettingRepository
 from codereview_ai.storage.review_repo import ReviewRepository
+from codereview_ai.storage.setting_repo import PUSH_REVIEW_DEFAULT_KEY, SettingRepository
 from codereview_ai.worker import PushGate, build_push_summary, process_raw_event
 
 ALL_ZERO = "0000000000000000000000000000000000000000"

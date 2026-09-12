@@ -16,7 +16,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette import status
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.responses import Response
 
 from codereview_ai.forges.signatures import detect_forge, verify_signature
 
@@ -52,7 +53,9 @@ class WebhookHelpMiddleware(BaseHTTPMiddleware):
     3. 请求带有 webhook 相关的 headers（说明是平台发来的 webhook 请求）
     """
 
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
         # 只拦截 POST 请求
         if request.method != "POST":
             return await call_next(request)

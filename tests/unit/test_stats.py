@@ -16,8 +16,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from codereview_ai.api.admin import stats
-from codereview_ai.api.auth import issue_token
-from codereview_ai.api.auth import router as auth_router
 from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.models import (
     ModelUsage,
@@ -273,7 +271,7 @@ async def test_phase_box_distribution(tmp_path):
         # main 分桶：1,1,3,3 → 每条一次 llm.chat()
         counts = [1, 1, 3, 3]
         convs = []
-        for tid, n in zip(ids, counts):
+        for tid, n in zip(ids, counts, strict=True):
             convs += [ReviewConversation(task_id=tid, seq=i, phase="main")
                       for i in range(n)]
         # scoring 只出现在 task0，2 次调用（验证多 phase 各自独立聚合）

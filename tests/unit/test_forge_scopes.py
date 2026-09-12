@@ -13,7 +13,8 @@ from codereview_ai.forges.scopes import probe_capabilities
 def _probe(provider: str, handler, token: str = "tok") -> list:
     transport = httpx.MockTransport(handler)
     return __import__("asyncio").run(probe_capabilities(
-        provider, "https://base.example", token, http=httpx.AsyncClient(transport=transport, timeout=5),
+        provider, "https://base.example", token,
+        http=httpx.AsyncClient(transport=transport, timeout=5),
     ))
 
 

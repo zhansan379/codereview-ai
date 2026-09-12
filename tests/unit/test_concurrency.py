@@ -24,12 +24,13 @@ async def _pump(ticks: int = 30) -> None:
         await asyncio.sleep(0)
 
 
-async def _wait_until(cond, timeout: float = 2.0) -> None:
-    await asyncio.wait_for(_loop_till(cond), timeout)
+def _wait_until(cond, timeout: float = 2.0):
+    """轮询等待 cond 成立（测试辅助的 busy-wait 是刻意的）。"""
+    return asyncio.wait_for(_loop_till(cond), timeout)
 
 
 async def _loop_till(cond):
-    while not cond():
+    while not cond():  # noqa: ASYNC110 — 测试辅助的刻意轮询，等待条件函数为真
         await asyncio.sleep(0.01)
 
 

@@ -18,7 +18,7 @@ from codereview_ai.api.admin.tasks import (
     redeliver_task,
     retry_task,
 )
-from codereview_ai.domain.models import Finding, PullRequest
+from codereview_ai.domain.models import PullRequest
 from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.models import ReviewTask, User
 from codereview_ai.storage.seed import seed_rbac
@@ -171,7 +171,8 @@ async def test_redeliver_409_when_forge_missing(engine):
 
 
 async def test_redeliver_success_initiates(engine):
-    """writeback_failed=True + forge 就绪 → 返回「已发起」，后台重发成功翻 writeback_failed=False。"""
+    """writeback_failed=True + forge 就绪 → 返回「已发起」，后台重发成功翻 writeback_failed=False。
+    """
     task_id = await _seed_completed_writeback_failed(engine)
 
     class _FakeForge:

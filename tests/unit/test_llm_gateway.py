@@ -269,13 +269,17 @@ def test_fallback_model_property_returns_first():
 
 
 def test_wrap_fallback_single_returns_plain_gateway():
-    gw = wrap_fallback([type("LLM", (), {"model": "m", "name": "m", "api_key": "", "base_url": "", "provider": "", "max_tokens": None, "temperature": None})()])
+    gw = wrap_fallback([
+        type("LLM", (), {
+            "model": "m", "name": "m", "api_key": "", "base_url": "",
+            "provider": "", "max_tokens": None, "temperature": None,
+        })(),
+    ])
     assert isinstance(gw, LLMGateway)
     assert not isinstance(gw, FallbackLLMGateway)
 
 
 def test_wrap_fallback_multiple_wraps_in_fallback():
-    import asyncio
 
     def make(model: str):
         return type("LLM", (), {

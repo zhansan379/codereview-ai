@@ -8,13 +8,12 @@
 from __future__ import annotations
 
 import sqlalchemy as sa
+from scripts.backfill_pr_titles import main as backfill_main
+from scripts.backfill_push_commits import main as backfill_push_main
 
 from codereview_ai.storage.db import create_engine, init_db, session_factory
 from codereview_ai.storage.models import ReviewTask
 from codereview_ai.storage.review_repo import ReviewRepository
-
-from scripts.backfill_pr_titles import main as backfill_main
-from scripts.backfill_push_commits import main as backfill_push_main
 
 
 async def _make_task(engine, *, payload: str | None = None, provider="github",

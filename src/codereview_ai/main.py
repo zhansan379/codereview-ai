@@ -17,6 +17,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import Any
 
 import httpx
 from fastapi import FastAPI
@@ -42,8 +43,8 @@ from codereview_ai.api.admin import (
 from codereview_ai.api.admin.notifier_members import router as members  # 系统级 @成员名单
 from codereview_ai.api.admin_ui import mount_admin
 from codereview_ai.api.auth import router as auth_router
-from codereview_ai.api.webhook import router as webhook_router
 from codereview_ai.api.webhook import WebhookHelpMiddleware
+from codereview_ai.api.webhook import router as webhook_router
 from codereview_ai.config import Settings
 from codereview_ai.config.repository import ConfigRepository
 from codereview_ai.forges.registry import ForgeRegistry
@@ -59,7 +60,12 @@ from codereview_ai.queue.asyncio import AsyncioTaskQueue
 from codereview_ai.queue.concurrency import WorkerPool
 from codereview_ai.review.static_analysis import StaticAnalyzer
 from codereview_ai.storage.clone_cache_repo import CloneCacheRepoRepository
-from codereview_ai.storage.db import create_engine, init_db, raise_for_connect_failure, session_factory
+from codereview_ai.storage.db import (
+    create_engine,
+    init_db,
+    raise_for_connect_failure,
+    session_factory,
+)
 from codereview_ai.storage.project_repo import ProjectRepository
 from codereview_ai.storage.review_repo import ReviewRepository
 from codereview_ai.storage.seed import (
@@ -241,7 +247,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         plan_group_line_threshold=settings.agent_plan_group_line_threshold,
                     )
 
-                    def _agent_llm_factory():
+                    def _agent_llm_factory() -> Any:
                         # 每次分组重建一个独立会话（独立 trace_id），拿同一根解析配置
                         return build_agent_llm(agent_resolved)
 

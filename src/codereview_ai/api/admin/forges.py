@@ -13,14 +13,14 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
-
-import httpx
 
 from codereview_ai.api.deps import get_current_user, get_db, require_permission
 from codereview_ai.config.repository import DEFAULT_FORGE_URLS
@@ -28,7 +28,7 @@ from codereview_ai.crypto import MASK, encrypt, is_masked
 from codereview_ai.forges.base import repo_path_from_url
 from codereview_ai.forges.registry import SUPPORTED_PROVIDERS
 from codereview_ai.forges.scopes import Capability, probe_capabilities
-from codereview_ai.forges.signatures import GITHUB, GITEE, GITLAB
+from codereview_ai.forges.signatures import GITEE, GITHUB, GITLAB
 from codereview_ai.storage.models import ForgeConfig, _utcnow
 
 
@@ -158,13 +158,13 @@ async def probe_forge(provider: str, url: str, token: str) -> list[Capability]:
     return await probe_capabilities(provider, url, token)
 
 
-@router.post("/{provider}/test", response_model=dict)
+@router.post("/{provider}/test", response_model=dict[str, Any])
 async def test_forge(
     provider: str,
     body: ForgeProbeBody,
     request: Request,
     session: AsyncSession = Depends(get_db),
-) -> dict:
+) -> dict[str, Any]:
     provider = _provider_or_404(provider)
     url = (body.url or "").strip() or None
     token = (body.token or "").strip() or None
@@ -218,7 +218,9 @@ async def resolve_repo(
     registry = getattr(request.app.state, "forge_registry", None)
     adapter = registry.get(GITLAB) if registry else None
     if adapter is None:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "GitLab 未接入：请在平台配置填写 GitLab 仓库地址与 Token")
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "GitLab 未接入：请在平台配置填写 GitLab 仓库地址与 Token"
+        )
     try:
         meta = await adapter.resolve_repo_meta(body.url) or {}
     except httpx.HTTPError as exc:  # noqa: BLE001

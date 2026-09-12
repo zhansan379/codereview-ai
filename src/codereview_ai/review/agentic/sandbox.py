@@ -58,7 +58,7 @@ class SandboxDisabled(RuntimeError):
 class SandboxRuntime(Protocol):
     """只读沙箱：物化工作区（在真实实现为容器只读挂载），停用时清理。"""
 
-    async def start(self, pr: PullRequest, diffs: list[FileDiff]) -> RepoContext: ...
+    async def start(self, pr: PullRequest | None, diffs: list[FileDiff]) -> RepoContext: ...
     async def stop(self) -> None: ...
     async def guard(self) -> None:
         """跑前检查沙箱可用（容器未启用/daemon 未起 → 抛 SandboxDisabled）。"""
@@ -88,7 +88,7 @@ class FakeRuntime:
     async def guard(self) -> None:
         return  # 进程内假运行时常可 用
 
-    async def start(self, pr: PullRequest, diffs: list[FileDiff]) -> RepoContext:
+    async def start(self, pr: PullRequest | None, diffs: list[FileDiff]) -> RepoContext:
         self._tmp = Path(tempfile.mkdtemp(prefix="cr-agent-ws-"))
         self._diff_map = _materialize(diffs, self._tmp)
         return RepoContext(workspace=self._tmp, diff_map=self._diff_map)
@@ -117,7 +117,7 @@ class DockerRuntime:
         if not self.enabled:
             raise SandboxDisabled("Docker 沙箱默认关（M5.6 延后，等 docker daemon 可用）")
 
-    async def start(self, pr: PullRequest, diffs: list[FileDiff]) -> RepoContext:
+    async def start(self, pr: PullRequest | None, diffs: list[FileDiff]) -> RepoContext:
         await self.guard()
         ws = Path(tempfile.mkdtemp(prefix="cr-agent-docker-"))
         _materialize(diffs, ws)
@@ -170,8 +170,10 @@ class LocalCloneRuntime:
         if not self._cloner.available():
             raise SandboxDisabled("本地无 git 可执行，无法 clone 全仓")
 
-    async def start(self, pr: PullRequest, diffs: list[FileDiff]) -> RepoContext:
+    async def start(self, pr: PullRequest | None, diffs: list[FileDiff]) -> RepoContext:
         await self.guard()
+        if pr is None:
+            raise SandboxDisabled("clone 型运行时需要 PullRequest 上下文（clone 地址与 head_sha）")
         url = git_clone_url(pr)
         token = ""
         if url and self._token_for is not None:

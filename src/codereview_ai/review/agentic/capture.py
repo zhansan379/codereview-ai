@@ -18,7 +18,7 @@ import asyncio
 import contextvars
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -89,7 +89,9 @@ ACTIVE_GROUP: contextvars.ContextVar[str] = contextvars.ContextVar(
 )
 
 
-def diff_usage_sink(engine: AsyncEngine, task_id: int) -> Callable[[dict[str, Any]], Awaitable[None]]:
+def diff_usage_sink(
+    engine: AsyncEngine, task_id: int
+) -> Callable[[dict[str, Any]], Awaitable[None]]:
     """diff 审查的 `ModelUsage` 落库 sink：gateway 每条 LLM 调用回调它写入用量行。
 
     agent 模式走 `ConversationRecorder.record` 进同一张表；此处补上 diff（走普通
@@ -121,7 +123,7 @@ def diff_usage_sink(engine: AsyncEngine, task_id: int) -> Callable[[dict[str, An
 
 
 @asynccontextmanager
-async def conversation_capture(recorder: ConversationRecorder | None):
+async def conversation_capture(recorder: ConversationRecorder | None) -> AsyncIterator[None]:
     """在作用域内开启对话采集，退出时还原（仿 `logging.trace` 还原令牌）。"""
     if recorder is None:
         yield
@@ -133,13 +135,13 @@ async def conversation_capture(recorder: ConversationRecorder | None):
         ACTIVE_RECORDER.reset(token)
 
 
-def set_phase(phase: str):
+def set_phase(phase: str) -> Callable[[], None]:
     """设置当前阶段标记；返回还原回调（sandbox 阶段进出成对使用）。"""
     token = ACTIVE_PHASE.set(phase)
     return lambda: ACTIVE_PHASE.reset(token)
 
 
-def set_group(group_key: str):
+def set_group(group_key: str) -> Callable[[], None]:
     """设置当前文件组标记；返回还原回调（组审查进出成对使用）。"""
     token = ACTIVE_GROUP.set(group_key or "")
     return lambda: ACTIVE_GROUP.reset(token)

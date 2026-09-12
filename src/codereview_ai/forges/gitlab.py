@@ -372,7 +372,8 @@ class GitLabForge(ForgeAdapter):
         if resp.status_code == 404:
             return None
         resp.raise_for_status()
-        return resp.json()
+        payload: dict[str, Any] = resp.json()
+        return payload
 
     async def resolve_repo_meta(self, url: str) -> dict[str, str] | None:
         """GitLab 的 repo_id 是**数字项目 ID**（不是 URL 路径），须在线查 API 换回。

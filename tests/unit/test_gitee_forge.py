@@ -57,7 +57,8 @@ def _files_payload() -> list[dict]:
         "status": "modified",
         "additions": 2,
         "deletions": 1,
-        "patch": "--- a/src/app.py\n+++ b/src/app.py\n@@ -1,3 +1,4 @@\n import os\n-def foo():\n+def foo():\n+    return 1\n def bar():",
+        "patch": "--- a/src/app.py\n+++ b/src/app.py\n@@ -1,3 +1,4 @@\n import os\n"
+                 "-def foo():\n+def foo():\n+    return 1\n def bar():",
     }]
 
 
@@ -114,7 +115,10 @@ def test_to_file_diff_deleted_file():
 # ── position 换算（Gitee 行级评论的 patch 内行号）────────────────────────
 
 
-_PATCH = "--- a/f\n+++ b/f\n@@ -1,3 +1,4 @@\n import os\n-def foo():\n+def foo():\n+    return 1\n def bar():"
+_PATCH = (
+    "--- a/f\n+++ b/f\n@@ -1,3 +1,4 @@\n import os\n"
+    "-def foo():\n+def foo():\n+    return 1\n def bar():"
+)
 
 
 def test_position_counts_metadata_lines():

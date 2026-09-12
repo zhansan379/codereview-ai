@@ -21,9 +21,15 @@ def test_gitee_gitea_use_generic_owner_repo():
 
 
 def test_gitlab_nested_namespace():
-    assert repo_path_from_url("https://gitlab.com/group/sub/repo/-/merge_requests/1", "gitlab") == "group/sub/repo"
+    assert (
+        repo_path_from_url("https://gitlab.com/group/sub/repo/-/merge_requests/1", "gitlab")
+        == "group/sub/repo"
+    )
     assert repo_path_from_url("https://gitlab.com/group/repo", "gitlab") == "group/repo"
-    assert repo_path_from_url("https://gitlab.com/group/repo/-/blob/main/x.py", "gitlab") == "group/repo"
+    assert (
+        repo_path_from_url("https://gitlab.com/group/repo/-/blob/main/x.py", "gitlab")
+        == "group/repo"
+    )
 
 
 def test_unparseable_returns_empty():

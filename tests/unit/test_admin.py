@@ -14,14 +14,19 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from codereview_ai.api.admin import forges, notifiers, projects, pull, reviews, tasks
+from codereview_ai.api.admin import (
+    forges,
+    notifier_members,
+    notifiers,
+    projects,
+    pull,
+    reviews,
+    tasks,
+)
 from codereview_ai.api.admin import models as admin_models
-from codereview_ai.api.admin import notifier_members
 from codereview_ai.api.admin import settings as admin_settings
-from codereview_ai.api.auth import issue_token
-from codereview_ai.api.auth import router as auth_router
 from codereview_ai.config.repository import ConfigRepository
-from codereview_ai.storage.db import create_engine, init_db, session_factory
+from codereview_ai.storage.db import session_factory
 from codereview_ai.storage.models import ForgeConfig, ModelConfig, ReviewFinding, ReviewTask
 from tests.unit.helpers import make_admin_app
 
@@ -527,8 +532,12 @@ def test_tasks_retry_skipped_recoverable_only(app):
                 await s.commit()
         asyncio.get_event_loop().run_until_complete(_mr())
         mrs = c.get("/api/tasks").json()
-        disabled_mr = next(t for t in mrs if t["event_type"] == "mr" and t["skip_reason"] == "mr_disabled")
-        other_mr = next(t for t in mrs if t["event_type"] == "mr" and t["skip_reason"] == "branch_mismatch")
+        disabled_mr = next(
+            t for t in mrs if t["event_type"] == "mr" and t["skip_reason"] == "mr_disabled"
+        )
+        other_mr = next(
+            t for t in mrs if t["event_type"] == "mr" and t["skip_reason"] == "branch_mismatch"
+        )
         r = c.post(f"/api/tasks/{disabled_mr['id']}/retry")
         assert r.status_code == 200, r.text
         assert r.json()["state"] == "queued"
@@ -597,7 +606,10 @@ def test_forges_upsert_encrypts_and_masks(app, monkeypatch):
     fast, token = app
     monkeypatch.delenv("CR_GITHUB_TOKEN", raising=False)
     with _client(fast, token) as c:
-        r = c.put("/api/forges/github", json={"url": "https://gh.example", "token": "gh-secret-abc", "enabled": True})
+        r = c.put(
+            "/api/forges/github",
+            json={"url": "https://gh.example", "token": "gh-secret-abc", "enabled": True},
+        )
         assert r.status_code == 200, r.text
         assert r.json()["token"] == "******"
         assert r.json()["url"] == "https://gh.example"
@@ -622,8 +634,14 @@ def test_forges_upsert_encrypts_and_masks(app, monkeypatch):
         assert decrypt(row.token_encrypted, _fernet_key()) == "gh-secret-abc"
 
         # 掩码提交 → 保留原密文；新明文 → 重加密
-        c.put("/api/forges/github", json={"url": "https://gh.example", "token": "******", "enabled": True})
-        c.put("/api/forges/github", json={"url": "https://gh.example", "token": "gh-new-xyz", "enabled": True})
+        c.put(
+            "/api/forges/github",
+            json={"url": "https://gh.example", "token": "******", "enabled": True},
+        )
+        c.put(
+            "/api/forges/github",
+            json={"url": "https://gh.example", "token": "gh-new-xyz", "enabled": True},
+        )
 
         async def _last() -> None:
             nonlocal row
@@ -640,7 +658,10 @@ def test_forges_probe_zero_network_via_injected_probe(app, monkeypatch):
     fast, token = app
     monkeypatch.delenv("CR_GITHUB_TOKEN", raising=False)
     with _client(fast, token) as c:
-        c.put("/api/forges/github", json={"url": "https://gh.example", "token": "tok", "enabled": True})
+        c.put(
+            "/api/forges/github",
+            json={"url": "https://gh.example", "token": "tok", "enabled": True},
+        )
 
         captured: dict = {}
 
@@ -687,10 +708,23 @@ def test_forges_probe_invalid_provider_404(app):
 
 
 def test_pull_poll_503_and_status_without_worker(app):
-    """无 poller（缺平台凭据）→ /pulls/poll 与 /pulls/poll/status 均 503。"""
+    """state 不完整 / 无平台凭据 → /pulls/poll 与 /pulls/poll/status 均 503。"""
     fast, token = app
     assert getattr(fast.state, "poller", None) is None
     with _client(fast, token) as c:
+        # forge_registry 尚未挂上 → 动态创建的前置不齐，报初始化未完成
+        r = c.post("/api/pulls/poll")
+        assert r.status_code == 503
+        assert "初始化未完成" in r.json()["detail"]
+        assert c.get("/api/pulls/poll/status").status_code == 503
+
+        # registry 就绪但 available() 为假 → 缺平台凭据
+        class _UnavailableRegistry:
+            def available(self) -> bool:
+                return False
+
+        fast.state.forge_registry = _UnavailableRegistry()
+        fast.state.enqueuer = object()
         r = c.post("/api/pulls/poll")
         assert r.status_code == 503
         assert "平台凭据" in r.json()["detail"]

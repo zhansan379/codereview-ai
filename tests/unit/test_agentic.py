@@ -642,7 +642,10 @@ def test_summarize_uses_memory_compression_template():
     # user 位装的是 OCR memory_compression 契约模板（保留文件路径 + 严重度的五维结构）
     assert msgs[1]["role"] == "user"
     assert msgs[1]["content"] == MEMORY_COMPRESSION_SYSTEM
-    assert "Confirmed Code Issues" in msgs[1]["content"] or "Identified Code Issues" in msgs[1]["content"]
+    assert (
+        "Confirmed Code Issues" in msgs[1]["content"]
+        or "Identified Code Issues" in msgs[1]["content"]
+    )
     # 原中文一句话已移除
     assert "把下面的对话压缩成一段简短中文摘要" not in msgs[1]["content"]
     # compress_messages 仍作为 {{context}} 原样追加在后
@@ -700,7 +703,10 @@ def test_agent_loop_omits_reasoning_content_for_plain_model(tmp_path):
             seen.append(list(messages))
             if not self._played:
                 self._played = True
-                return AgentTurn(content="", tool_calls=[ToolCall(name="grep_repo", args={"search_text": "x"})])
+                return AgentTurn(
+                    content="",
+                    tool_calls=[ToolCall(name="grep_repo", args={"search_text": "x"})],
+                )
             return AgentTurn(content="审毕", tool_calls=[ToolCall(name="task_done", args={})])
 
         async def summarize(self, _f, _c) -> str:
@@ -709,7 +715,8 @@ def test_agent_loop_omits_reasoning_content_for_plain_model(tmp_path):
     asyncio.run(run_agent_session(_PlainLLM(), ToolRunner(ctx, ToolState()), "审查 a.py"))
     assistant = next(m for m in seen[1] if m.get("role") == "assistant")
     assert "reasoning_content" not in assistant
-    assert assistant["content"] is None  # 带工具调用的 assistant content 为 null（OpenAI/DeepSeek 契约）
+    # 带工具调用的 assistant content 为 null（OpenAI/DeepSeek 契约）
+    assert assistant["content"] is None
 
 
 def test_agent_loop_keeps_reasoning_content_key_when_empty_for_thinking_model(tmp_path):

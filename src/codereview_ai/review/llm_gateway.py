@@ -28,7 +28,7 @@ class LLMError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 #: backend: async (messages) -> 文本内容。默认走 LiteLLM（惰性导入，离线可注入 fake）。
-Backend = Callable[[list[dict[str, Any]]], Awaitable[str]]
+Backend = Callable[..., Awaitable[str]]
 
 
 class LLMGateway:
@@ -219,7 +219,8 @@ def repair_json_array(raw: str) -> list[Any] | None:
                 return obj
             if (obj := _loads_list(_TRAILING_COMMA_RE.sub(r"\1", stripped))) is not None:
                 return obj
-            if (obj := _loads_list(_KEY_RE.sub(lambda m: f'"{m.group(1)}":', stripped))) is not None:
+            fixed = _KEY_RE.sub(lambda m: f'"{m.group(1)}":', stripped)
+            if (obj := _loads_list(fixed)) is not None:
                 return obj
             if (obj := _loads_list(_truncate_to_last_array(stripped))) is not None:
                 return obj

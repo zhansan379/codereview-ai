@@ -50,7 +50,7 @@ class PollStatus(BaseModel):
     progress: PollProgress | None = None
 
 
-async def _get_or_create_poller(request: Request):
+async def _get_or_create_poller(request: Request) -> Any:
     """获取或创建 poller，支持动态创建（凭据后配也能用）。"""
     poller = getattr(request.app.state, "poller", None)
     if poller is not None:
@@ -64,8 +64,8 @@ async def _get_or_create_poller(request: Request):
     if not forge_registry.available():
         raise HTTPException(503, "补拉不可用：需配置平台凭据（GitHub/GitLab/Gitee Token）")
     # 创建 poller
-    from codereview_ai.ops.poller import PRPoller
     from codereview_ai.config.settings import Settings
+    from codereview_ai.ops.poller import PRPoller
     settings = getattr(request.app.state, "settings", None) or Settings()
     poll = PRPoller(
         engine, forge_registry, enqueuer,

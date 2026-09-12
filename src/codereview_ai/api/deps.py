@@ -175,7 +175,8 @@ async def review_task_allowed(session: AsyncSession, user: User, task: ReviewTas
 
 
 async def allowed_review_scope(session: AsyncSession, user: User) -> tuple[bool, set[int]]:
-    """审查记录的可见范围 `(is_global, allowed_ids)`（与 `allowed_project_ids` 类似，但先校验角色）。
+    """审查记录的可见范围 `(is_global, allowed_ids)`。
+    与 `allowed_project_ids` 类似，但先校验角色。
 
     审查列表/详情/汇总等的统一门槛：角色必须含 `reviews:view`（成员身份之外还要查角色权限，
     防自定义角色只有 projects:view 却能看审查）；再按全项目角色/成员关系定作用域。

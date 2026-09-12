@@ -28,16 +28,15 @@ from codereview_ai.forges.base import ForgeAdapter
 from codereview_ai.logging import TRACE_ID
 from codereview_ai.notifiers.dispatch import NotifierDispatcher
 from codereview_ai.queue.base import TaskMeta, TaskQueue
-from codereview_ai.review.agentic.capture import ConversationRecorder, conversation_capture, diff_usage_sink
+from codereview_ai.review.agentic.capture import (
+    ConversationRecorder,
+    conversation_capture,
+    diff_usage_sink,
+)
 from codereview_ai.review.agentic.llmloop import AgentConfig, AgentLLM
 from codereview_ai.review.agentic.sandbox import SandboxDisabled, SandboxRuntime, run_agentic_review
 from codereview_ai.review.group_review import review_in_groups
 from codereview_ai.review.grouping import SemanticGrouper
-from codereview_ai.storage.setting_repo import (
-    MR_REVIEW_DEFAULT_KEY,
-    PUSH_REVIEW_DEFAULT_KEY,
-    SettingRepository,
-)
 from codereview_ai.review.increments import (
     REASON_ALREADY,
     IncrementReference,
@@ -52,6 +51,11 @@ from codereview_ai.review.reviewer import Reviewer
 from codereview_ai.review.static_analysis import StaticAnalyzer
 from codereview_ai.storage.project_repo import ProjectConfig
 from codereview_ai.storage.review_repo import ReviewRepository
+from codereview_ai.storage.setting_repo import (
+    MR_REVIEW_DEFAULT_KEY,
+    PUSH_REVIEW_DEFAULT_KEY,
+    SettingRepository,
+)
 
 logger = logging.getLogger("codereview_ai.worker")
 
@@ -435,7 +439,9 @@ async def review_pull_request(
     pr: PullRequest,
     **kwargs: Any,
 ) -> str:
-    """mr 轨审查唯一入口（薄壳）：按 head 加锁，防并发重复审查，再委托 `_do_review_pull_request`。"""
+    """mr 轨审查唯一入口（薄壳）：按 head 加锁，防并发重复审查。
+    再委托 `_do_review_pull_request`。
+    """
     lock = await _head_lock((pr.provider, pr.repo_id, pr.head_sha))
     async with lock:
         return await _do_review_pull_request(forge, reviewer, pr, **kwargs)
@@ -557,10 +563,13 @@ async def _do_review_pull_request(
         if not diffs or _count_diff_lines(diffs) == 0:
             # 无待审文件 / 实变行数为 0（空 diff、重命名、无 +/- 变更）→ 不调 LLM
             #（省 token、避免空输入把 LLM 逼出空返回再落 failed）；标 completed-empty
-            if task_id is not None:
-                await review_repo.mark_state(task_id, state="completed",
-                                             summary_md="_无待审文件（扩展名过滤、全部未变更或空 diff）_",
-                                             score_total=0)
+            if task_id is not None and review_repo is not None:
+                await review_repo.mark_state(
+                    task_id,
+                    state="completed",
+                    summary_md="_无待审文件（扩展名过滤、全部未变更或空 diff）_",
+                    score_total=0,
+                )
             return "empty"
         # 项目级 review_strategy 覆盖全局默认：页面/每个项目选的 agentic/diff 真正生效
         if cfg and cfg.review_strategy:
@@ -685,7 +694,7 @@ async def _do_review_pull_request(
     except Exception as exc:
         # 失败落 failed 行（后台可见、可重试），再向上抛出由 worker 标队列 failed
         logger.warning("mr 轨审查失败（%s pr#%s）：%s", pr.repo_full_name, pr.pr_number, exc)
-        if task_id is not None:
+        if task_id is not None and review_repo is not None:
             try:
                 await review_repo.mark_state(task_id, state="failed", error=str(exc))
             except Exception:
@@ -807,12 +816,14 @@ async def _review_push_event(
         force = bool(existing and existing.force_rerun)
         if existing is not None and not force:
             return  # 重复 webhook：该分支该 after 已审过/已跳过，跳过（§7.7）
-        # push 直达链接：拼「{项目仓库 web_url}/commit/{head_sha}」（项目未配 web_url → 留空，详情页隐藏）
+        # push 直达链接：拼「{项目仓库 web_url}/commit/{head_sha}」
+        # （项目未配 web_url → 留空，详情页隐藏）
         push_url = f"{cfg.web_url}/commit/{ev.after}" if cfg and cfg.web_url else ""
         tid = await review_repo.ensure_task(
             provider=ev.provider, repo_id=ev.repo_id, pr_number=None, event_type="push",
             branch=ev.branch, head_sha=ev.after, base_sha=ev.before,
-            # push 无 PR 标题；提交消息多行过长，不当标题占 pr_title/表格列，落 push_commits 详情展示
+            # push 无 PR 标题；提交消息多行过长，不当标题占 pr_title/表格列，
+            # 落 push_commits 详情展示
             pr_title="", web_url=push_url, push_commits=_commits_text(ev), payload=raw_payload,
         )
         if tid is None:
@@ -826,7 +837,8 @@ async def _review_push_event(
             await review_repo.clear_force_rerun(audit_id)
     try:
         if _is_all_zero(ev.after):
-            # 删分支：无 head 可审，不审也不回写（只留审计行，标 skipped，带原因）；补审对删分支无意义
+            # 删分支：无 head 可审，不审也不回写（只留审计行，标 skipped，带原因）；
+            # 补审对删分支无意义
             if review_repo is not None:
                 await review_repo.mark_state(
                     audit_id, state="skipped", skip_reason="branch_deleted",

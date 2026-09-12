@@ -17,8 +17,11 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 from collections.abc import Awaitable, Callable
+from io import TextIOWrapper
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote, urlparse, urlunparse
 
 from codereview_ai.domain.models import PullRequest
@@ -65,7 +68,7 @@ def _auth_url(url: str, token: str) -> str:
     return urlunparse(parsed._replace(netloc=f"{userinfo}@{parsed.netloc}"))
 
 
-def _run(cmd: list[str], cwd: str | None = None, timeout: int = 300) -> None:
+def _run(cmd: list[str], cwd: str | Path | None = None, timeout: int = 300) -> None:
     """同步跑 git 子命令；失败抛 RuntimeError（含 stderr）。"""
     try:
         proc = subprocess.run(
@@ -87,7 +90,7 @@ class _FileLock:
 
     def __init__(self, path: Path) -> None:
         self._path = path
-        self._fh = None
+        self._fh: TextIOWrapper | None = None
 
     def __enter__(self) -> _FileLock:
         self._path.touch(exist_ok=True)
@@ -96,41 +99,47 @@ class _FileLock:
         # 先把锁文件垫到 ≥1 字节，保证 msvcrt 锁真实生效。
         if self._path.stat().st_size == 0:
             self._path.write_bytes(b"\x00")
-        self._fh = open(self._path, "a+")  # noqa: SIM115 —— 跨平台锁句柄，保持打开
+        fh = self._fh = open(self._path, "a+")  # noqa: SIM115 —— 跨平台锁句柄，保持打开
+        # mypy 按当前平台裁剪分支：win32 只认 msvcrt，其余只认 fcntl，
+        # 另一侧的空模块（ignore_missing_imports）不会再生出假 attr-defined。
         try:
             try:
-                import fcntl  # POSIX
+                if sys.platform == "win32":
+                    import msvcrt
 
-                fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
+                    fh.seek(0)
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
             except ImportError:
-                try:
-                    import msvcrt  # Windows
-
-                    self._fh.seek(0)
-                    msvcrt.locking(self._fh.fileno(), msvcrt.LK_LOCK, 1)
-                except ImportError:
-                    pass  # 无锁原语：尽力而为，不阻塞
+                pass  # 无锁原语：尽力而为，不阻塞
         except OSError:
             pass  # 拿不到锁也不阻塞 clone（并发只会多做一次 clone/fetch，幂等安全）
         return self
 
-    def __exit__(self, *_exc) -> None:  # noqa: ANN003
+    def __exit__(self, *_exc: object) -> None:
+        fh = self._fh
+        self._fh = None
+        if fh is None:
+            return
         try:
             try:
-                import fcntl
-
-                fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
-            except ImportError:
-                try:
+                if sys.platform == "win32":
                     import msvcrt
 
-                    self._fh.seek(0)
-                    msvcrt.locking(self._fh.fileno(), msvcrt.LK_UNLCK, 1)
-                except ImportError:
-                    pass
+                    fh.seek(0)
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            except ImportError:
+                pass
         except OSError:
             pass
-        self._fh.close()
+        fh.close()
 
 
 class RepoCloner:
@@ -212,7 +221,7 @@ class RepoCloner:
 
     def _force_remove(self, target: Path) -> None:
         """删除 `target`（含 Windows 只读文件）；删不净则静默保留现场，交由调用方判定。"""
-        def _onerror(func, path, _exc_info):  # noqa: ANN001
+        def _onerror(func: Callable[..., Any], path: str, _exc_info: Any) -> None:
             # 只读属性（Windows 上 rmtree 对只读文件会失败）→ 转可写后重试一次；
             # 仍失败（真被占用锁定）则留给上层判定，而非被 ignore_errors 静默吞掉。
             try:

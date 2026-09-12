@@ -27,7 +27,7 @@ def _env(**kw):
 
 
 def test_valid_settings_construct():
-    s = Settings(**_env())
+    s = Settings(_env_file=None, **_env())
     assert s.secret_key == "s"
     assert s.database_url == "sqlite:///./data/app.db"
     assert s.queue_backend == "asyncio"
@@ -35,19 +35,19 @@ def test_valid_settings_construct():
 
 def test_missing_secret_fails_fast():
     with pytest.raises(SystemExit) as e:
-        Settings(**_env(secret_key="", webhook_secret="", encryption_key=""))
+        Settings(_env_file=None, **_env(secret_key="", webhook_secret="", encryption_key=""))
     assert "CR_SECRET_KEY" in str(e.value)
 
 
 def test_missing_only_encryption_key_fails():
     with pytest.raises(SystemExit) as e:
-        Settings(**_env(encryption_key=""))
+        Settings(_env_file=None, **_env(encryption_key=""))
     assert "CR_ENCRYPTION_KEY" in str(e.value)
 
 
 def test_invalid_fernet_key_fails():
     with pytest.raises(SystemExit) as e:
-        Settings(**_env(encryption_key="not-a-fernet-key"))
+        Settings(_env_file=None, **_env(encryption_key="not-a-fernet-key"))
     assert "Fernet" in str(e.value)
 
 
@@ -55,4 +55,4 @@ def test_wrong_length_fernet_key_fails():
     # tokens.token_urlsafe 生成的是 64 字符，不是 Fernet（44 字符）
     bad = base64.urlsafe_b64encode(b"\x00" * 48).decode()
     with pytest.raises(SystemExit):
-        Settings(**_env(encryption_key=bad))
+        Settings(_env_file=None, **_env(encryption_key=bad))

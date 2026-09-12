@@ -22,11 +22,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import httpx
 
-from codereview_ai.forges.signatures import GITHUB, GITEE
+from codereview_ai.forges.signatures import GITEE, GITHUB
 
 #: 系统所需能力 → GitHub 任一满足即可的 scope（网络凭证在 HTTP 层判，见 GITHUB_REQUIRED_SCOPES）。
 GITHUB_REQUIRED_SCOPES: dict[str, tuple[str, ...]] = {
@@ -58,7 +58,9 @@ class Capability:
 
 
 def _cap(name: str, status: str, detail: str = "") -> Capability:
-    return Capability(name=name, label=CAPABILITY_LABELS.get(name, name), status=status, detail=detail)
+    return Capability(
+        name=name, label=CAPABILITY_LABELS.get(name, name), status=status, detail=detail
+    )
 
 
 #: GitHub 官方 token 前缀 → 凭证类型（用于 X-OAuth-Scopes 缺失时精确提示，避免误猜）。
@@ -94,7 +96,11 @@ def _github_scope_caps(scopes: set[str], conn_ok: bool) -> list[Capability]:
     if not conn_ok:
         return [
             _cap("connect", "missing", "认证失败"),
-            *[_cap(n, "unknown", "认证未通过，无法判定") for n in CAPABILITY_ORDER if n != "connect"],
+            *[
+                _cap(n, "unknown", "认证未通过，无法判定")
+                for n in CAPABILITY_ORDER
+                if n != "connect"
+            ],
         ]
     out = [_cap("connect", "ok")]
     for name, need in GITHUB_REQUIRED_SCOPES.items():
@@ -286,7 +292,9 @@ async def probe_capabilities(
             if resp.status_code >= 400:
                 return _github_scope_caps(set(), conn_ok=False)
             scopes = {
-                s.strip().lower() for s in (resp.headers.get("X-OAuth-Scopes") or "").split(",") if s.strip()
+                s.strip().lower()
+                for s in (resp.headers.get("X-OAuth-Scopes") or "").split(",")
+                if s.strip()
             }
             if scopes:
                 return _github_scope_caps(scopes, conn_ok=True)
@@ -312,17 +320,33 @@ async def probe_capabilities(
         if user.status_code >= 400:
             return [
                 _cap("connect", "missing", f"认证失败（HTTP {user.status_code}）"),
-                *[_cap(n, "unknown", "认证未通过，无法判定") for n in CAPABILITY_ORDER if n != "connect"],
+                *[
+                _cap(n, "unknown", "认证未通过，无法判定")
+                for n in CAPABILITY_ORDER
+                if n != "connect"
+            ],
             ]
         out = [_cap("connect", "ok")]
         if repos.status_code < 400:
             out.append(_cap("read_pull", "ok"))
         elif repos.status_code in (401, 403):
-            out.append(_cap("read_pull", "missing", f"读仓库列表被拒（HTTP {repos.status_code}），需 projects 权限"))
+            out.append(
+                _cap(
+                    "read_pull",
+                    "missing",
+                    f"读仓库列表被拒（HTTP {repos.status_code}），需 projects 权限",
+                )
+            )
         else:
             out.append(_cap("read_pull", "unknown", f"读探针 HTTP {repos.status_code}"))
         # 写探针有副作用不实际发；Gitee 不暴露 scope 头 → 诚实标 unknown（与 GitLab 同策略）
-        out.append(_cap("post_comment", "unknown", "Gitee 不暴露 scope；发评论需 projects 权限（未做写探针避免副作用）"))
+        out.append(
+            _cap(
+                "post_comment",
+                "unknown",
+                "Gitee 不暴露 scope；发评论需 projects 权限（未做写探针避免副作用）",
+            )
+        )
         out.append(_cap("commit_status", "unknown", "同上：写状态需 projects 权限（未做写探针）"))
         return out
 
@@ -336,16 +360,32 @@ async def probe_capabilities(
     if user.status_code >= 400:
         return [
             _cap("connect", "missing", f"认证失败（HTTP {user.status_code}）"),
-            *[_cap(n, "unknown", "认证未通过，无法判定") for n in CAPABILITY_ORDER if n != "connect"],
+            *[
+                _cap(n, "unknown", "认证未通过，无法判定")
+                for n in CAPABILITY_ORDER
+                if n != "connect"
+            ],
         ]
     out = [_cap("connect", "ok")]
     if projects.status_code < 400:
         out.append(_cap("read_pull", "ok"))
     elif projects.status_code in (401, 403):
-        out.append(_cap("read_pull", "missing", f"读项目列表被拒（HTTP {projects.status_code}），需 read_api / api 权限"))
+        out.append(
+            _cap(
+                "read_pull",
+                "missing",
+                f"读项目列表被拒（HTTP {projects.status_code}），需 read_api / api 权限",
+            )
+        )
     else:
         out.append(_cap("read_pull", "unknown", f"读探针 HTTP {projects.status_code}"))
     # 写探针有副作用，不实际发；GitLab 不暴露 scope 头 → 诚实标 unknown
-    out.append(_cap("post_comment", "unknown", "GitLab 不暴露 scope；发评论需 api 权限（未做写探针避免副作用）"))
+    out.append(
+        _cap(
+            "post_comment",
+            "unknown",
+            "GitLab 不暴露 scope；发评论需 api 权限（未做写探针避免副作用）",
+        )
+    )
     out.append(_cap("commit_status", "unknown", "同上：写状态需 api 权限（未做写探针）"))
     return out

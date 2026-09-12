@@ -18,8 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from codereview_ai.review.compare import bucket_compare
-
+from codereview_ai.review.compare import CompareResult, bucket_compare
 
 #: 与 `compare.py` 的 Bucket 同构：finding 的中平铺 dict。
 Bucket = list[dict[str, Any]]
@@ -45,7 +44,7 @@ class PrDelta:
     rate_pct: int = 0
 
 
-def _delta_counts(result) -> dict[str, int]:
+def _delta_counts(result: CompareResult) -> dict[str, int]:
     return {
         "new": len(result.new),
         "persisting": len(result.persisting),

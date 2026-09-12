@@ -145,7 +145,9 @@ class ResultWriter:
             logger.info("回写跳过：评论已含指纹 %s（幂等命中）", fingerprint)
             return
         inline, textual = partition_findings(result.findings, diffs)
-        summary_text = summary if summary is not None else build_summary_markdown(pr, textual, result)
+        summary_text = (
+            summary if summary is not None else build_summary_markdown(pr, textual, result)
+        )
         if fingerprint:
             summary_text = f"{summary_text}\n<!-- {fingerprint} -->"
         if inline:
@@ -200,7 +202,8 @@ def _describe_httpx(exc: BaseException) -> str:
     detail = str(exc).strip()
     if not detail and exc.__cause__ is not None:
         detail = str(exc.__cause__).strip()
-    return detail or f"{type(exc).__name__}({type(exc.__cause__).__name__ if exc.__cause__ else '?'})"
+    cause = type(exc.__cause__).__name__ if exc.__cause__ else "?"
+    return detail or f"{type(exc).__name__}({cause})"
 
 
 def review_fingerprint(*, provider: str, repo_id: str, pr_number: int, head_sha: str) -> str:

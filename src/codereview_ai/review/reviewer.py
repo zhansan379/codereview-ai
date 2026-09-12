@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from codereview_ai.domain.models import FileDiff, PullRequest, ReviewResult
+from codereview_ai.review.fallback import FallbackLLMGateway
 from codereview_ai.review.llm_gateway import LLMError, LLMGateway, parse_review_json
 from codereview_ai.review.location import resolve_findings
 
@@ -178,7 +179,9 @@ def build_messages(
 class Reviewer:
     """一次 diff 审查的编排：过滤 → prompt → LLM → 结构化 → 锚定定位。"""
 
-    def __init__(self, gateway: LLMGateway, cfg: ReviewerConfig | None = None) -> None:
+    def __init__(
+        self, gateway: LLMGateway | FallbackLLMGateway, cfg: ReviewerConfig | None = None
+    ) -> None:
         self.gateway = gateway
         self.cfg = cfg or ReviewerConfig()
 

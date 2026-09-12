@@ -81,7 +81,7 @@ class _LocalRuntime:
         if not RepoCloner.available():
             raise RuntimeError("未找到 git 可执行文件")
 
-    async def start(self, pr: PullRequest, diffs: list[FileDiff]) -> RepoContext:
+    async def start(self, pr: PullRequest | None, diffs: list[FileDiff]) -> RepoContext:
         await self.guard()
         diff_map = {d.new_path.removeprefix("/"): d.diff for d in diffs}
         return RepoContext(

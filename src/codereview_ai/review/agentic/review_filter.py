@@ -87,7 +87,7 @@ def comments_json(findings: list[Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _ids_to_indices(candidate_count: int, comment_ids: list[Any]) -> set[int]:
+def _ids_to_indices(candidate_count: int, comment_ids: Any) -> set[int]:
     """把 report_incorrect_comments 的 "c-N" 映射回候选列表索引；越界/坏值忽略。"""
     idx: set[int] = set()
     if not isinstance(comment_ids, list):

@@ -9,8 +9,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from codereview_ai.storage.models import SystemNotification
@@ -104,7 +106,7 @@ class SystemNotificationRepository:
         )
         result = await self._session.execute(stmt)
         await self._session.flush()
-        return result.rowcount > 0
+        return cast(CursorResult[Any], result).rowcount > 0
 
     async def acknowledge_all(self) -> int:
         """标记所有未确认消息为已确认。返回更新行数。"""
@@ -115,4 +117,4 @@ class SystemNotificationRepository:
         )
         result = await self._session.execute(stmt)
         await self._session.flush()
-        return result.rowcount
+        return cast(CursorResult[Any], result).rowcount

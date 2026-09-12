@@ -45,7 +45,9 @@ def _safe_rel(rel: str) -> str | None:
     return rel
 
 
-def _git(repo_dir: Path, args: list[str], timeout: int = 60) -> subprocess.CompletedProcess | None:
+def _git(
+    repo_dir: Path, args: list[str], timeout: int = 60
+) -> subprocess.CompletedProcess[bytes] | None:
     """在 `repo_dir`(git 仓库根) 跑只读 git 子命令，失败返回 None（工具层不抛）。"""
     try:
         return subprocess.run(
@@ -91,7 +93,7 @@ class RepoContext:
     def git_blob(self, rel: str) -> bytes | None:
         """按 `pinned_sha` 读不可变 blob；路径非法/不存在/读取失败返回 None。"""
         key = _safe_rel(rel)
-        if key is None:
+        if key is None or self.repo_dir is None or self.pinned_sha is None:
             return None
         proc = _git(self.repo_dir, ["cat-file", "blob", f"{self.pinned_sha}:{key}"])
         if proc is None or proc.returncode != 0:
@@ -100,6 +102,8 @@ class RepoContext:
 
     def git_paths(self) -> list[str]:
         """`pinned_sha` 树上全部文件路径（git 恒用 `/` 分隔）。"""
+        if self.repo_dir is None or self.pinned_sha is None:
+            return []
         proc = _git(self.repo_dir, ["ls-tree", "-r", "--name-only", str(self.pinned_sha)])
         if proc is None or proc.returncode != 0:
             return []
@@ -111,6 +115,8 @@ class RepoContext:
         if not case_sensitive:
             args.append("-i")
         args += ["-e", needle, str(self.pinned_sha)]
+        if self.repo_dir is None or self.pinned_sha is None:
+            return []
         proc = _git(self.repo_dir, args)
         if proc is None or proc.returncode not in (0, 1):  # 1 = 无命中（git 约定）
             return []
@@ -217,10 +223,10 @@ def _t_grep_repo(ctx: RepoContext, _state: ToolState, args: dict[str, Any]) -> s
         rel = str(fp.relative_to(ctx.workspace)).replace("\\", "/")
         if patterns and not any(fnmatch.fnmatch(rel, p) for p in patterns):
             continue
-        for n, ln in enumerate(fp.read_text("utf-8", errors="replace").splitlines(), 1):
-            hay = ln if case_sensitive else ln.lower()
+        for n, text_ln in enumerate(fp.read_text("utf-8", errors="replace").splitlines(), 1):
+            hay = text_ln if case_sensitive else text_ln.lower()
             if needle in hay:
-                hits.append(f"{rel}:{n}: {ln}")
+                hits.append(f"{rel}:{n}: {text_ln}")
                 if len(hits) >= MAX_GREP_HITS:
                     return json.dumps(
                         {"ok": True, "truncated": True,

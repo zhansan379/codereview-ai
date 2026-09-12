@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -98,12 +99,12 @@ async def list_caches(
     )
 
 
-@router.delete("/{cache_id}", response_model=dict)
+@router.delete("/{cache_id}", response_model=dict[str, Any])
 async def delete_cache(
     cache_id: int,
     request: Request,
     session: AsyncSession = Depends(get_db),
-) -> dict:
+) -> dict[str, Any]:
     repo = CloneCacheRepoRepository(session)
     row = await repo.get(cache_id)
     if row is None:
@@ -112,7 +113,7 @@ async def delete_cache(
     try:
         await asyncio.to_thread(remove_cache_dir, cache_root, row.repo_key)
     except RuntimeError as exc:
-        raise HTTPException(409, str(exc))
+        raise HTTPException(409, str(exc)) from exc
     await repo.delete(cache_id)
     return {"id": cache_id, "repo_key": row.repo_key}
 
@@ -130,19 +131,19 @@ async def put_settings(body: CacheSettings, request: Request) -> CacheSettings:
     return await _read_settings(request)
 
 
-@router.post("/rebuild", response_model=dict)
+@router.post("/rebuild", response_model=dict[str, Any])
 async def rebuild_caches(
     request: Request,
     session: AsyncSession = Depends(get_db),
-) -> dict:
+) -> dict[str, Any]:
     """扫描 cache_root 把已有的 bare 仓库补充登记进列表（仅缺失插入）。"""
     cache_root = getattr(request.app.state, "cache_root", "")
     added = await rebuild_index(CloneCacheRepoRepository(session), cache_root)
     return {"added": added, "cache_root": cache_root}
 
 
-@router.post("/prune", response_model=dict)
-async def prune_caches(request: Request) -> dict:
+@router.post("/prune", response_model=dict[str, Any])
+async def prune_caches(request: Request) -> dict[str, Any]:
     pruner = getattr(request.app.state, "pruner", None)
     if pruner is None:
         raise HTTPException(503, "清除运行器未启动")

@@ -46,7 +46,8 @@ class Project(Base):
     web_url: Mapped[str] = mapped_column(String(1024), default="")
     branch_rule: Mapped[str] = mapped_column(String(255), default="")
     file_extensions: Mapped[str] = mapped_column(String(255), default="")
-    # push 轨审查（DESIGN §7.7）：None=继承全局 env 默认；True/False=显式覆盖；glob 非空则覆盖全局分支规则
+    # push 轨审查（DESIGN §7.7）：None=继承全局 env 默认；True/False=显式覆盖；
+    # glob 非空则覆盖全局分支规则
     push_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
     push_branch_globs: Mapped[str] = mapped_column(String(255), default="")
     # MR 轨审查（与 push 对称）：None=继承全局默认；True/False=显式覆盖
@@ -92,7 +93,8 @@ class ReviewTask(Base):
     branch: Mapped[str] = mapped_column(String(255), default="")
     head_sha: Mapped[str] = mapped_column(String(64))
     base_sha: Mapped[str] = mapped_column(String(64), default="")
-    pr_title: Mapped[str] = mapped_column(String(255), default="")  # PR/MR 标题（展示用；push 轨留空）
+    # PR/MR 标题（展示用；push 轨留空）
+    pr_title: Mapped[str] = mapped_column(String(255), default="")
     pr_author: Mapped[str] = mapped_column(String(255), default="")  # PR/MR 创建者（push 轨留空）
     # 直达原页 URL：mr 轨为 forge 给出的 MR/PR 页面；push 轨为「{项目 web_url}/commit/{head_sha}」
     web_url: Mapped[str] = mapped_column(String(1024), default="")
@@ -123,7 +125,8 @@ class ReviewTask(Base):
     diff_lines: Mapped[int] = mapped_column(Integer, default=0)  # 新增+删除行合计
     chat_rounds: Mapped[int] = mapped_column(Integer, default=0)  # LLM 调用/对话轮数
     tool_calls: Mapped[int] = mapped_column(Integer, default=0)  # 工具调用累计
-    # 原始 webhook body；重试时据此回放重新入队（否则 simple 档内存队列不会消费 DB 侧 flip 的 queued）
+    # 原始 webhook body；重试时据此回放重新入队
+    # （否则 simple 档内存队列不会消费 DB 侧 flip 的 queued）
     payload: Mapped[str] = mapped_column(Text, default="")
 
 

@@ -113,7 +113,9 @@ async def test_notifier_routes_filter_by_project_and_decrypt(engine, monkeypatch
         bob = NotifierMember(name="Bob", git_username="bob", wecom_userid="wbob")
         s.add_all([alice, bob])
         await s.flush()
-        ding = (await s.scalars(select(NotifierConfig).where(NotifierConfig.channel == "dingtalk"))).one()
+        ding = (
+            await s.scalars(select(NotifierConfig).where(NotifierConfig.channel == "dingtalk"))
+        ).one()
         s.add(NotifierRouteMember(notifier_id=ding.id, member_id=alice.id))
         s.add(NotifierRouteMember(notifier_id=ding.id, member_id=bob.id))
         await s.commit()

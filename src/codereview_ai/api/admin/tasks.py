@@ -201,6 +201,9 @@ async def _background_redeliver(
     整个重发**不做**任何 LLM 调用（用落库的 findings + summary_md），只重取 diff +
     回写；`redeliver` 内部自带指纹幂等 + 网络重试，重复点击不会在平台上双发。
     """
+    if row.pr_number is None:
+        logger.warning("重发任务 %s：无 PR 号（push 轨），跳过重发", row.id)
+        return
     pr = _pr_from_task(row)
     try:
         findings = await repo.findings_for_task(int(row.id))

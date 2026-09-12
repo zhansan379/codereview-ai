@@ -278,7 +278,7 @@ async def run_agent_session(
     if pending_compress is not None and not pending_compress.done():
         pending_compress.cancel()
 
-    result = AgentResult(
+    outcome = AgentResult(
         comments=list(state.comments),
         done=state.done,
         failed=state.failed,
@@ -289,9 +289,9 @@ async def run_agent_session(
     # 时 reason 常见 max_iterations/grace_round，据此定位「模型不产出工具调用」）。
     logger.info(
         "agent 会话结束: turns=%d reason=%s comments=%d done=%s",
-        result.turns, result.reason, len(result.comments), result.done,
+        outcome.turns, outcome.reason, len(outcome.comments), outcome.done,
     )
-    return result
+    return outcome
 
 
 async def _compress_to_text(

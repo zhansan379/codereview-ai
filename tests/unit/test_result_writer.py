@@ -176,7 +176,10 @@ def test_writer_gives_up_after_exhausted_retries_with_readable_error():
     writer = ResultWriter(FakeForge(), retries=1, backoff_base=0.001, backoff_max=0.01)  # type: ignore[arg-type]
     with pytest.raises(RuntimeError) as exc:
         asyncio.run(writer.write(_pr(), [], ReviewResult(
-            summary="s", scores=ReviewScores(correctness=1, security=1, practices=1, performance=1, commit_quality=1),
+            summary="s",
+            scores=ReviewScores(
+                correctness=1, security=1, practices=1, performance=1, commit_quality=1
+            ),
         )))
     # 文案补上底层连接原因，排障可读
     assert "Connection refused" in str(exc.value)
@@ -200,7 +203,10 @@ def test_writer_does_not_retry_http_status_error():
     writer = ResultWriter(forge, retries=5, backoff_base=0.001, backoff_max=0.01)  # type: ignore[arg-type]
     with pytest.raises(httpx.HTTPStatusError):
         asyncio.run(writer.write(_pr(), [], ReviewResult(
-            summary="s", scores=ReviewScores(correctness=1, security=1, practices=1, performance=1, commit_quality=1),
+            summary="s",
+            scores=ReviewScores(
+                correctness=1, security=1, practices=1, performance=1, commit_quality=1
+            ),
         )))
     assert forge.summary_attempts == 1
 

@@ -14,7 +14,7 @@ import logging
 import os
 import socket
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 from sqlalchemy import event
@@ -81,7 +81,7 @@ def _auth_failure(exc: BaseException) -> bool:
 
 
 def raise_for_connect_failure(
-    database_url: str, exc: Exception, *, exit_fn=None  # type: ignore[no-untyped-def]
+    database_url: str, exc: Exception, *, exit_fn: Callable[[int], object] | None = None
 ) -> None:
     """启动连不上数据库时的兜底：打印原因与解决方法后干净退出（不甩 traceback）。
 
@@ -98,7 +98,11 @@ def raise_for_connect_failure(
         shown = make_url(database_url).render_as_string(hide_password=True)
     except Exception:  # noqa: BLE001 — URL 解析失败就打码整个串，绝不让明文密码进日志
         shown = "<unparseable-database-url>"
-    reason = "认证失败（用户名或密码不对）" if _auth_failure(exc) else str(exc).strip() or type(exc).__name__
+    reason = (
+        "认证失败（用户名或密码不对）"
+        if _auth_failure(exc)
+        else str(exc).strip() or type(exc).__name__
+    )
     logger.error(
         "\n".join([
             "数据库连接失败，服务无法启动。",
@@ -113,8 +117,10 @@ def raise_for_connect_failure(
             "       -e POSTGRES_USER=<用户> -e POSTGRES_PASSWORD=<密码> -e POSTGRES_DB=<库名> \\",
             "       -v codereview_pgdata:/var/lib/postgresql/data postgres:16",
             "  C) 已有数据库实例：确认服务已启动、地址/端口/账号正确。",
-            "     注意：docker compose 内的 postgres 服务未映射宿主端口，宿主机直跑 uvicorn 连不上它",
-            "     （需给容器加 -p 5432:5432，或让应用也跑进 compose；详见 docs/how_use_postgres.md）。",
+            "     注意：docker compose 内的 postgres 服务未映射宿主端口，"
+            "     宿主机直跑 uvicorn 连不上它"
+            "     （需给容器加 -p 5432:5432，或让应用也跑进 compose；"
+            "     详见 docs/how_use_postgres.md）。",
         ])
     )
     for h in logging.getLogger().handlers:
