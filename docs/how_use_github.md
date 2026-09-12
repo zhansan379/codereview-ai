@@ -42,6 +42,8 @@ PAT 分两种，入口在同一处：GitHub 头像 → Settings → Developer se
 3. Token 粘贴第一步的 PAT → 点 **测试连接**；
 4. 保存，立即生效，无需重启。
 
+<img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/da0bbb4f-e127-4c2f-9172-5eedb3a95149" />
+
 **方式 B：环境变量**
 
 ```bash
@@ -73,7 +75,7 @@ CR_GITHUB_URL=https://api.github.com
 
 <img width="2526" height="1302" alt="image" src="https://github.com/user-attachments/assets/373320ba-11a2-49a6-b688-9faea5ab0c18" />
 
-<img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/0250729c-b47a-4f86-b810-eff0d3005176" />
+<img width="2526" height="1189" alt="image" src="https://github.com/user-attachments/assets/2cb309cd-fb31-46a1-8f55-5167489e4655" />
 
 <img width="2560" height="1200" alt="image" src="https://github.com/user-attachments/assets/b06abfd4-7ebb-4638-972a-ea313564b6e6" />
 
@@ -82,6 +84,8 @@ CR_GITHUB_URL=https://api.github.com
 ## 第五步（可选）：主动补拉（轮询轨）
 
 本地/内网部署无法暴露公网、webhook 漏了事件、或接入前已有存量 PR 时，可以不开 webhook，改用主动补拉兜底。触发配置与平台无关：三种触发方式、补拉范围与幂等说明见[主动补拉（轮询轨）](how_use_poll.md)。
+
+<img width="2560" height="1200" alt="image" src="https://github.com/user-attachments/assets/3c6e58f6-fa10-4b17-b042-e8ccaada1250" />
 
 ## 验证闭环
 
