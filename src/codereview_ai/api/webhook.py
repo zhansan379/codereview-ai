@@ -83,6 +83,10 @@ class WebhookHelpMiddleware(BaseHTTPMiddleware):
         try:
             engine = getattr(request.app.state, "engine", None)
             if engine is None:
+                import logging
+                logging.getLogger("codereview_ai.webhook").warning(
+                    "webhook 错误落库跳过：engine 未初始化"
+                )
                 return
             from codereview_ai.storage.db import session_factory
             from codereview_ai.storage.webhook_error_repo import WebhookErrorRepository
@@ -99,9 +103,16 @@ class WebhookHelpMiddleware(BaseHTTPMiddleware):
                     source_ip=source_ip,
                 )
                 await session.commit()
-        except Exception:
-            # 落库失败不影响主流程，静默忽略
-            pass
+                import logging
+                logging.getLogger("codereview_ai.webhook").info(
+                    "webhook 配置错误已落库：provider=%s wrong_url=%s", provider, wrong_url
+                )
+        except Exception as exc:
+            # 落库失败不影响主流程，但记录日志便于排查
+            import logging
+            logging.getLogger("codereview_ai.webhook").error(
+                "webhook 错误落库失败：%s", exc
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
