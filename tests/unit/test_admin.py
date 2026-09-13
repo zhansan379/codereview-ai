@@ -707,6 +707,83 @@ def test_forges_probe_invalid_provider_404(app):
         assert c.post("/api/forges/gitea/test", json={}).status_code == 404
 
 
+# ── resolve-repo：新增项目免选平台（provider 留空自动识别） ─────────────────────
+
+def test_resolve_repo_autodetect_public_host(app, monkeypatch):
+    """provider 留空 + 公开托管站 URL → 按 host 识别并回填，不触发探测兜底。"""
+    fast, token = app
+
+    async def _must_not_probe(url):
+        raise AssertionError("host 已识别出平台，不应走探测")
+
+    fast.state.forge_registry = None
+    with _client(fast, token) as c, monkeypatch.context() as m:
+        m.setattr(forges, "detect_provider_by_probe", _must_not_probe)
+        r = c.post("/api/forges/resolve-repo", json={"url": "https://github.com/acme/widgets/pull/9"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {
+        "provider": "github", "repo_id": "acme/widgets",
+        "repo_full_name": "acme/widgets", "web_url": "https://github.com/acme/widgets/pull/9",
+    }
+
+
+def test_resolve_repo_autodetect_gitea_and_gitee(app):
+    fast, token = app
+    with _client(fast, token) as c:
+        r = c.post("/api/forges/resolve-repo", json={"url": "https://gitea.corp.cn/acme/widgets.git"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["provider"] == "gitea"
+        assert body["repo_id"] == body["repo_full_name"] == "acme/widgets"  # .git 已剥掉
+        r = c.post("/api/forges/resolve-repo", json={"url": "https://gitee.com/acme/widgets"})
+        assert r.status_code == 200, r.text
+        assert r.json()["provider"] == "gitee"
+
+
+def test_resolve_repo_autodetect_gitlab_needs_adapter(app):
+    """识别出 GitLab 但未配置适配器 → 502 引导去平台配置（证明识别路由正确）。"""
+    fast, token = app
+    with _client(fast, token) as c:
+        r = c.post("/api/forges/resolve-repo", json={"url": "https://gitlab.com/a/b/-/merge_requests/1"})
+        assert r.status_code == 502
+        assert "GitLab 未接入" in r.json()["detail"]
+
+
+def test_resolve_repo_autodetect_probe_fallback(app, monkeypatch):
+    """host 命名看不出平台 → 探测兜底；探测也失败 → 400 请手动选。"""
+    fast, token = app
+
+    async def fake_probe(url, transport=None):
+        assert url == "https://scm.corp.com/acme/widgets"
+        return "gitea"
+
+    monkeypatch.setattr(forges, "detect_provider_by_probe", fake_probe)
+    with _client(fast, token) as c:
+        r = c.post("/api/forges/resolve-repo", json={"url": "https://scm.corp.com/acme/widgets"})
+        assert r.status_code == 200, r.text
+        assert r.json()["provider"] == "gitea"
+
+    async def no_hit(url, transport=None):
+        return ""
+
+    monkeypatch.setattr(forges, "detect_provider_by_probe", no_hit)
+    with _client(fast, token) as c:
+        r = c.post("/api/forges/resolve-repo", json={"url": "https://scm.corp.com/acme/widgets"})
+        assert r.status_code == 400
+        assert "手动选择" in r.json()["detail"]
+
+
+def test_resolve_repo_explicit_provider_backward_compat(app):
+    """显式传 provider 仍以传入为准；不支持的 provider 报 400。"""
+    fast, token = app
+    with _client(fast, token) as c:
+        r = c.post("/api/forges/resolve-repo", json={"provider": "github", "url": "https://x.io/a/b"})
+        assert r.status_code == 200, r.text
+        assert r.json()["provider"] == "github"
+        r = c.post("/api/forges/resolve-repo", json={"provider": "svn", "url": "https://x.io/a/b"})
+        assert r.status_code == 400
+
+
 def test_pull_poll_503_and_status_without_worker(app):
     """state 不完整 / 无平台凭据 → /pulls/poll 与 /pulls/poll/status 均 503。"""
     fast, token = app

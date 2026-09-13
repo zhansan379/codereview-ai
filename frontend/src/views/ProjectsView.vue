@@ -55,12 +55,20 @@
         <el-row :gutter="12">
           <el-col :span="12">
             <el-form-item :label="$t('projects.form.provider')" required>
-              <el-select v-model="form.provider" style="width: 100%">
+              <el-select v-model="form.provider" style="width: 100%" :placeholder="$t('projects.form.providerPlaceholder')">
                 <el-option label="GitHub" value="github" />
                 <el-option label="GitLab" value="gitlab" />
                 <el-option label="Gitea" value="gitea" />
                 <el-option label="Gitee" value="gitee" />
               </el-select>
+              <span class="field-hint">{{ $t('projects.form.providerHint') }}
+                <el-tooltip placement="top" :show-after="50">
+                  <template #content>
+                    {{ $t('projects.form.providerTip.how') }}<br/>{{ $t('projects.form.providerTip.probe') }}<br/>{{ $t('projects.form.providerTip.manual') }}
+                  </template>
+                  <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </span>
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -94,6 +102,7 @@
               <el-input
                 v-model="form.web_url"
                 :placeholder="$t('projects.form.webUrlPlaceholder')"
+                @blur="autoResolve"
               >
                 <template #append>
                   <el-button :loading="resolving" @click="onResolve">{{ $t('projects.form.resolve') }}</el-button>
@@ -294,6 +303,7 @@ import {
   setProjectMembers,
   listUsers,
   type Project,
+  type ResolvedRepo,
   type UserRow,
 } from '../api'
 import { pollBusy, pollProgress, triggerPoll, resumePollWatchIfBusy } from './usePoll'
@@ -403,41 +413,34 @@ async function onPoll() {
   await triggerPoll()
 }
 
-// 从仓库链接本地解析 "owner/repo"（Gitea/Gitee 用；GitHub 语义同，但走后端统一处理）
-function parseOwnerRepo(url: string): string {
+// 解析仓库链接：平台留空时由后端从 URL 自动识别（公开托管站/自建命名/特征路径探测），
+// 返回的 provider 回填表单；Gitea 与 GitHub/Gitee 同为纯 URL 解析，统一走后端。
+async function doResolve(): Promise<ResolvedRepo> {
+  const meta = await resolveRepo({ provider: form.provider, url: form.web_url.trim() })
+  form.provider = meta.provider || form.provider
+  form.repo_id = meta.repo_id
+  form.repo_full_name = meta.repo_full_name
+  if (meta.web_url) form.web_url = meta.web_url
+  return meta
+}
+
+// URL 失焦静默自动解析：平台或仓库 ID 还缺就补全；失败不打扰（点「解析」可看到错误详情）
+async function autoResolve() {
+  if (!form.web_url.trim() || resolving.value) return
+  if (form.provider && form.repo_id) return
   try {
-    const u = new URL(url.trim())
-    const segs = u.pathname.split('/').filter(Boolean)
-    if (segs.length >= 2) {
-      const repo = segs[1].replace(/\.git$/, '')
-      return `${segs[0]}/${repo}`
-    }
+    await doResolve()
   } catch {
-    /* ignore */
+    /* 静默 */
   }
-  return ''
 }
 
 async function onResolve() {
-  const url = form.web_url.trim()
-  if (!form.provider) return ElMessage.warning(t('projects.msg.pickProviderFirst'))
-  if (!url) return ElMessage.warning(t('projects.msg.fillUrlFirst'))
+  if (!form.web_url.trim()) return ElMessage.warning(t('projects.msg.fillUrlFirst'))
   resolving.value = true
   try {
-    if (form.provider === 'github' || form.provider === 'gitlab' || form.provider === 'gitee') {
-      const meta = await resolveRepo({ provider: form.provider, url })
-      form.repo_id = meta.repo_id
-      form.repo_full_name = meta.repo_full_name
-      if (meta.web_url) form.web_url = meta.web_url
-      ElMessage.success(t('projects.msg.resolveSuccess'))
-    } else {
-      // Gitea：平台暂无后端解析，本地取 owner/repo（repo_id 同为该路径）
-      const path = parseOwnerRepo(url)
-      if (!path) return ElMessage.warning(t('projects.msg.resolveNoRepo'))
-      form.repo_id = path
-      form.repo_full_name = path
-      ElMessage.success(t('projects.msg.resolveSuccess'))
-    }
+    await doResolve()
+    ElMessage.success(t('projects.msg.resolveSuccess'))
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || t('projects.msg.resolveFailed'))
   } finally {

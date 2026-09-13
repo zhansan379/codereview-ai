@@ -12,7 +12,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+import urllib.parse
 from typing import Any
 
 import httpx
@@ -25,10 +27,10 @@ from starlette import status
 from codereview_ai.api.deps import get_current_user, get_db, require_permission
 from codereview_ai.config.repository import DEFAULT_FORGE_URLS
 from codereview_ai.crypto import MASK, encrypt, is_masked
-from codereview_ai.forges.base import repo_path_from_url
+from codereview_ai.forges.base import provider_from_url_host, repo_path_from_url
 from codereview_ai.forges.registry import SUPPORTED_PROVIDERS
 from codereview_ai.forges.scopes import Capability, probe_capabilities
-from codereview_ai.forges.signatures import GITEE, GITHUB, GITLAB
+from codereview_ai.forges.signatures import GITEA, GITEE, GITHUB, GITLAB
 from codereview_ai.storage.models import ForgeConfig, _utcnow
 
 
@@ -71,14 +73,58 @@ async def _row_by_provider(session: AsyncSession, provider: str) -> ForgeConfig 
 
 
 class ResolveRepoBody(BaseModel):
-    provider: str = ""
+    provider: str = ""  # 留空 → 从 URL 自动识别平台
     url: str = ""
 
 
 class ResolveRepoOut(BaseModel):
+    provider: str = ""
     repo_id: str = ""
     repo_full_name: str = ""
     web_url: str = ""
+
+
+#: resolve-repo 可解析的平台：Gitea 虽无后端适配器，但仓库 ID 是纯 URL 解析（owner/repo），
+#: 与 GitHub/Gitee 同路，不依赖凭据。
+_RESOLVABLE_PROVIDERS = (GITHUB, GITLAB, GITEE, GITEA)
+
+
+async def detect_provider_by_probe(
+    url: str, transport: httpx.AsyncBaseTransport | None = None
+) -> str:
+    """对 host 命名看不出平台的站点，探测特征 API 路径识别平台（自建站兜底）。
+
+    三家特征路径互不重叠：Gitea/Gogs ``/api/v1/version``、GitLab ``/api/v4/version``、
+    GitHub Enterprise ``/api/v3``。非 404 且非 HTML 页即认为该路径存在——私有站对特征
+    路径回 401/403，同样是「平台在这」的证据。并发探测 + 短超时（死站最多等 3s）；
+    全不命中返回 ``""``。`transport` 供测试注入 MockTransport；函数整体亦可 monkeypatch。
+    """
+    parsed = urllib.parse.urlparse(url.strip())
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    candidates: tuple[tuple[str, str], ...] = (
+        (GITEA, "/api/v1/version"),
+        (GITLAB, "/api/v4/version"),
+        (GITHUB, "/api/v3"),
+    )
+
+    async def path_exists(client: httpx.AsyncClient, path: str) -> bool:
+        try:
+            resp = await client.get(origin + path)
+        except httpx.HTTPError:
+            return False
+        if resp.status_code == 404:
+            return False
+        # SPA/网关常见「任意路径都 200 回 HTML 首页」——HTML 一律不算特征命中
+        return "html" not in resp.headers.get("content-type", "").lower()
+
+    async with httpx.AsyncClient(timeout=3.0, follow_redirects=True, transport=transport) as client:
+        hits = await asyncio.gather(*(path_exists(client, path) for _, path in candidates))
+    for (provider, _), ok in zip(candidates, hits, strict=True):
+        if ok:
+            return provider
+    return ""
 
 
 router = APIRouter(
@@ -198,21 +244,29 @@ async def resolve_repo(
     request: Request,
     session: AsyncSession = Depends(get_db),
 ) -> ResolveRepoOut:
-    """从仓库链接解析 {repo_id, repo_full_name, web_url}，供「新增项目」自动回填。
+    """从仓库链接解析 {provider, repo_id, repo_full_name, web_url}，供「新增项目」免选平台自动回填。
 
-    - GitHub/Gitee：repo_id = repo_full_name = "owner/name"，纯解析 URL，无需平台凭据；
+    - body.provider 留空 → 自动识别平台：先按 URL host 映射（公开托管站 + 自建常见命名，
+      `provider_from_url_host`），识别不了再探测站点特征 API 路径（`detect_provider_by_probe`）；
+      仍失败则 400 请用户手动选平台。显式传入 provider 时以传入值为准（手动兜底路径）。
+    - GitHub/Gitee/Gitea：repo_id = repo_full_name = "owner/name"，纯解析 URL，无需平台凭据；
     - GitLab：repo_id 是数字项目 ID，必须在线调 ``/projects/{path}`` 换回，故用当前已配置的适配器。
-    Gitea 不在 SUPPORTED_PROVIDERS，前端走本地解析，不在此处理。
     """
-    provider = _provider_or_404(body.provider)
+    given = (body.provider or "").strip().lower()
+    if given and given not in _RESOLVABLE_PROVIDERS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"不支持的平台：{given}")
+    provider = given or provider_from_url_host(body.url)
+    if not provider and body.url.strip():
+        provider = await detect_provider_by_probe(body.url)
+    if not provider:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "无法从 URL 识别平台，请手动选择")
 
-    if provider in (GITHUB, GITEE):
+    if provider in (GITHUB, GITEE, GITEA):
         path = repo_path_from_url(body.url, provider)
         if "/" not in path:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "无法解析该项目 URL")
-        return ResolveRepoOut(
-            repo_id=path, repo_full_name=path, web_url=body.url.strip().rstrip("/")
-        )
+        web_url = body.url.strip().rstrip("/")
+        return ResolveRepoOut(provider=provider, repo_id=path, repo_full_name=path, web_url=web_url)
 
     # GITLAB：复用运行中适配器（携带已配置 url+token+http），避免在 api 层新建 client
     registry = getattr(request.app.state, "forge_registry", None)
@@ -227,4 +281,4 @@ async def resolve_repo(
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"解析失败：{exc}") from exc
     if not meta.get("repo_id"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "无法解析该 URL 对应的项目")
-    return ResolveRepoOut(**meta)
+    return ResolveRepoOut(provider=GITLAB, **meta)

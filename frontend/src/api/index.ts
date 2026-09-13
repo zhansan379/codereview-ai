@@ -184,6 +184,7 @@ export function me(): Promise<MeResult> {
 
 // ===== 项目 =====
 export interface ResolvedRepo {
+  provider: string
   repo_id: string
   repo_full_name: string
   web_url: string

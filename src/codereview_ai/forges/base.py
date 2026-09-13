@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from codereview_ai.domain.models import ChangeType, FileDiff, PullRequest, PushEvent
+from codereview_ai.forges.signatures import GITEA, GITEE, GITHUB, GITLAB
 
 #: 触发审查的事件动作白名单（open/update 语义，跨平台归一）。
 REVIEW_ACTIONS = frozenset({"open", "opened", "reopen", "reopened", "update", "synchronize"})
@@ -60,6 +61,46 @@ def new_file_content_from_patch(patch: str, change: ChangeType) -> str:
     if not modelines:
         return ""
     return "\n".join(modelines.get(i, "") for i in range(1, max_line + 1))
+
+
+#: 公开托管站 → 平台（新增项目从 URL 免选平台的识别依据）。
+_PUBLIC_HOST_PROVIDERS: tuple[tuple[str, str], ...] = (
+    ("github.com", GITHUB),
+    ("gitlab.com", GITLAB),
+    ("gitee.com", GITEE),
+)
+
+#: 自建站常见命名子串 → 平台（如 gitlab.corp.com / gitea.example.cn）。
+_HOST_KEYWORD_PROVIDERS: tuple[tuple[str, str], ...] = (
+    (GITHUB, GITHUB),
+    (GITLAB, GITLAB),
+    (GITEA, GITEA),
+    (GITEE, GITEE),
+)
+
+
+def provider_from_url_host(url: str) -> str:
+    """从仓库链接的 host 识别平台，供「新增项目」免手动选平台。
+
+    命中顺序：公开托管站精确后缀（github.com / gitlab.com / gitee.com）→ 自建常见
+    命名子串（host 含 github/gitlab/gitea/gitee）。识别不了返回 ``""``，由调用方
+    再走特征路径探测（`detect_provider_by_probe`）或让用户手动选平台。
+    """
+    try:
+        netloc = urllib.parse.urlparse(url.strip()).netloc
+    except (TypeError, ValueError):
+        return ""
+    # 去掉 user:pass@ 与端口，只留主机名
+    host = netloc.rsplit("@", 1)[-1].rsplit(":", 1)[0].lower().rstrip(".")
+    if not host:
+        return ""
+    for suffix, provider in _PUBLIC_HOST_PROVIDERS:
+        if host == suffix or host.endswith(f".{suffix}"):
+            return provider
+    for keyword, provider in _HOST_KEYWORD_PROVIDERS:
+        if keyword in host:
+            return provider
+    return ""
 
 
 def repo_path_from_url(url: str, provider: str = "") -> str:
