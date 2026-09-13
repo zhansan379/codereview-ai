@@ -236,6 +236,7 @@ function showNotification(notification: NotificationItem) {
     info: 'info',
     warning: 'warning',
     error: 'error',
+    success: 'success',
   }
   const epType = typeMap[notification.level] || 'info'
 

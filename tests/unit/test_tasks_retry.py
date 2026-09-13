@@ -20,7 +20,7 @@ from codereview_ai.api.admin.tasks import (
 )
 from codereview_ai.domain.models import PullRequest
 from codereview_ai.storage.db import create_engine, init_db, session_factory
-from codereview_ai.storage.models import ReviewTask, User
+from codereview_ai.storage.models import ReviewTask, SystemNotification, User
 from codereview_ai.storage.seed import seed_rbac
 
 
@@ -204,22 +204,27 @@ async def test_redeliver_success_initiates(engine):
         assert isinstance(out, TaskRedelivered)
         assert out.status == "redelivering"
         assert row.writeback_failed is True  # 未同步翻转（后台异步完成）
-    # 直接驱动后台协程（等价于端点里的 create_task）：成功 → 翻 False
+    # 直接驱动后台协程（等价于端点里的 create_task）：成功 → 翻 False + 落成功系统消息
     session = session_factory(engine)
     async with session() as s:
         row = (await s.execute(select(ReviewTask)
                                .where(ReviewTask.id == task_id))).scalars().first()
         from codereview_ai.storage.review_repo import ReviewRepository
 
-        await _background_redeliver(row, _FakeForge(), ReviewRepository(engine))  # type: ignore[arg-type]
+        await _background_redeliver(row, _FakeForge(), ReviewRepository(engine), engine)  # type: ignore[arg-type]
     async with session() as s:
         row = (await s.execute(select(ReviewTask)
                                .where(ReviewTask.id == task_id))).scalars().first()
         assert row.writeback_failed is False  # 重发成功 → 归零
+        notes = (await s.execute(select(SystemNotification))).scalars().all()
+        assert [n.type for n in notes] == ["redeliver_done"]
+        assert notes[0].level == "success"
+        assert notes[0].extra_data["task_id"] == task_id
 
 
-async def test_background_redeliver_failure_keeps_flag(engine):
-    """后台重发失败 → 不抛、不翻 writeback_failed（保留标记，前端按钮仍在）。"""
+async def test_background_redeliver_failure_keeps_flag_and_notifies(engine):
+    """后台重发失败 → 不抛、writeback_failed 保留（按钮仍在），且落 redeliver_failed
+    系统消息（带原始报错详情，SSE 实时弹给前端）。"""
     task_id = await _seed_completed_writeback_failed(engine)
 
     class _BoomForge:
@@ -235,6 +240,12 @@ async def test_background_redeliver_failure_keeps_flag(engine):
                                .where(ReviewTask.id == task_id))).scalars().first()
         from codereview_ai.storage.review_repo import ReviewRepository
 
-        await _background_redeliver(row, _BoomForge(), ReviewRepository(engine))  # type: ignore[arg-type]
+        await _background_redeliver(row, _BoomForge(), ReviewRepository(engine), engine)  # type: ignore[arg-type]
         await s.refresh(row)
         assert row.writeback_failed is True  # 失败保留标记
+    async with session() as s:
+        notes = (await s.execute(select(SystemNotification))).scalars().all()
+        assert [n.type for n in notes] == ["redeliver_failed"]
+        assert notes[0].level == "error"
+        assert "boom" in notes[0].message
+        assert notes[0].extra_data["task_id"] == task_id

@@ -18,7 +18,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from starlette import status
 
 from codereview_ai.api.deps import (
@@ -35,8 +35,10 @@ from codereview_ai.domain.models import PullRequest
 from codereview_ai.forges.base import ForgeAdapter, repo_path_from_url
 from codereview_ai.ops.bootstrap import ensure_worker_started
 from codereview_ai.review.result_writer import redeliver, review_fingerprint
+from codereview_ai.storage.db import session_factory
 from codereview_ai.storage.models import ReviewTask, _utcnow
 from codereview_ai.storage.review_repo import ReviewRepository
+from codereview_ai.storage.system_notification_repo import SystemNotificationRepository
 
 logger = logging.getLogger("codereview_ai.api.tasks")
 
@@ -358,15 +360,50 @@ async def batch_stop_tasks(
     return BatchResult(executed=executed, ignored=ignored, denied=denied, results=results)
 
 
+async def _notify_redeliver_result(
+    engine: AsyncEngine, row: ReviewTask, ok: bool, detail: str
+) -> None:
+    """把重发结果落成系统消息（落库即经 SSE 实时弹给前端，刷新后仍可追认）。
+
+    后台任务没有 HTTP 响应可回，成败原本只进服务日志，用户端零感知；这里落
+    system_notification 作为唯一用户感知通道。失败详情带平台原始报错（如 403
+    的 URL），extra_data 带任务 id 供前端定位行。落库/广播失败只记日志，不遮蔽
+    重发本身的成败。
+    """
+    try:
+        async with session_factory(engine)() as session:
+            await SystemNotificationRepository(session).create(
+                type="redeliver_done" if ok else "redeliver_failed",
+                title=f"任务 {row.id} 评论重发{'成功' if ok else '失败'}",
+                message=(
+                    "评论已补齐，任务行的「重新发送」按钮会消失。"
+                    if ok
+                    else f"{detail}\n可检查平台凭据/权限后再次点「重新发送」。"
+                ),
+                level="success" if ok else "error",
+                extra_data={
+                    "task_id": row.id,
+                    "provider": row.provider,
+                    "repo_id": row.repo_id,
+                    "pr_number": row.pr_number,
+                },
+            )
+            await session.commit()
+    except Exception:  # noqa: BLE001
+        logger.warning("重发结果系统消息落库失败（任务 %s）", row.id, exc_info=True)
+
+
 async def _background_redeliver(
     row: ReviewTask,
     forge: ForgeAdapter,
     repo: ReviewRepository,
+    engine: AsyncEngine,
 ) -> None:
     """后台重发已持久化的审查成果；成功归零 writeback_failed，失败保留标记供再点。
 
     整个重发**不做**任何 LLM 调用（用落库的 findings + summary_md），只重取 diff +
     回写；`redeliver` 内部自带指纹幂等 + 网络重试，重复点击不会在平台上双发。
+    成败各落一条系统消息（SSE 实时弹窗）——后台任务无响应体，这是用户唯一感知通道。
     """
     if row.pr_number is None:
         logger.warning("重发任务 %s：无 PR 号（push 轨），跳过重发", row.id)
@@ -384,9 +421,13 @@ async def _background_redeliver(
         )
         await repo.mark_writeback(int(row.id), False)
         logger.info("重发成功：任务 %s 评论已补齐（provider=%s）", row.id, row.provider)
+        await _notify_redeliver_result(engine, row, ok=True, detail="")
     except Exception as exc:  # noqa: BLE001
         # 失败仅记日志并保留 writeback_failed 标记：前端刷新后「重新发送」按钮仍在
         logger.warning("重发失败（任务 %s，provider=%s）：%s", row.id, row.provider, exc)
+        await _notify_redeliver_result(
+            engine, row, ok=False, detail=f"{type(exc).__name__}: {exc}"
+        )
 
 
 @router.post("/{task_id}/redeliver", response_model=TaskRedelivered)
@@ -411,7 +452,8 @@ async def redeliver_task(
     if forge is None:
         raise HTTPException(status.HTTP_409_CONFLICT, f"平台适配器不可用（{row.provider}）")
     # 与 settings.py 同模式：由 app.state.engine 现建仓储（DB 会话按调用自开）
-    repo = ReviewRepository(request.app.state.engine)
-    asyncio.create_task(_background_redeliver(row, forge, repo))
+    engine = request.app.state.engine
+    repo = ReviewRepository(engine)
+    asyncio.create_task(_background_redeliver(row, forge, repo, engine))
     logger.info("已发起重发：任务 %s（provider=%s）", row.id, row.provider)
     return TaskRedelivered(id=row.id, status="redelivering")
