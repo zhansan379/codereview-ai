@@ -331,7 +331,7 @@ function drawWeekday() {
   if (!weekdayRef.value) return
   ensure(weekdayRef.value).setOption({
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, confine: true },
-    grid: { containLabel: true, left: 8, right: 16, top: 16, bottom: 8 },
+    grid: { containLabel: true, left: 8, right: 16, top: 24, bottom: 8 },
     xAxis: {
       type: 'category',
       data: report.value.weekday.map((w) => t(`workrate.wd.${w.day}`)),
@@ -352,7 +352,7 @@ function drawMonthly() {
   if (!monthlyRef.value) return
   ensure(monthlyRef.value).setOption({
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, confine: true },
-    grid: { containLabel: true, left: 8, right: 16, top: 16, bottom: 8 },
+    grid: { containLabel: true, left: 8, right: 16, top: 24, bottom: 8 },
     xAxis: { type: 'category', data: report.value.monthly.map((m) => m.month) },
     yAxis: { type: 'value', minInterval: 1, name: t('workrate.charts.axisCount'), nameGap: 10 },
     series: [

@@ -707,7 +707,6 @@ export function acknowledgeNotification(id: number): Promise<{ acknowledged: num
 export function acknowledgeAllNotifications(): Promise<{ acknowledged: number }> {
   return client.post('/notifications/acknowledge-all').then((r) => r.data)
 }
-
 // ===== 提交分析（工作辛苦度报告 /stats/workrate）=====
 export interface WorkratePart {
   code: string
