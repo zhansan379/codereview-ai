@@ -23,8 +23,15 @@ for pkg in ("litellm", "tiktoken", "apscheduler"):
     binaries += b
     hiddenimports += h
 
-# SQLAlchemy 方言按 URL scheme 动态加载（默认 sqlite+aiosqlite；切 PG 时 postgresql+asyncpg）
+# SQLAlchemy 方言按 URL scheme 动态加载（默认 sqlite+aiosqlite；切 PG 时 postgresql+asyncpg），
+# 方言模块和 DBAPI 驱动（aiosqlite/asyncpg，项目源码零静态 import）都要显式收，
+# 否则启动建引擎时 ModuleNotFoundError（实测踩过：缺 aiosqlite）
 hiddenimports += collect_submodules("sqlalchemy.dialects")
+for pkg in ("aiosqlite", "asyncpg"):
+    d, b, h = collect_all(pkg)
+    datas += d
+    binaries += b
+    hiddenimports += h
 
 # 项目自带数据：review/semgrep_rules/*.yml（wheel 里靠 hatch force-include，这里手动收）
 datas += collect_data_files("codereview_ai")
