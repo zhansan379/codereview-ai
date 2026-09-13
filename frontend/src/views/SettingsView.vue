@@ -3,11 +3,13 @@
     <el-card data-tour="settings-forge">
       <template #header>{{ $t('settings.forgeTitle') }}</template>
       <p class="intro">
-        <i18n-t keypath="settings.forgeIntro" scope="global">
-          <template #githubEnv><code>CR_GITHUB_TOKEN</code></template>
-          <template #gitlabEnv><code>CR_GITLAB_TOKEN</code></template>
-          <template #giteeEnv><code>CR_GITEE_TOKEN</code></template>
-        </i18n-t>
+        {{ $t('settings.forgeIntro') }}
+        <el-tooltip placement="top" :show-after="50">
+          <template #content>
+            {{ $t('settings.forgeTip.token') }}<br/>{{ $t('settings.forgeTip.env') }}
+          </template>
+          <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+        </el-tooltip>
       </p>
 
       <div v-for="prov in providers" :key="prov" class="forge-card">
@@ -15,7 +17,12 @@
         <el-form label-width="auto">
           <el-form-item label="URL">
             <el-input v-model="form[prov].url" :placeholder="defaults[prov]" />
-            <div class="form-tip">{{ $t('settings.urlTip', { url: defaults[prov] }) }}</div>
+            <span class="field-hint">{{ $t('settings.urlHint') }}
+              <el-tooltip placement="top" :show-after="50">
+                <template #content>{{ $t('settings.urlTip', { url: defaults[prov] }) }}</template>
+                <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </span>
           </el-form-item>
           <el-form-item label="Token">
             <el-input
@@ -24,14 +31,20 @@
               show-password
               :placeholder="envActive[prov] ? $t('settings.tokenFromEnv') : $t('settings.tokenPlaceholder')"
             />
-            <div class="form-tip" v-if="envActive[prov]">
-              <i18n-t keypath="settings.envTokenTip" scope="global">
-                <template #env><code>CR_{{ prov.toUpperCase() }}_TOKEN</code></template>
-              </i18n-t>
-            </div>
-            <div class="form-tip" v-else>
-              {{ $t('settings.dbTokenTip') }}
-            </div>
+            <span class="field-hint" v-if="envActive[prov]">{{ $t('settings.tokenEnvHint') }}
+              <el-tooltip placement="top" :show-after="50">
+                <template #content>
+                  {{ $t('settings.envTokenTip', { env: `CR_${prov.toUpperCase()}_TOKEN` }) }}<br/>{{ $t('settings.envTokenFallback') }}
+                </template>
+                <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </span>
+            <span class="field-hint" v-else>{{ $t('settings.tokenDbHint') }}
+              <el-tooltip placement="top" :show-after="50">
+                <template #content>{{ $t('settings.dbTokenTip') }}</template>
+                <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </span>
           </el-form-item>
         </el-form>
         <el-row :gutter="8" class="test-row">
@@ -40,7 +53,13 @@
 
         <div v-if="caps[prov]" class="capability-matrix">
           <div class="capability-title">
-            {{ $t('settings.capabilityTitle') }}<span class="capability-hint">{{ $t('settings.capabilityHint') }}</span>
+            {{ $t('settings.capabilityTitle') }}
+            <el-tooltip placement="top" :show-after="50">
+              <template #content>
+                {{ $t('settings.capabilityTip.what') }}<br/>{{ $t('settings.capabilityTip.missing') }}
+              </template>
+              <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+            </el-tooltip>
           </div>
           <el-alert
             v-if="capSources[prov] === 'env'"
@@ -84,7 +103,14 @@
       <el-form label-width="auto">
         <el-form-item :label="$t('settings.concurrencyLimit')">
           <el-input-number v-model="concurrency" :min="1" :max="32" />
-          <span class="form-tip" style="margin-left: 8px">{{ $t('settings.concurrencyTip') }}</span>
+          <span class="field-hint" style="margin-left: 8px">{{ $t('settings.concurrencyHint') }}
+            <el-tooltip placement="top" :show-after="50">
+              <template #content>
+                {{ $t('settings.concurrencyTip.what') }}<br/>{{ $t('settings.concurrencyTip.more') }}
+              </template>
+              <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+            </el-tooltip>
+          </span>
         </el-form-item>
       </el-form>
       <div class="save-bar">
@@ -97,16 +123,24 @@
     <el-card class="push-card">
       <template #header>{{ $t('settings.autoTitle') }}</template>
       <p class="intro">
-        <i18n-t keypath="settings.autoIntro" scope="global">
-          <template #independent><strong>{{ $t('settings.autoIndependent') }}</strong></template>
-          <template #priority><strong>{{ $t('settings.autoPriority') }}</strong></template>
-        </i18n-t>
+        {{ $t('settings.autoIntro') }}
+        <el-tooltip placement="top" :show-after="50">
+          <template #content>
+            {{ $t('settings.autoTip.independent') }}<br/>{{ $t('settings.autoTip.priority') }}
+          </template>
+          <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+        </el-tooltip>
       </p>
       <el-form label-width="auto">
         <el-form-item :label="$t('settings.pushTrack')">
           <el-switch v-model="pushEnabled" />
-          <span class="form-tip" style="margin-left: 8px">
-            {{ $t('settings.pushTip') }}
+          <span class="field-hint" style="margin-left: 8px">{{ $t('settings.pushHint') }}
+            <el-tooltip placement="top" :show-after="50">
+              <template #content>
+                {{ $t('settings.pushTip.what') }}<br/>{{ $t('settings.pushTip.override') }}
+              </template>
+              <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+            </el-tooltip>
           </span>
         </el-form-item>
         <el-form-item v-if="pushSource === 'env'" :label="$t('settings.pushSourceLabel')">
@@ -119,8 +153,13 @@
         <el-divider class="track-divider" />
         <el-form-item :label="$t('settings.mrTrack')">
           <el-switch v-model="mrEnabled" />
-          <span class="form-tip" style="margin-left: 8px">
-            {{ $t('settings.mrTip') }}
+          <span class="field-hint" style="margin-left: 8px">{{ $t('settings.mrHint') }}
+            <el-tooltip placement="top" :show-after="50">
+              <template #content>
+                {{ $t('settings.mrTip.what') }}<br/>{{ $t('settings.mrTip.override') }}
+              </template>
+              <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+            </el-tooltip>
           </span>
         </el-form-item>
         <el-form-item v-if="mrSource === 'env'" :label="$t('settings.mrSourceLabel')">
@@ -143,13 +182,18 @@
       <el-form label-width="auto">
         <el-form-item :label="$t('settings.includeClosed')">
           <el-switch v-model="pollIncludeClosed" />
-          <span class="form-tip" style="margin-left: 8px">
-            {{ $t('settings.pollScopeTip') }}
+          <span class="field-hint" style="margin-left: 8px">{{ $t('settings.pollScopeHint') }}
+            <el-tooltip placement="top" :show-after="50">
+              <template #content>
+                {{ $t('settings.pollScopeTip.on') }}<br/>{{ $t('settings.pollScopeTip.off') }}
+              </template>
+              <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+            </el-tooltip>
           </span>
         </el-form-item>
         <el-form-item v-if="pollScopeSource === 'env'" :label="$t('settings.pollScopeSourceLabel')">
           <span class="hint">
-            <i18n-t keypath="settings.pollScopeSourceHint" scope="global">
+            <i18n-t keypath="settings.envSourceHint" scope="global">
               <template #env><code>CR_POLL_INCLUDE_CLOSED</code></template>
             </i18n-t>
           </span>
@@ -163,13 +207,40 @@
     <el-card class="note-card">
       <template #header>{{ $t('settings.securityTitle') }}</template>
       <el-descriptions :column="1" border>
-        <el-descriptions-item :label="$t('settings.webhookSecretLabel')">
+        <el-descriptions-item>
+          <template #label>
+            {{ $t('settings.webhookSecretLabel') }}
+            <el-tooltip placement="top" :show-after="50">
+              <template #content>
+                {{ $t('settings.webhookSecretTip.what') }}<br/>{{ $t('settings.webhookSecretTip.why') }}
+              </template>
+              <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+            </el-tooltip>
+          </template>
           {{ $t('settings.webhookSecretText') }}
         </el-descriptions-item>
-        <el-descriptions-item :label="$t('settings.jwtLabel')">
+        <el-descriptions-item>
+          <template #label>
+            {{ $t('settings.jwtLabel') }}
+            <el-tooltip placement="top" :show-after="50">
+              <template #content>
+                {{ $t('settings.jwtTip.what') }}<br/>{{ $t('settings.jwtTip.expire') }}
+              </template>
+              <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+            </el-tooltip>
+          </template>
           {{ $t('settings.jwtText') }}
         </el-descriptions-item>
-        <el-descriptions-item :label="$t('settings.tokenStoreLabel')">
+        <el-descriptions-item>
+          <template #label>
+            {{ $t('settings.tokenStoreLabel') }}
+            <el-tooltip placement="top" :show-after="50">
+              <template #content>
+                {{ $t('settings.tokenStoreTip.what') }}<br/>{{ $t('settings.tokenStoreTip.gone') }}
+              </template>
+              <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+            </el-tooltip>
+          </template>
           {{ $t('settings.tokenStoreText') }}
         </el-descriptions-item>
       </el-descriptions>
@@ -410,6 +481,10 @@ onMounted(() => {
   color: var(--el-text-color-secondary);
   margin-top: 2px;
 }
+.field-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
 .save-bar {
   margin-top: 4px;
 }
@@ -427,10 +502,6 @@ onMounted(() => {
   font-weight: 600;
   color: var(--el-text-color-primary);
   margin-bottom: 6px;
-}
-.capability-hint {
-  font-weight: 400;
-  color: var(--el-text-color-secondary);
 }
 .capability-detail {
   font-size: 12px;

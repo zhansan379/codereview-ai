@@ -1,17 +1,31 @@
-// 设置页:平台接入(GitHub / GitLab / Gitee)、审查并发、自动审查触发、安全说明。
+// 设置页:平台接入(GitHub / GitLab / Gitee)、审查并发、自动审查触发、补拉范围、安全说明。
+// 说明类文案统一走「短提示 + 问号 tooltip」模式：一句话留在页面上，细节与术语解释（Token、
+// 自托管、并发、PR/MR、Webhook、JWT、sessionStorage 等）收进问号 tooltip。
 export default {
   'zh-CN': {
     forgeTitle: '平台接入',
-    forgeIntro:
-      '配置 GitHub / GitLab / Gitee 的 Token 与 URL。保存后立即热更生效（无需重启后端）。若对应环境变量（{githubEnv}/{gitlabEnv}/{giteeEnv}）已设置，则以环境变量为准。',
-    urlTip: '自托管实例请改成你自己的地址；留空则以默认 {url} 为准。',
+    forgeIntro: '填各平台的 Token 和接口地址；保存后立即生效，无需重启后端。',
+    forgeTip: {
+      token: 'Token = 平台发的访问凭证（相当于钥匙），本系统靠它拉代码、回写审查评论。',
+      env: '设置了环境变量（CR_GITHUB_TOKEN / CR_GITLAB_TOKEN / CR_GITEE_TOKEN）时，运行时以环境变量为准。',
+    },
+    urlHint: '官方平台保持默认即可',
+    urlTip:
+      '自托管 = 公司内部自己搭的平台（如内网 GitLab）。这时要改成自己的地址，如 https://gitlab.example.com；留空则用默认 {url}。',
     tokenFromEnv: '环境变量已配置（优先）',
     tokenPlaceholder: '填写平台 Access Token',
-    envTokenTip: '检测到环境变量 {env}，运行时以它为准；此处保存的 Token 作为兜底/备用。',
-    dbTokenTip: '页面保存的 Token 会加密存入服务端数据库，读回显示 ******。',
+    tokenEnvHint: '已由环境变量接管（优先）',
+    envTokenTip: '检测到环境变量 {env}，运行时以它为准。',
+    envTokenFallback: '这里保存的 Token 作兜底：环境变量没了才轮到它。',
+    tokenDbHint: '保存后加密入库，读回只显示 ******',
+    dbTokenTip:
+      'Access Token 在平台的「开发者设置 / 个人令牌」里生成。本页保存的会加密存进服务端数据库，页面不回显明文。',
     testConnection: '测试连接',
     capabilityTitle: '能力矩阵',
-    capabilityHint: '（本 Token 支持系统哪些能力）',
+    capabilityTip: {
+      what: '点「测试连接」后逐项探测：平台连通、拉 PR/MR、发评论、写 commit 状态。',
+      missing: '哪项标了「缺权限」，就说明当前 Token 权限不够干那件事。',
+    },
     capabilityCol: '能力',
     capabilityDetailCol: '说明',
     capOk: '可用',
@@ -24,67 +38,105 @@ export default {
     testFailed: '连接测试失败',
 
     concurrencyTitle: '审查并发',
-    concurrencyIntro: '同时进行的代码审查条数（1–32，默认 4）。保存后立即热更生效，无需重启后端。',
+    concurrencyIntro: '同时进行多少条代码审查（1–32，默认 4），保存后立即生效。',
     concurrencyLimit: '并发上限',
-    concurrencyTip: '数值越大并行审查越多，占用 LLM 并发越高。',
+    concurrencyHint: '调大消化积压更快，但 AI 接口压力也更大',
+    concurrencyTip: {
+      what: '并发 = 同一时刻在跑的审查条数。',
+      more: '调大能更快清完积压，但同一时刻发给 AI 服务的请求也更多，太快可能被限流。',
+    },
     saveConcurrency: '保存并发',
     concurrencyActive: '已生效：当前并发 {n} 条在跑。',
-    runnerIdle: '运行器未启动，配置将落库，待运行器就绪后按此值生效。',
+    runnerIdle: '审查服务还没启动：配置会先保存，等它就绪后按这个值生效。',
     concurrencySaved: '已热更生效：并发 {n}',
     concurrencySavedPending: '已保存，运行器就绪后生效',
 
     autoTitle: '自动审查触发',
-    autoIntro:
-      '有 push / MR 进来时是否自动执行代码审查。保存后即时生效，无需重启后端。push 与 MR {independent}；覆盖优先级：{priority}。',
-    autoIndependent: '各自独立开关',
-    autoPriority: '项目页该轨开关 > 设置页开关 > 环境变量',
-    pushTrack: 'Push 轨',
-    pushTip: 'push 到达即自动审；默认关避免刷屏。项目「Push 审查」可单独覆盖。',
+    autoIntro: '有人 push 代码或新建 PR/MR 时，要不要自动让 AI 审一遍；保存后立即生效，无需重启。',
+    autoTip: {
+      independent: 'Push 和 MR 是两个独立开关，互不影响。',
+      priority: '同一轨谁说了算：项目页该轨开关 > 设置页开关 > 环境变量。',
+    },
+    pushTrack: 'Push 审查',
+    pushHint: 'Push 到达即自动审（默认关，避免刷屏）',
+    pushTip: {
+      what: 'push = 把本地提交上传到平台。',
+      override: '项目页「Push 审查」选「开启/关闭」时以项目的为准；「跟随全局」才看这里。',
+    },
     pushSourceLabel: 'Push 来源',
-    mrTrack: 'MR 轨',
-    mrTip: 'MR 到达即自动审；默认关。项目「MR 审查」可单独覆盖。',
+    mrTrack: 'MR 审查',
+    mrHint: 'PR/MR 到达即自动审（默认关）',
+    mrTip: {
+      what: 'PR/MR = 请求把你的分支合进主分支（GitHub 叫 PR，GitLab 等叫 MR）。',
+      override: '项目页「MR 审查」选「开启/关闭」时以项目的为准；「跟随全局」才看这里。',
+    },
     mrSourceLabel: 'MR 来源',
-    envSourceHint: '未落库，由 {env} 决定；保存后以这里为准。',
-    savePushTrack: '保存 Push 轨',
-    saveMrTrack: '保存 MR 轨',
+    envSourceHint: '还没在页面保存过，当前由环境变量 {env} 决定；点「保存」后以这里为准。',
+    savePushTrack: '保存 Push 开关',
+    saveMrTrack: '保存 MR 开关',
     pushAutoOn: '已开启自动审查（即时生效）',
     pushAutoOff: '已关闭自动审查（即时生效）',
     mrAutoOn: '已开启 MR 自动审查（即时生效）',
     mrAutoOff: '已关闭 MR 自动审查（即时生效）',
 
     pollScopeTitle: '补拉范围',
-    pollScopeIntro: '主动补拉（手动按钮 / 定时轮询）拉取哪些状态的 PR/MR。开启后同时拉取已关闭、已合并的 PR/MR，便于补审历史合入/关掉的改动；关闭则只拉取打开中的。保存后即时生效，无需重启后端。',
+    pollScopeIntro: '点「补拉」或定时轮询时，拉取哪些状态的 PR/MR；保存后立即生效。',
     includeClosed: '包含已关闭/已合并的 PR/MR',
-    pollScopeTip: '默认关：仅拉打开中的；开启后补拉一遍会把历史已关闭的 PR/MR 也扫进来。',
+    pollScopeHint: '开 = 历史已关闭/已合并的也补审',
+    pollScopeTip: {
+      on: '开启后，已关闭、已合并的 PR/MR 也会被拉来建审查任务，适合补审历史合入的改动。',
+      off: '默认（关）只拉打开中的。',
+    },
     pollScopeOn: '已开启补拉已关闭的 PR/MR（即时生效）',
     pollScopeOff: '已关闭补拉已关闭的 PR/MR（即时生效）',
     pollScopeSaved: '补拉范围已保存',
-    pollScopeSourceHint: '未落库，由 {env} 决定；保存后以这里为准。',
     savePollScope: '保存补拉范围',
     pollScopeSourceLabel: '范围来源',
 
     securityTitle: '安全说明',
     webhookSecretLabel: 'Webhook 签名密钥',
-    webhookSecretText: '由后端环境变量配置，出于安全考虑不在管理后台展示明文。',
+    webhookSecretText: '由后端环境变量配置，页面不显示明文。',
+    webhookSecretTip: {
+      what: 'Webhook = 平台有新事件（比如有人 push、新建 PR）时，主动发通知给本系统的机制。',
+      why: '签名密钥用来验证「通知真的来自平台」，防伪造；出于安全只配在后端环境变量里。',
+    },
     jwtLabel: 'JWT 有效期',
-    jwtText: '登录返回的 access_token 有有效期（expires_in 字段），过期后自动跳转登录页。',
-    tokenStoreLabel: 'Token 存储',
-    tokenStoreText: '登录凭证保存在浏览器 sessionStorage 中，关闭页面即失效。',
+    jwtText: '登录凭证有有效期，过期自动跳回登录页。',
+    jwtTip: {
+      what: 'JWT = 登录成功后发给你的一张有时效的通行证（token）。',
+      expire: '过期后需要重新登录，系统会自动跳到登录页。',
+    },
+    tokenStoreLabel: '登录凭证存放',
+    tokenStoreText: '只存在浏览器会话里，关掉页面即失效。',
+    tokenStoreTip: {
+      what: '登录凭证保存在浏览器的 sessionStorage（标签页会话存储）里。',
+      gone: '不落盘、关掉页面就失效；重开或换浏览器需要重新登录。',
+    },
   },
   en: {
     forgeTitle: 'Platform access',
-    forgeIntro:
-      'Configure the token and URL for GitHub / GitLab / Gitee. Changes take effect immediately after saving (no backend restart needed). If the matching environment variable ({githubEnv}/{gitlabEnv}/{giteeEnv}) is set, it takes precedence.',
-    urlTip: 'Point this at your own address for a self-hosted instance; leave it empty to use the default {url}.',
+    forgeIntro: "Enter each platform's token and API URL; saving takes effect immediately, no restart needed.",
+    forgeTip: {
+      token: 'Token = the access credential issued by the platform (like a key); the system uses it to pull code and post review comments.',
+      env: 'If the environment variables (CR_GITHUB_TOKEN / CR_GITLAB_TOKEN / CR_GITEE_TOKEN) are set, they take precedence at runtime.',
+    },
+    urlHint: 'Keep the default for the official platform',
+    urlTip:
+      'Self-hosted = a platform your company runs itself (e.g. an intranet GitLab). Point this at your own address like https://gitlab.example.com; leave empty to use the default {url}.',
     tokenFromEnv: 'Set via environment variable (takes precedence)',
     tokenPlaceholder: 'Enter the platform access token',
-    envTokenTip:
-      'Environment variable {env} detected and used at runtime; the token saved here serves as a fallback.',
+    tokenEnvHint: 'Taken over by an environment variable (takes precedence)',
+    envTokenTip: 'Environment variable {env} detected and used at runtime.',
+    envTokenFallback: 'The token saved here is the fallback: it only applies if the env var is gone.',
+    tokenDbHint: 'Encrypted on save; reads back as ******',
     dbTokenTip:
-      'A token saved here is encrypted in the server database and displayed as ****** when read back.',
+      "Access tokens are generated in the platform's developer settings / personal tokens. What you save here is encrypted into the server database and never echoed in plain text.",
     testConnection: 'Test connection',
     capabilityTitle: 'Capability matrix',
-    capabilityHint: ' (which system capabilities this token supports)',
+    capabilityTip: {
+      what: 'After "Test connection", each item is probed: platform connectivity, pulling PR/MRs, posting comments, writing commit statuses.',
+      missing: 'A row marked "Missing permission" means the current token cannot do that.',
+    },
     capabilityCol: 'Capability',
     capabilityDetailCol: 'Details',
     capOk: 'Available',
@@ -97,59 +149,79 @@ export default {
     testFailed: 'Connection test failed',
 
     concurrencyTitle: 'Review concurrency',
-    concurrencyIntro:
-      'Number of code reviews running at the same time (1–32, default 4). Changes take effect immediately after saving, no backend restart needed.',
+    concurrencyIntro: 'How many reviews run at the same time (1–32, default 4); saving takes effect immediately.',
     concurrencyLimit: 'Concurrency limit',
-    concurrencyTip: 'A higher value runs more reviews in parallel and uses more LLM concurrency.',
+    concurrencyHint: 'Higher clears backlogs faster but pressures the AI API more',
+    concurrencyTip: {
+      what: 'Concurrency = the number of reviews running at the same moment.',
+      more: 'Higher clears backlogs faster, but also sends more simultaneous requests to the AI service — too fast may hit rate limits.',
+    },
     saveConcurrency: 'Save concurrency',
     concurrencyActive: 'Applied: {n} reviews running concurrently.',
-    runnerIdle: 'The runner is not started; the setting is stored and applies once the runner is ready.',
+    runnerIdle: 'The review service is not started yet: the value is saved and applies once it is ready.',
     concurrencySaved: 'Applied immediately: concurrency {n}',
     concurrencySavedPending: 'Saved; applies once the runner is ready',
 
     autoTitle: 'Automatic review triggers',
-    autoIntro:
-      'Whether an incoming push / MR triggers a code review automatically. Changes take effect immediately after saving, no backend restart needed. Push and MR {independent}; override precedence: {priority}.',
-    autoIndependent: 'each have their own switch',
-    autoPriority: 'project track switch > settings switch > environment variable',
-    pushTrack: 'Push track',
-    pushTip:
-      'Reviews every push on arrival; off by default to avoid noise. Can be overridden per project via "Push review".',
+    autoIntro: 'Whether to auto-review when someone pushes code or opens a PR/MR; saving takes effect immediately, no restart.',
+    autoTip: {
+      independent: 'Push and MR have separate switches and do not affect each other.',
+      priority: 'Who wins on a track: the project switch > this page\'s switch > the environment variable.',
+    },
+    pushTrack: 'Push review',
+    pushHint: 'Auto-review on arrival (off by default to avoid noise)',
+    pushTip: {
+      what: 'push = uploading local commits to the platform.',
+      override: 'When the project\'s "Push review" is set to On/Off, the project wins; "Follow global" defers to here.',
+    },
     pushSourceLabel: 'Push source',
-    mrTrack: 'MR track',
-    mrTip:
-      'Reviews every MR on arrival; off by default. Can be overridden per project via "MR review".',
+    mrTrack: 'MR review',
+    mrHint: 'Auto-review when a PR/MR arrives (off by default)',
+    mrTip: {
+      what: 'PR/MR = a request to merge your branch into the main branch (GitHub calls it PR; GitLab and others call it MR).',
+      override: 'When the project\'s "MR review" is set to On/Off, the project wins; "Follow global" defers to here.',
+    },
     mrSourceLabel: 'MR source',
-    envSourceHint: 'Not stored yet, determined by {env}; the value here takes over once saved.',
-    savePushTrack: 'Save push track',
-    saveMrTrack: 'Save MR track',
+    envSourceHint: 'Not saved on this page yet; currently decided by {env}. Once you click "Save", the value here takes over.',
+    savePushTrack: 'Save push switch',
+    saveMrTrack: 'Save MR switch',
     pushAutoOn: 'Automatic review enabled (effective immediately)',
     pushAutoOff: 'Automatic review disabled (effective immediately)',
     mrAutoOn: 'Automatic MR review enabled (effective immediately)',
     mrAutoOff: 'Automatic MR review disabled (effective immediately)',
 
     pollScopeTitle: 'Backfill scope',
-    pollScopeIntro:
-      'Which PR/MR states the active backfill (manual button / scheduled polling) pulls. When enabled, closed and merged PR/MRs are pulled too, so historic changes can be reviewed after merge/close; when disabled, only open ones are pulled. Changes take effect immediately after saving, no backend restart needed.',
+    pollScopeIntro: 'Which PR/MR states the backfill (manual button / scheduled polling) pulls; saving takes effect immediately.',
     includeClosed: 'Include closed/merged PR/MRs',
-    pollScopeTip:
-      'Off by default: only open ones are pulled. Once enabled, a backfill also scans historic closed PR/MRs.',
+    pollScopeHint: 'On = historic closed/merged ones get backfilled too',
+    pollScopeTip: {
+      on: 'When enabled, closed and merged PR/MRs are pulled and queued for review too — good for re-reviewing historic merges.',
+      off: 'Default (off): only open PR/MRs are pulled.',
+    },
     pollScopeOn: 'Backfill of closed PR/MRs enabled (effective immediately)',
     pollScopeOff: 'Backfill of closed PR/MRs disabled (effective immediately)',
     pollScopeSaved: 'Backfill scope saved',
-    pollScopeSourceHint: 'Not stored yet, determined by {env}; the value here takes over once saved.',
     savePollScope: 'Save backfill scope',
     pollScopeSourceLabel: 'Scope source',
 
     securityTitle: 'Security notes',
     webhookSecretLabel: 'Webhook signing secret',
-    webhookSecretText:
-      'Configured through a backend environment variable; for security it is never shown in plain text in the admin console.',
+    webhookSecretText: 'Configured via a backend environment variable; never shown in plain text here.',
+    webhookSecretTip: {
+      what: 'Webhook = the mechanism where the platform proactively notifies this system of new events (e.g. a push or a new PR).',
+      why: 'The signing secret verifies that a notification really comes from the platform, preventing forgery; for security it lives only in a backend env var.',
+    },
     jwtLabel: 'JWT lifetime',
-    jwtText:
-      'The access_token returned at sign-in has a lifetime (the expires_in field); once it expires you are redirected to the sign-in page.',
-    tokenStoreLabel: 'Token storage',
-    tokenStoreText:
-      'Credentials are kept in the browser sessionStorage and are discarded when the page is closed.',
+    jwtText: 'The login credential expires; after expiry you are redirected to the sign-in page.',
+    jwtTip: {
+      what: 'JWT = a time-limited pass (token) issued after a successful sign-in.',
+      expire: 'Once expired you must sign in again; the system redirects automatically.',
+    },
+    tokenStoreLabel: 'Login credential storage',
+    tokenStoreText: 'Kept only in the browser session; closing the page discards it.',
+    tokenStoreTip: {
+      what: "Credentials are kept in the browser's sessionStorage (per-tab session storage).",
+      gone: 'Nothing is written to disk and closing the page discards it; reopening or switching browsers requires signing in again.',
+    },
   },
 }

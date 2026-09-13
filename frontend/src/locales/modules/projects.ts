@@ -1,4 +1,6 @@
 // 项目管理页(ProjectsView)文案:列表、项目表单、项目成员弹窗。
+// 说明类文案统一走「短提示 + 问号 tooltip」模式：字段旁只留一句话，细节收进 tooltip；
+// 自建/首次出现的名词（补拉、PR/MR、diff、agentic、沙箱、glob、Prompt 等）在 tooltip 里用大白话解释。
 export default {
   'zh-CN': {
     createBtn: '新增项目',
@@ -6,7 +8,11 @@ export default {
     pollBtnBusy: '补拉中…',
     pollProgress: '补拉进行中 {done}/{total}（新 {added}，跳过 {skipped}）…',
     pollRunning: '补拉进行中…',
-    pollHint: '正在入队打开 PR/MR 的审查，可切换页面，审查在后台进行',
+    pollHint: '正在把这些 PR/MR 的审查排进队列，可切换页面，后台会自动完成',
+    pollBtnTip: {
+      what: '补拉 = 不等平台发 webhook 通知，主动去仓库把还没审过的 PR/MR 逐个建成审查任务。',
+      skip: '已审过、正在审的自动跳过，只补漏。',
+    },
     columns: {
       repo: '仓库',
       provider: '平台',
@@ -21,8 +27,14 @@ export default {
     form: {
       provider: '平台',
       reviewStrategy: '审查策略',
-      strategyDiff: 'diff（普通 diff 分组审查）',
-      strategyAgentic: 'agentic（沙箱探索式，需额外配置）',
+      strategyDiff: 'diff（只看这次改动）',
+      strategyAgentic: 'agentic（AI 自己翻代码查）',
+      strategyHint: '两种审法的区别',
+      strategyTip: {
+        diff: 'diff = 改动前后的代码对比。AI 只看这次改了哪些行，快、花费少，日常够用。',
+        agentic: 'AI 在沙箱（用完即删的一次性隔离环境）里自己翻仓库、查上下文再下结论，更深但更慢、更贵。',
+        fallback: 'agentic 需要额外配置；没配好或运行失败会自动退回 diff 方式，不会卡住。',
+      },
       repoId: '仓库 ID',
       repoFullName: '仓库全名',
       webUrl: 'Web URL',
@@ -30,22 +42,62 @@ export default {
       resolve: '解析',
       branchRule: '分支规则',
       branchRulePlaceholder: '如 main',
+      branchRuleHint: '预留字段',
+      branchRuleTip: {
+        text: '当前版本填了暂不起作用，仅保存备后续使用。',
+      },
       pushBranchGlobs: 'Push 分支规则',
-      pushBranchGlobsPlaceholder: '如 main,release/*；留空继承全局',
+      pushBranchGlobsPlaceholder: '如 main,release/*',
+      pushGlobsHint: '只审推送到这些分支的提交',
+      pushGlobsTip: {
+        title: '多个分支用英文逗号分隔，支持 * 通配符（代表任意字符）。',
+        example: '例：main,release/* 表示只审 main 和所有 release/ 开头的分支。',
+        empty: '留空 = 本项目不筛分支，跟随全局默认（环境变量 CR_PUSH_BRANCH_GLOBS，也没设就全部分支都审）。',
+      },
       pushReview: 'Push 审查',
       mrReview: 'MR 审查',
       modeOn: '开启',
       modeOff: '关闭',
       modeInherit: '跟随全局',
-      pushHint:
-        '跟随全局 = 交全局默认层裁决：「设置」页「自动审查触发」开关落库值优先，无落库行才回落到环境变量 CR_PUSH_REVIEW_ENABLED。',
-      mrHint:
-        'MR 到达是否自动审；跟随全局 = 交全局默认层裁决：「设置」页「自动审查触发」MR 轨开关落库值优先，无落库行才回落到环境变量 CR_MR_REVIEW_ENABLED。',
+      pushHint: '有人 push 代码后，要不要自动让 AI 审一遍',
+      pushTip: {
+        title: '选「跟随全局」时，按这个顺序取值：',
+        db: '1. 优先用「设置」页「自动审查触发」里保存过的开关；',
+        env: '2. 那里没保存过，才读环境变量 CR_PUSH_REVIEW_ENABLED。',
+      },
+      mrHint: '有人新建 PR/MR 时，要不要自动让 AI 审一遍',
+      mrTip: {
+        prmr: 'PR = GitHub 说的 Pull Request；MR = GitLab/Gitea/Gitee 说的 Merge Request。都是「请求把你的分支合进主分支」。',
+        title: '选「跟随全局」时，按这个顺序取值：',
+        db: '1. 优先用「设置」页「自动审查触发」MR 轨里保存过的开关；',
+        env: '2. 那里没保存过，才读环境变量 CR_MR_REVIEW_ENABLED。',
+      },
       fileExtensions: '文件扩展名',
       fileExtensionsPlaceholder: '输入后回车添加，如 .py',
+      fileExtHint: '只审这些后缀的文件',
+      fileExtTip: {
+        example: '例：填 .py,.ts 就只审 Python、TypeScript 文件，其它文件的改动直接跳过。',
+        empty: '留空 = 不筛选，改了什么就审什么。',
+        both: 'push 和 PR/MR 两条审查通道都受它管。',
+      },
       promptSuffix: 'Prompt 后缀',
+      promptSuffixHint: '每次审查都附加给 AI 的额外要求',
+      promptSuffixTip: {
+        what: 'Prompt = 你发给 AI 的指令。这里写的内容会拼在标准指令末尾，每次审查都带上。',
+        example: '例：「重点关注安全漏洞和并发问题」。',
+      },
       scoreThreshold: '得分阈值',
+      scoreHint: 'AI 给这次改动打分的及格线',
+      scoreTip: {
+        range: '0~100 分，默认 80。',
+        usage: '目前只在打开「阻塞合并」时用来判定：达标发「通过」，不达标发「失败」。',
+      },
       repoEnabled: '仓库启用',
+      repoEnabledHint: '总开关：关掉就暂停自动审查',
+      repoEnabledTip: {
+        off: '关闭后，「补拉」和定时轮询都会跳过该项目，不再新建审查。',
+        note: 'webhook 触发的审查不受它管，由上面 Push / MR 开关控制。',
+      },
       blockMerge: '阻塞合并',
       blockMergeHint: '开：总分低于阈值时对 head commit 发失败状态（阻塞合并）',
       blockMergeTip: {
@@ -60,7 +112,11 @@ export default {
       label: '成员',
       placeholder: '选择可访问该项目的用户',
       userLabel: '{username}（{display}）',
-      tip: '项目级权限经成员关系生效；全项目角色无需在此勾选即可看所有项目。',
+      hint: '谁能看到这个项目',
+      tip: {
+        pick: '只有在这里勾选的用户能看到该项目和它的审查记录。',
+        allProjects: '「全项目」角色例外：角色页勾了「全项目」的角色天然能看所有项目，无需在此勾选。',
+      },
       updated: '成员已更新',
       loadFailed: '加载成员失败',
     },
@@ -80,7 +136,11 @@ export default {
     pollBtnBusy: 'Backfilling…',
     pollProgress: 'Backfill running {done}/{total} (new {added}, skipped {skipped})…',
     pollRunning: 'Backfill running…',
-    pollHint: 'Reviews for open PR/MRs are being queued; you can switch pages, reviews keep running in the background',
+    pollHint: 'Queueing reviews for these PR/MRs; you can switch pages, they finish in the background',
+    pollBtnTip: {
+      what: 'Backfill = without waiting for platform webhooks, actively list not-yet-reviewed PR/MRs and queue a review task for each.',
+      skip: 'Already reviewed / in-flight ones are skipped automatically — it only catches misses.',
+    },
     columns: {
       repo: 'Repository',
       provider: 'Provider',
@@ -95,8 +155,14 @@ export default {
     form: {
       provider: 'Provider',
       reviewStrategy: 'Review strategy',
-      strategyDiff: 'diff (grouped plain diff review)',
-      strategyAgentic: 'agentic (sandboxed exploration, extra config required)',
+      strategyDiff: 'diff (only looks at the change)',
+      strategyAgentic: 'agentic (AI digs through the repo itself)',
+      strategyHint: 'How the two strategies differ',
+      strategyTip: {
+        diff: 'diff = the before/after code comparison. The AI only sees which lines changed; fast and cheap, good enough for daily use.',
+        agentic: 'The AI explores the repo itself in a sandbox (a one-off isolated environment, deleted afterwards) before drawing conclusions; deeper but slower and pricier.',
+        fallback: 'agentic needs extra configuration; if it is not configured or fails, it automatically falls back to the diff mode and never gets stuck.',
+      },
       repoId: 'Repo ID',
       repoFullName: 'Repo full name',
       webUrl: 'Web URL',
@@ -104,22 +170,62 @@ export default {
       resolve: 'Resolve',
       branchRule: 'Branch rule',
       branchRulePlaceholder: 'e.g. main',
+      branchRuleHint: 'Reserved',
+      branchRuleTip: {
+        text: 'Not used by the current version; saved for future use only.',
+      },
       pushBranchGlobs: 'Push branch rule',
-      pushBranchGlobsPlaceholder: 'e.g. main,release/*; leave empty to inherit the global value',
+      pushBranchGlobsPlaceholder: 'e.g. main,release/*',
+      pushGlobsHint: 'Only reviews pushes to these branches',
+      pushGlobsTip: {
+        title: 'Separate multiple branches with commas; the * wildcard (any characters) is supported.',
+        example: 'e.g. main,release/* reviews only main and every branch starting with release/.',
+        empty: 'Empty = no per-project branch filter; follow the global default (env CR_PUSH_BRANCH_GLOBS; if unset, all branches).',
+      },
       pushReview: 'Push review',
       mrReview: 'MR review',
       modeOn: 'On',
       modeOff: 'Off',
       modeInherit: 'Follow global',
-      pushHint:
-        'Follow global = decided by the global default layer: the "Auto review triggers" switch on the Settings page wins once persisted; only without a stored row does it fall back to the CR_PUSH_REVIEW_ENABLED environment variable.',
-      mrHint:
-        'Whether an arriving MR is reviewed automatically; Follow global = decided by the global default layer: the MR track switch under "Auto review triggers" on the Settings page wins once persisted; only without a stored row does it fall back to the CR_MR_REVIEW_ENABLED environment variable.',
+      pushHint: 'Whether to auto-review after someone pushes code',
+      pushTip: {
+        title: 'With "Follow global", the value is resolved in this order:',
+        db: '1. The switch saved under "Auto review triggers" on the Settings page first;',
+        env: '2. only if nothing was saved there, the env var CR_PUSH_REVIEW_ENABLED.',
+      },
+      mrHint: 'Whether to auto-review when a new PR/MR arrives',
+      mrTip: {
+        prmr: 'PR = Pull Request (GitHub); MR = Merge Request (GitLab/Gitea/Gitee). Both mean "a request to merge your branch into the main branch".',
+        title: 'With "Follow global", the value is resolved in this order:',
+        db: '1. The switch saved under the MR track of "Auto review triggers" on the Settings page first;',
+        env: '2. only if nothing was saved there, the env var CR_MR_REVIEW_ENABLED.',
+      },
       fileExtensions: 'File extensions',
       fileExtensionsPlaceholder: 'Type and press Enter to add, e.g. .py',
+      fileExtHint: 'Only reviews files with these extensions',
+      fileExtTip: {
+        example: 'e.g. .py,.ts reviews only Python/TypeScript files; changes to other files are skipped.',
+        empty: 'Empty = no filter; whatever changed gets reviewed.',
+        both: 'Applies to both the push and the PR/MR review tracks.',
+      },
       promptSuffix: 'Prompt suffix',
+      promptSuffixHint: 'Extra requirements appended to the AI on every review',
+      promptSuffixTip: {
+        what: 'Prompt = the instruction you send to the AI. What you write here is appended to the standard instruction on every review.',
+        example: 'e.g. "Focus on security vulnerabilities and concurrency issues".',
+      },
       scoreThreshold: 'Score threshold',
+      scoreHint: 'Passing score the AI gives this change',
+      scoreTip: {
+        range: '0–100, default 80.',
+        usage: 'Currently only used when "Block merge" is on: at/above the line posts "success", below posts "failure".',
+      },
       repoEnabled: 'Repository enabled',
+      repoEnabledHint: 'Master switch: off pauses auto review',
+      repoEnabledTip: {
+        off: 'When off, backfill and scheduled polling skip this project and create no new reviews.',
+        note: 'Webhook-triggered reviews ignore this switch; they follow the Push / MR switches above.',
+      },
       blockMerge: 'Block merge',
       blockMergeHint: 'On: when the total score is below the threshold, send a failure status on the head commit (blocks merging)',
       blockMergeTip: {
@@ -135,7 +241,11 @@ export default {
       label: 'Members',
       placeholder: 'Select the users who can access this project',
       userLabel: '{username} ({display})',
-      tip: 'Project-level permissions take effect through membership; all-project roles see every project without being selected here.',
+      hint: 'Who can see this project',
+      tip: {
+        pick: 'Only users selected here can see this project and its reviews.',
+        allProjects: 'Exception: a role checked as "All projects" on the Roles page sees every project without being selected here.',
+      },
       updated: 'Members updated',
       loadFailed: 'Failed to load members',
     },

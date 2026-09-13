@@ -3,9 +3,14 @@
     <el-card>
       <div class="toolbar" data-tour="projects-toolbar">
         <el-button v-if="auth.hasPerm('projects:manage')" type="primary" @click="openCreate">{{ $t('projects.createBtn') }}</el-button>
-        <el-button v-if="auth.hasPerm('pulls:manage')" :loading="pollBusy" @click="onPoll">
-          {{ pollBusy ? $t('projects.pollBtnBusy') : $t('projects.pollBtn') }}
-        </el-button>
+        <el-tooltip v-if="auth.hasPerm('pulls:manage')" placement="top" :show-after="50">
+          <template #content>
+            {{ $t('projects.pollBtnTip.what') }}<br/>{{ $t('projects.pollBtnTip.skip') }}
+          </template>
+          <el-button :loading="pollBusy" @click="onPoll">
+            {{ pollBusy ? $t('projects.pollBtnBusy') : $t('projects.pollBtn') }}
+          </el-button>
+        </el-tooltip>
       </div>
       <div v-if="pollBusy" class="poll-progress">
         <span class="spinner" /> <template v-if="pollProgress && pollProgress.total > 0">
@@ -64,6 +69,14 @@
                 <el-option :label="$t('projects.form.strategyDiff')" value="diff" />
                 <el-option :label="$t('projects.form.strategyAgentic')" value="agentic" />
               </el-select>
+              <span class="field-hint">{{ $t('projects.form.strategyHint') }}
+                <el-tooltip placement="top" :show-after="50">
+                  <template #content>
+                    {{ $t('projects.form.strategyTip.diff') }}<br/>{{ $t('projects.form.strategyTip.agentic') }}<br/>{{ $t('projects.form.strategyTip.fallback') }}
+                  </template>
+                  <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </span>
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -91,6 +104,12 @@
           <el-col :span="12">
             <el-form-item :label="$t('projects.form.branchRule')">
               <el-input v-model="form.branch_rule" :placeholder="$t('projects.form.branchRulePlaceholder')" />
+              <span class="field-hint">{{ $t('projects.form.branchRuleHint') }}
+                <el-tooltip placement="top" :show-after="50">
+                  <template #content>{{ $t('projects.form.branchRuleTip.text') }}</template>
+                  <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </span>
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -99,6 +118,14 @@
                 v-model="form.push_branch_globs"
                 :placeholder="$t('projects.form.pushBranchGlobsPlaceholder')"
               />
+              <span class="field-hint">{{ $t('projects.form.pushGlobsHint') }}
+                <el-tooltip placement="top" :show-after="50">
+                  <template #content>
+                    {{ $t('projects.form.pushGlobsTip.title') }}<br/>{{ $t('projects.form.pushGlobsTip.example') }}<br/>{{ $t('projects.form.pushGlobsTip.empty') }}
+                  </template>
+                  <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </span>
             </el-form-item>
           </el-col>
           <el-col :span="24">
@@ -108,7 +135,14 @@
                 <el-radio label="off">{{ $t('projects.form.modeOff') }}</el-radio>
                 <el-radio label="inherit">{{ $t('projects.form.modeInherit') }}</el-radio>
               </el-radio-group>
-              <div class="field-hint">{{ $t('projects.form.pushHint') }}</div>
+              <span class="field-hint" style="margin-left: 8px">{{ $t('projects.form.pushHint') }}
+                <el-tooltip placement="top" :show-after="50">
+                  <template #content>
+                    {{ $t('projects.form.pushTip.title') }}<br/>{{ $t('projects.form.pushTip.db') }}<br/>{{ $t('projects.form.pushTip.env') }}
+                  </template>
+                  <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </span>
             </el-form-item>
           </el-col>
           <el-col :span="24">
@@ -118,7 +152,14 @@
                 <el-radio label="off">{{ $t('projects.form.modeOff') }}</el-radio>
                 <el-radio label="inherit">{{ $t('projects.form.modeInherit') }}</el-radio>
               </el-radio-group>
-              <div class="field-hint">{{ $t('projects.form.mrHint') }}</div>
+              <span class="field-hint" style="margin-left: 8px">{{ $t('projects.form.mrHint') }}
+                <el-tooltip placement="top" :show-after="50">
+                  <template #content>
+                    {{ $t('projects.form.mrTip.prmr') }}<br/>{{ $t('projects.form.mrTip.title') }}<br/>{{ $t('projects.form.mrTip.db') }}<br/>{{ $t('projects.form.mrTip.env') }}
+                  </template>
+                  <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </span>
             </el-form-item>
           </el-col>
           <el-col :span="24">
@@ -132,21 +173,53 @@
                 :placeholder="$t('projects.form.fileExtensionsPlaceholder')"
                 style="width: 100%"
               />
+              <span class="field-hint">{{ $t('projects.form.fileExtHint') }}
+                <el-tooltip placement="top" :show-after="50">
+                  <template #content>
+                    {{ $t('projects.form.fileExtTip.example') }}<br/>{{ $t('projects.form.fileExtTip.empty') }}<br/>{{ $t('projects.form.fileExtTip.both') }}
+                  </template>
+                  <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </span>
             </el-form-item>
           </el-col>
           <el-col :span="24">
             <el-form-item :label="$t('projects.form.promptSuffix')">
               <el-input v-model="form.prompt_suffix" type="textarea" :rows="2" />
+              <span class="field-hint">{{ $t('projects.form.promptSuffixHint') }}
+                <el-tooltip placement="top" :show-after="50">
+                  <template #content>
+                    {{ $t('projects.form.promptSuffixTip.what') }}<br/>{{ $t('projects.form.promptSuffixTip.example') }}
+                  </template>
+                  <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </span>
             </el-form-item>
           </el-col>
           <el-col :span="12">
             <el-form-item :label="$t('projects.form.scoreThreshold')">
               <el-input-number v-model="form.score_threshold" :min="0" :max="100" />
+              <span class="field-hint">{{ $t('projects.form.scoreHint') }}
+                <el-tooltip placement="top" :show-after="50">
+                  <template #content>
+                    {{ $t('projects.form.scoreTip.range') }}<br/>{{ $t('projects.form.scoreTip.usage') }}
+                  </template>
+                  <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </span>
             </el-form-item>
           </el-col>
           <el-col :span="12">
             <el-form-item :label="$t('projects.form.repoEnabled')">
               <el-switch v-model="form.enabled" />
+              <span class="field-hint" style="margin-left: 8px">{{ $t('projects.form.repoEnabledHint') }}
+                <el-tooltip placement="top" :show-after="50">
+                  <template #content>
+                    {{ $t('projects.form.repoEnabledTip.off') }}<br/>{{ $t('projects.form.repoEnabledTip.note') }}
+                  </template>
+                  <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </span>
             </el-form-item>
           </el-col>
           <el-col :span="24">
@@ -189,7 +262,14 @@
               :value="u.id"
             />
           </el-select>
-          <div class="form-tip">{{ $t('projects.members.tip') }}</div>
+          <span class="field-hint">{{ $t('projects.members.hint') }}
+            <el-tooltip placement="top" :show-after="50">
+              <template #content>
+                {{ $t('projects.members.tip.pick') }}<br/>{{ $t('projects.members.tip.allProjects') }}
+              </template>
+              <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+            </el-tooltip>
+          </span>
         </el-form-item>
       </el-form>
       <template #footer>
