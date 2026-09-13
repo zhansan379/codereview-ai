@@ -18,6 +18,10 @@
           <el-icon><DataAnalysis /></el-icon>
           <span>{{ $t('menu.workrate') }}</span>
         </el-menu-item>
+        <el-menu-item v-if="auth.hasPerm('stats:view')" index="/members">
+          <el-icon><User /></el-icon>
+          <span>{{ $t('menu.members') }}</span>
+        </el-menu-item>
         <el-menu-item v-if="auth.hasPerm('reviews:view')" index="/reviews">
           <el-icon><Document /></el-icon>
           <span>{{ $t('menu.reviews') }}</span>

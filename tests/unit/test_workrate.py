@@ -270,3 +270,101 @@ def test_workrate_requires_auth(app):
     fast, _token = app
     assert TestClient(fast).get("/api/stats/workrate/report").status_code == 401
     assert TestClient(fast).get("/api/stats/workrate/options").status_code == 401
+
+
+# ── 成员分析（/stats/workrate/members）───────────────────────────────────────
+
+
+def test_workrate_members_aggregates(app):
+    """成员聚合（任务级口径：push 一条=一次）：窗口/项目数/日均/趋势/空评分退化。"""
+    fast, token = app
+    with _client(fast, token) as c:
+        r = c.get("/api/stats/workrate/members",
+                  params={"tz": TZ_CN, "date_from": "2026-09-06", "date_to": "2026-09-12"})
+        assert r.status_code == 200
+        d = r.json()
+        # 6 条有主任务（空 pr_author 的 mr 不计入；push 行算 pusher 一条）
+        assert d["scope"]["commits"] == 6
+        assert d["scope"]["members"] == 3
+        # 排序按提交次数降序
+        assert [m["name"] for m in d["members"]] == ["alice", "bob", "carol"]
+
+        by = {m["name"]: m for m in d["members"]}
+        alice = by["alice"]
+        assert alice["commits"] == 3
+        assert alice["projects"] == 2  # repo1 + repo2
+        assert alice["daily_avg"] == 1.0  # 3 次 / 3 个活跃天（09-07/08/09）
+        assert alice["trend"] == {"2026-09-07": 1, "2026-09-08": 1, "2026-09-09": 1}
+        # 夹具任务都未真正审过（无 exec_mode）→ 评分/增删退化
+        assert alice["avg_score"] is None
+        assert alice["additions"] is None
+        assert alice["changed_lines"] == 0
+
+        bob = by["bob"]
+        assert bob["commits"] == 2  # mr 一条 + push 行一条（pusher 口径）
+        assert bob["projects"] == 1
+        assert bob["trend"] == {"2026-09-08": 1, "2026-09-12": 1}
+
+        assert by["carol"]["commits"] == 1
+        assert by["carol"]["trend"] == {"2026-09-10": 1}
+
+
+def test_workrate_members_scoring_and_diff(tmp_path):
+    """评分只计 completed+exec_mode 任务；增删行取 diff_additions/deletions 新列。"""
+
+    async def seed(s):
+        from datetime import datetime as dt
+        s.add_all([
+            Project(provider="gitea", repo_id="org/repo1", repo_full_name="org/repo1"),
+            # alice：一条已审（score 85，+120/-30）+ 一条未审（score 0 不计）
+            ReviewTask(provider="gitea", repo_id="org/repo1", project_id=1, pr_number=1,
+                       event_type="mr", head_sha="m1", state="completed", exec_mode="diff",
+                       pr_author="alice", score_total=85,
+                       diff_additions=120, diff_deletions=30, diff_lines=150,
+                       pr_created_at=dt(2026, 9, 8, 2, 0), queued_at=dt(2026, 9, 8, 3, 0)),
+            ReviewTask(provider="gitea", repo_id="org/repo1", project_id=1, pr_number=2,
+                       event_type="mr", head_sha="m2", state="queued",
+                       pr_author="alice", score_total=0,
+                       pr_created_at=dt(2026, 9, 9, 2, 0), queued_at=dt(2026, 9, 9, 3, 0)),
+            # bob：一条已审 0 分（边界：真实审过但 0 分也要计入均分）
+            ReviewTask(provider="gitea", repo_id="org/repo1", project_id=1, pr_number=3,
+                       event_type="mr", head_sha="m3", state="completed", exec_mode="diff",
+                       pr_author="bob", score_total=0,
+                       diff_additions=10, diff_deletions=5, diff_lines=15,
+                       pr_created_at=dt(2026, 9, 9, 4, 0), queued_at=dt(2026, 9, 9, 5, 0)),
+        ])
+
+    fast, token, _admin, engine = await_make_admin_app(tmp_path, seed=seed)
+    try:
+        with TestClient(fast, headers={"Authorization": f"Bearer {token}"}) as c:
+            r = c.get("/api/stats/workrate/members",
+                      params={"tz": TZ_CN, "date_from": "2026-09-08", "date_to": "2026-09-09"})
+            assert r.status_code == 200
+            d = r.json()
+            assert d["scope"]["commits"] == 3
+            by = {m["name"]: m for m in d["members"]}
+            alice = by["alice"]
+            assert alice["commits"] == 2
+            # 未审任务不计分：只有一条 85 → 均分 85.0、scored=1
+            assert alice["avg_score"] == 85.0
+            assert alice["scored"] == 1
+            assert alice["additions"] == 120
+            assert alice["deletions"] == 30
+            assert alice["changed_lines"] == 150
+            bob = by["bob"]
+            assert bob["avg_score"] == 0.0
+            assert bob["additions"] == 10 and bob["deletions"] == 5
+    finally:
+        import asyncio
+
+        asyncio.run(engine.dispose())
+
+
+def await_make_admin_app(tmp_path, *, seed):
+    """make_admin_app 的同步包装（TestClient 用例里跑异步夹具）。"""
+    import asyncio
+
+    from tests.unit.helpers import make_admin_app
+
+    return asyncio.run(make_admin_app(tmp_path, db_name="members.db",
+                                      routers=[workrate.router], seed=seed))

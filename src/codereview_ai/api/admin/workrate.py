@@ -21,7 +21,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from codereview_ai.api.deps import (
@@ -473,11 +473,10 @@ async def _load_events(
     if project_id:
         wheres.append(ReviewTask.project_id == project_id)
     if days:
-        # 窗口近似按入队时间过滤（真实时间的行只可能更早，宁可多装不漏装；
-        # 事件级精确窗口在聚合侧无 SQL 可下钻，days=0（全部时间）不受影响）
-        wheres.append(
-            ReviewTask.queued_at >= datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days)
-        )
+        # 窗口近似按入队时间过滤（真实时间的行只可能更早，宁可多装不漏装）；
+        # 绑定须方言安全：PG 显式 UTC（naive 会被 asyncpg 按客户端时区编码，见 _bind_instant）
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days)
+        wheres.append(ReviewTask.queued_at >= _bind_instant(session, cutoff))
     rows = (await session.execute(
         select(
             ReviewTask.event_type, ReviewTask.project_id, ReviewTask.pr_author,
@@ -614,3 +613,137 @@ async def get_workrate_report(
         "to": body.pop("to", ""),
     }
     return WorkrateReport(**body)
+
+
+# ── 成员分析（/stats/workrate/members）：按成员聚合的任务级统计 ───────────────
+
+
+class MembersReport(BaseModel):
+    scope: dict[str, Any]
+    members: list[dict[str, Any]]
+
+
+def _parse_day(s: str, fallback: datetime) -> datetime:
+    """`YYYY-MM-DD` → naive UTC 日界；解析失败回落默认值。"""
+    try:
+        return datetime.strptime(s, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _bind_instant(session: AsyncSession, naive_utc: datetime) -> datetime:
+    """把 naive-UTC 时间点转成方言安全的绑定值。
+
+    PG（asyncpg）对 naive 的 timestamptz 参数按**客户端本地时区**编码——东八区机器上
+    窗口会整体左移 8 小时；必须显式挂 UTC tzinfo。SQLite 列本身就是 naive，原样绑定。
+    """
+    bind = session.bind
+    if bind is not None and bind.dialect.name == "postgresql":
+        return naive_utc.replace(tzinfo=UTC)
+    return naive_utc
+
+
+@router.get("/members", response_model=MembersReport)
+async def get_workrate_members(
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_db),
+    date_from: str = Query("", max_length=10),
+    date_to: str = Query("", max_length=10),
+    tz: int = 0,
+) -> MembersReport:
+    """成员分析：日期范围内按成员聚合 项目数/提交次数/日均/逐日趋势/平均评分/代码增删。
+
+    时间口径与 report 一致：任务级取 `COALESCE(pr_created_at, queued_at)`（SQL 级；
+    payload 兜底仅影响极少数存量行，回填脚本已补列）。评分只计真正审过的任务
+    （completed 且 exec_mode 非空）；增删行合计来自 diff_additions/deletions 列，
+    全员都无该数据时 additions/deletions 为 None（前端显示 —）。
+    """
+    is_global, ids = await _scope_of(session, user)
+    shift = _local_shift(_norm_tz(tz))
+    today = datetime.now(UTC).replace(tzinfo=None) + shift
+    to_local_end = _parse_day(date_to, today) + timedelta(days=1)  # to 当天含尾（本地）
+    from_local = _parse_day(date_from, to_local_end - timedelta(days=30))
+    # 本地日界转回 UTC naive 作 SQL 窗口（列存 naive UTC）
+    win_from = from_local - shift
+    win_to = to_local_end - shift
+
+    wheres: list[Any] = []
+    scope = review_scope_clause(is_global, ids)
+    if scope is not None:
+        wheres.append(scope)
+    wheres.append(
+        func.coalesce(ReviewTask.pr_created_at, ReviewTask.queued_at)
+        >= _bind_instant(session, win_from)
+    )
+    wheres.append(
+        func.coalesce(ReviewTask.pr_created_at, ReviewTask.queued_at)
+        < _bind_instant(session, win_to)
+    )
+
+    rows = (await session.execute(
+        select(
+            ReviewTask.event_type, ReviewTask.pr_author, ReviewTask.payload,
+            ReviewTask.project_id, ReviewTask.provider, ReviewTask.repo_id,
+            ReviewTask.queued_at, ReviewTask.pr_created_at,
+            ReviewTask.state, ReviewTask.exec_mode, ReviewTask.score_total,
+            ReviewTask.diff_additions, ReviewTask.diff_deletions, ReviewTask.diff_lines,
+        ).where(*wheres)
+    )).all()
+
+    proj_rows = (await session.execute(select(Project))).scalars().all()
+    label_by_key = {f"{p.provider}:{p.repo_id}": (p.repo_full_name or p.repo_id)
+                    for p in proj_rows}
+
+    # 任务级聚合：mr 用 pr_author，push 用 payload pusher（两者同一天然人口径）
+    members: dict[str, dict[str, Any]] = {}
+    for (event_type, pr_author, payload, _project_id, provider, repo_id,
+         queued_at, pr_created, state, exec_mode, score_total,
+         additions, deletions, diff_lines) in rows:
+        if event_type == "push":
+            who = _push_pusher(_payload_dict(payload))
+        else:
+            who = pr_author or ""
+        if not who:
+            continue
+        eff = pr_created if pr_created is not None else queued_at
+        local_day = (_as_utc_naive(eff) + shift).date().isoformat() if eff else ""
+        m = members.setdefault(who, {
+            "name": who, "repos": set(), "commits": 0, "days": set(),
+            "trend": Counter(), "scores": [], "additions": 0, "deletions": 0,
+            "has_diff": False, "changed_lines": 0,
+        })
+        m["commits"] += 1
+        m["repos"].add(label_by_key.get(f"{provider}:{repo_id}", repo_id))
+        if local_day:
+            m["days"].add(local_day)
+            m["trend"][local_day] += 1
+        if state == "completed" and exec_mode is not None:
+            m["scores"].append(int(score_total or 0))
+        if additions is not None and deletions is not None:
+            m["additions"] += int(additions)
+            m["deletions"] += int(deletions)
+            m["has_diff"] = True
+        m["changed_lines"] += int(diff_lines or 0)
+
+    out = []
+    for m in sorted(members.values(), key=lambda x: -x["commits"]):
+        out.append({
+            "name": m["name"],
+            "projects": len(m["repos"]),
+            "commits": m["commits"],
+            "daily_avg": round(m["commits"] / len(m["days"]), 1) if m["days"] else 0.0,
+            "trend": dict(sorted(m["trend"].items())),
+            "avg_score": round(sum(m["scores"]) / len(m["scores"]), 1) if m["scores"] else None,
+            "scored": len(m["scores"]),
+            # 新任务有精确增删；存量行只有合计（前端退化显示「变更 N 行」）
+            "additions": m["additions"] if m["has_diff"] else None,
+            "deletions": m["deletions"] if m["has_diff"] else None,
+            "changed_lines": m["changed_lines"],
+        })
+
+    return MembersReport(scope={
+        "from": from_local.date().isoformat(),
+        "to": (to_local_end - timedelta(days=1)).date().isoformat(),
+        "commits": sum(m["commits"] for m in out),
+        "members": len(out),
+    }, members=out)

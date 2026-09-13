@@ -126,6 +126,9 @@ class ReviewTask(Base):
     # NULL = 未真正执行审查（skipped/failed/queued/empty 空审不填），统计与展示时排除。
     exec_mode: Mapped[str | None] = mapped_column(String(16), nullable=True, default=None)
     diff_lines: Mapped[int] = mapped_column(Integer, default=0)  # 新增+删除行合计
+    # 增/删行分开记（成员分析「+N / -M」展示用）；存量行为 NULL，由回填脚本从 diff_snapshot 补
+    diff_additions: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    diff_deletions: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     chat_rounds: Mapped[int] = mapped_column(Integer, default=0)  # LLM 调用/对话轮数
     tool_calls: Mapped[int] = mapped_column(Integer, default=0)  # 工具调用累计
     # 原始 webhook body；重试时据此回放重新入队

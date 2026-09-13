@@ -30,6 +30,12 @@ const router = createRouter({
           meta: { titleKey: 'menu.workrate' },
         },
         {
+          path: '/members',
+          name: 'Members',
+          component: () => import('../views/MembersView.vue'),
+          meta: { titleKey: 'menu.members' },
+        },
+        {
           path: '/reviews',
           name: 'Reviews',
           component: () => import('../views/ReviewTabsView.vue'),

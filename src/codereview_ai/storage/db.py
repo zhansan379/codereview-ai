@@ -201,6 +201,8 @@ async def init_db(engine: AsyncEngine) -> None:
 #: 存量库升级依赖此处幂等补齐；DDL 片段仅 SQLite 用（PG 按列名 IF NOT EXISTS 补）。
 _COLUMN_FALLBACKS: tuple[tuple[str, str, str], ...] = (
     ("review_task", "pr_created_at", "DATETIME"),
+    ("review_task", "diff_additions", "INTEGER"),
+    ("review_task", "diff_deletions", "INTEGER"),
 )
 
 

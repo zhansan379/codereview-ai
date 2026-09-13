@@ -148,12 +148,20 @@ def _count_diff_lines(diffs: list[FileDiff]) -> int:
 
     只数以 `+`/`-` 开头的变更行；跳过 `+++`/`---` 的 hunk 头文件标记（非实际改动）。
     """
-    total = 0
+    additions, deletions = _count_diff_additions_deletions(diffs)
+    return additions + deletions
+
+
+def _count_diff_additions_deletions(diffs: list[FileDiff]) -> tuple[int, int]:
+    """diff 增/删行分开数（成员分析「+N / -M」口径）；与 _count_diff_lines 同一跳过规则。"""
+    additions = deletions = 0
     for d in diffs:
         for line in d.diff.splitlines():
-            if line.startswith(("+", "-")) and not line.startswith(("+++", "---")):
-                total += 1
-    return total
+            if line.startswith("+") and not line.startswith("+++"):
+                additions += 1
+            elif line.startswith("-") and not line.startswith("---"):
+                deletions += 1
+    return additions, deletions
 
 
 def _exec_metrics(recorder: ConversationRecorder | None) -> tuple[int, int]:
@@ -614,9 +622,11 @@ async def _do_review_pull_request(
             # 执行态四列快照（exec_mode=实际路径；chat/tool 轮数取对话采集累计）。
             # 放在成果落库处：即使后续回写失败，执行态也已记下，不随回写重算。
             chat_rounds, tool_calls = _exec_metrics(recorder)
+            _adds, _dels = _count_diff_additions_deletions(diffs)
             await review_repo.set_exec_metrics(
                 task_id, exec_mode=exec_mode,
-                diff_lines=_count_diff_lines(diffs), chat_rounds=chat_rounds, tool_calls=tool_calls,
+                diff_lines=_adds + _dels, chat_rounds=chat_rounds, tool_calls=tool_calls,
+                diff_additions=_adds, diff_deletions=_dels,
             )
 
         # ── 回写 forge：失败不重算，落 writeback_failed 供前端重发 ───────────
@@ -908,9 +918,11 @@ async def _review_push_event(
         if review_repo is not None:
             await review_repo.insert_findings(audit_id, result.findings)
             # push 轨当前不采集对话，chat/tool 轮数记 0；exec_mode/diff_lines 照实落库
+            _adds, _dels = _count_diff_additions_deletions(diffs)
             await review_repo.set_exec_metrics(
                 audit_id, exec_mode=exec_mode,
-                diff_lines=_count_diff_lines(diffs), chat_rounds=0, tool_calls=0,
+                diff_lines=_adds + _dels, chat_rounds=0, tool_calls=0,
+                diff_additions=_adds, diff_deletions=_dels,
             )
             await review_repo.mark_state(
                 audit_id, state="completed", summary_md=result.summary,

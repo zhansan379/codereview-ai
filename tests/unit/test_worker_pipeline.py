@@ -146,6 +146,7 @@ class _RecordingReviewRepo:
         self.states: list[str] = []
         self.exec_modes: list[str] = []
         self.metrics: list[tuple[int, int, int]] = []
+        self.diff_splits: list[tuple[int | None, int | None]] = []
 
     async def last_ok_review(self, *a, **k):
         return None
@@ -165,9 +166,11 @@ class _RecordingReviewRepo:
     async def set_coverage(self, *a, **k):
         pass  # 覆盖集写入（diff_snapshot，未变更文件复用用）—— 桩不落 DB
 
-    async def set_exec_metrics(self, task_id, *, exec_mode, diff_lines, chat_rounds, tool_calls):
+    async def set_exec_metrics(self, task_id, *, exec_mode, diff_lines, chat_rounds, tool_calls,
+                               diff_additions=None, diff_deletions=None):
         self.exec_modes.append(exec_mode)
         self.metrics.append((diff_lines, chat_rounds, tool_calls))
+        self.diff_splits.append((diff_additions, diff_deletions))
 
     async def last_covered(self, *a, **k):
         return None
