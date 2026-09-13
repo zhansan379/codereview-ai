@@ -31,6 +31,9 @@ dev = [
     "pytest-cov>=7.1.0",
     "pip-audit>=2.10.1",
 ]
+desktop = [
+    "pyinstaller>=6.10",  # 桌面单机版打包（desktop.spec），构建见 scripts/build_exe.py
+]
 
 [tool.uv]
 package = true

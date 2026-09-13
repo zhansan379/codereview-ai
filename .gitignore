@@ -31,6 +31,10 @@ data/
 htmlcov/
 coverage.xml
 
+# PyInstaller artifacts（desktop.spec 产物，桌面单机版）
+build/
+dist/
+
 aacr-bench/
 .claude/
 .agents/
