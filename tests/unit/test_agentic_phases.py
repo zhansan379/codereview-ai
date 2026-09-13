@@ -232,8 +232,26 @@ async def test_scoring_failure_returns_zero():
         async def summarize(self, _f, _c):
             return "s"
 
-    scores = await run_scoring(_ScoringLLM(), [{"role": "u", "content": ""}])
+    scores, summary = await run_scoring(_ScoringLLM(), [{"role": "u", "content": ""}])
     assert scores.total == 0  # 解析失败归 0，不抛异常
+    assert summary == ""  # 总结同样拿不到，调用方用固定文案兜底
+
+
+async def test_scoring_extracts_plain_language_summary():
+    """scoring JSON 带 summary → 一并返回；模型裹 markdown fence 也能提取。"""
+    class _ScoringLLM:
+        async def chat(self, _m, _t):  # noqa: ANN001
+            return AgentTurn(content='```json\n{"correctness": 30, "security": 20,'
+                             ' "practices": 15, "performance": 4, "commit_quality": 3,'
+                             ' "summary": "这次改了锁逻辑，最大风险在恢复路径，'
+                             '建议先修再合入。"}\n```')
+
+        async def summarize(self, _f, _c):
+            return "s"
+
+    scores, summary = await run_scoring(_ScoringLLM(), [{"role": "u", "content": ""}])
+    assert scores.total == 72
+    assert summary.startswith("这次改了锁逻辑")
 
 
 # ── 集成：全阶段机 ─────────────────────────────────────────────────────

@@ -45,6 +45,7 @@ from codereview_ai.review.increments import (
     decide_from_ref,
     dedup_findings,
 )
+from codereview_ai.review.report_render import render_findings_section, render_summary_block
 from codereview_ai.review.result_writer import ResultWriter, review_fingerprint
 from codereview_ai.review.reuse import covered_file_map, prune_unchanged
 from codereview_ai.review.reviewer import Reviewer
@@ -240,12 +241,8 @@ def _push_as_pr(ev: PushEvent) -> PullRequest:
     )
 
 
-#: severity → 展示符号（push 总结 Markdown 用）。
-_SEVERITY_ICON = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
-
-
 def build_push_summary(ev: PushEvent, result: ReviewResult) -> str:
-    """push 轨总结评论：只产一条（无行级，§7.7）。"""
+    """push 轨总结评论：只产一条（无行级，§7.7）；清单与 PR 轨同一套分点渲染。"""
     scores = result.scores
     lines = [
         f"🤖 AI 代码审查 · {ev.repo_full_name}@{ev.branch}",
@@ -260,17 +257,16 @@ def build_push_summary(ev: PushEvent, result: ReviewResult) -> str:
         f"| 性能 | {scores.performance}/5 |",
         f"| 提交质量 | {scores.commit_quality}/5 |",
         "",
-        result.summary,
     ]
-    if result.findings:
-        lines += ["", "---", "**发现的问题：**", ""]
-        for f in result.findings:
-            icon = _SEVERITY_ICON.get(str(f.severity), "⚪")
-            lines.append(f"- {icon} **[{str(f.category)}]** {f.file}：{f.content}")
+    summary_block = render_summary_block(result.summary)
+    if summary_block:
+        lines += [summary_block, ""]
+    findings_md = render_findings_section(result.findings, with_code=True)
+    if findings_md:
+        lines += [findings_md, ""]
     if result.skipped_files:
-        skip = [f"- {p}" for p in result.skipped_files]
-        lines += ["", "---", "**被过滤、未审查的文件：**", *skip]
-    return "\n".join(lines)
+        lines += ["---", "**被过滤、未审查的文件：**", *[f"- {p}" for p in result.skipped_files]]
+    return "\n".join(lines).rstrip()
 
 
 def _is_all_zero(sha: str) -> bool:

@@ -146,9 +146,13 @@ def build_messages(
 {static_block}### 风格
 措辞采用 {cfg.style} 风格，但 severity 判定不受风格影响。
 
+### 摘要写法（summary）
+`summary` 用通俗大白话写 2–4 句：这次改动主要做了什么、最大的风险在哪、是否建议先修再合入。
+不要在 summary 里罗列问题清单（findings 会由系统单独分点展示）；不要用①②③编号长段落，不要贴代码。
+
 ### 输出
 严格按以下 JSON schema 输出，不要输出 schema 之外的任何文字：
-{{"summary": "...", "scores": {{"correctness": 0, "security": 0, "practices": 0, "performance": 0, "commit_quality": 0}},
+{{"summary": "通俗大白话2-4句：改了什么/最大风险/合入建议", "scores": {{"correctness": 0, "security": 0, "practices": 0, "performance": 0, "commit_quality": 0}},
 "findings": [{{"title":"≤30字简短标题，概述本问题(中文、不含代码、不含换行)","content":"...","category":"bug|security|performance|maintainability|test|style|documentation|other",
 "severity":"critical|high|medium|low","file":"相对仓库根的路径","existing_code":"原样粘贴的代码片段或 null",
 "suggestion_code":"替换代码或 null","thinking":"内部推理或 null"}}],

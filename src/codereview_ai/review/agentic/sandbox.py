@@ -313,16 +313,20 @@ async def run_agentic_review(
 
         await asyncio.gather(*(_merge(c) for c in group_results))
 
-        # E. 评分收尾（OCR 没有，我们自创救回 0-100 卡片）：对合并后全部 findings 打一次分
+        # E. 评分收尾（OCR 没有，我们自创救回 0-100 卡片）：对合并后全部 findings 打一次分，
+        #    顺带拿通俗总结（2-4 句大白话）当 result.summary；拿不到再退固定文案。
         if cfg.scoring_enabled and result.findings:
             set_phase("scoring")
             scoring_llm = llm_factory()
-            result.scores = await run_scoring(
+            scores, scored_summary = await run_scoring(
                 scoring_llm,
                 build_score_messages(findings=result.findings,
                                      group_diff_text=render_diffs(diffs)),
             )
-        result.summary = f"agentic 共报告 {len(result.findings)} 条意见"
+            result.scores = scores
+            if scored_summary:
+                result.summary = scored_summary
+        result.summary = result.summary or f"agentic 共报告 {len(result.findings)} 条意见"
         return result
     finally:
         await runtime.stop()

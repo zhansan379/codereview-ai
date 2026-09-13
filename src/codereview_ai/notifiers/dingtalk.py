@@ -19,6 +19,7 @@ import urllib.parse
 import httpx
 
 from codereview_ai.notifiers.base import ReviewNotification, truncate_utf8
+from codereview_ai.review.report_render import branch_meta, render_notification_body
 
 logger = logging.getLogger("codereview_ai.notifiers.dingtalk")
 
@@ -47,7 +48,13 @@ class DingTalkNotifier:
         return f"{webhook}&timestamp={timestamp}&sign={sign}"
 
     def _render_text(self, msg: ReviewNotification) -> str:
+        # 动态正文：findings 分点清单 + 通俗总结（20000 字节宽裕，不折叠、不逐条截断）
+        body = render_notification_body(findings=msg.findings, summary_md=msg.summary_md)
         lines = [_HEADER, f"#### {msg.project_name} {msg.title}", ""]
+        if msg.author:
+            lines.append(f"- 作者：{msg.author}")
+        if branch := branch_meta(msg.source_branch, msg.target_branch):
+            lines.append(f"- {branch}")
         if msg.score is not None:
             lines.append(f"- 总分：**{msg.score}**")
         if msg.findings_count:
@@ -56,7 +63,7 @@ class DingTalkNotifier:
         if msg.mention_names:
             lines.append("- 相关：@" + "、@".join(msg.mention_names))
         lines.append("")
-        lines.append(truncate_utf8(msg.summary_md, self.max_text_bytes))
+        lines.append(truncate_utf8(body, self.max_text_bytes))
         lines.append(f"\n[查看详情]({msg.url})")
         return "\n".join(lines)
 

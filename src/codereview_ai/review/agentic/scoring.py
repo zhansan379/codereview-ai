@@ -4,8 +4,9 @@
 correctness(40)/security(30)/practices(20)/performance(5)/commit_quality(5)。
 - `build_score_messages`：把 findings（content/category/severity/file）+ diff 摘要文本拼进
   `SCORING_TASK_USER`（`{{comments}}` 注入，`{{diff}}` 注入）→ system+user。
-- `run_scoring`：一次 `llm.chat(msgs, [])` → `json.loads(content)` 解析 `ReviewScores`；
-  越界/坏 JSON/失败归 0 并打 warning，**不降级**（findings 已到手，分数只是卡片）。
+- `run_scoring`：一次 `llm.chat(msgs, [])` → 解析 `ReviewScores` + 同 JSON 里的 `summary`
+  （通俗总结，展示层当「总结」区块）；越界/坏 JSON/失败归 0 并打 warning，**不降级**
+  （findings 已到手，分数只是卡片）。
 """
 
 from __future__ import annotations
@@ -71,13 +72,10 @@ def _clamp(value: Any, max_val: int) -> int:
     return max(0, min(n, max_val))
 
 
-def _parse_scores(content: str) -> ReviewScores | None:
-    """从模型返回文本里提取 JSON 并解析为 ReviewScores；失败返回 None。"""
-    text = (content or "").strip()
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    """从模型返回文本里宽松提取 JSON 对象（先整体 loads，再找最外层 {...} 块）。"""
     if not text:
         return None
-    # 宽松提取：先整体 json.loads，失败再找最外层 {...} 块（模型常裹 markdown fence）。
-    payload: Any = None
     try:
         payload = json.loads(text)
     except json.JSONDecodeError:
@@ -89,7 +87,13 @@ def _parse_scores(content: str) -> ReviewScores | None:
                 return None
         else:
             return None
-    if not isinstance(payload, dict):
+    return payload if isinstance(payload, dict) else None
+
+
+def _parse_scores(content: str) -> ReviewScores | None:
+    """从模型返回文本里提取 JSON 并解析为 ReviewScores；失败返回 None。"""
+    payload = _extract_json_object((content or "").strip())
+    if payload is None:
         return None
     return ReviewScores(
         correctness=_clamp(payload.get("correctness"), _HINTS["correctness"][1]),
@@ -100,19 +104,31 @@ def _parse_scores(content: str) -> ReviewScores | None:
     )
 
 
-async def run_scoring(llm: AgentLLM, messages: list[dict[str, str]]) -> ReviewScores:
-    """一次无工具 chat 产出 0-100 评分；失败/坏 JSON 归 0 并打 warning（不降级）。"""
+async def run_scoring(llm: AgentLLM, messages: list[dict[str, str]]) -> tuple[ReviewScores, str]:
+    """一次无工具 chat 产出 0-100 评分 + 通俗总结；失败/坏 JSON 分数归 0、总结空串（不降级）。
+
+    summary 来自评分 JSON 的同名键（2-4 句大白话），供展示层当「总结」区块；
+    拿不到时返回空串，调用方（sandbox）用固定文案兜底。
+    """
     try:
         turn = await llm.chat(messages, [])
     except Exception as exc:  # noqa: BLE001 —— 评分失败不影响 findings
         logger.warning("agentic 评分阶段失败，分数归 0：%s", exc)
-        return ReviewScores()
-    scores = _parse_scores(str(getattr(turn, "content", None) or ""))
-    if scores is None:
+        return ReviewScores(), ""
+    payload = _extract_json_object(str(getattr(turn, "content", None) or ""))
+    if payload is None:
         logger.warning("agentic 评分阶段未解析出评分 JSON，分数归 0")
-        return ReviewScores()
+        return ReviewScores(), ""
+    scores = ReviewScores(
+        correctness=_clamp(payload.get("correctness"), _HINTS["correctness"][1]),
+        security=_clamp(payload.get("security"), _HINTS["security"][1]),
+        practices=_clamp(payload.get("practices"), _HINTS["practices"][1]),
+        performance=_clamp(payload.get("performance"), _HINTS["performance"][1]),
+        commit_quality=_clamp(payload.get("commit_quality"), _HINTS["commit_quality"][1]),
+    )
+    summary = str(payload.get("summary") or "").strip()
     logger.info("agentic 评分: correctness=%d security=%d practices=%d "
-                "performance=%d commit_quality=%d",
+                "performance=%d commit_quality=%d summary=%s",
                 scores.correctness, scores.security, scores.practices,
-                scores.performance, scores.commit_quality)
-    return scores
+                scores.performance, scores.commit_quality, summary[:60])
+    return scores, summary

@@ -315,3 +315,66 @@ def test_truncate_utf8_keeps_char_boundary():
     assert len(out.encode("utf-8")) <= 60
     assert REPLACEMENT not in out
     assert out.endswith("…")
+
+
+# ── findings 分点清单进 IM 正文（对齐样张：编号详条 + 通俗总结）───────────
+
+
+def _rich_result() -> ReviewResult:
+    r = ReviewResult(summary="改动主要是加锁，建议先修再合入。")
+    r.scores = ReviewScores(correctness=30, security=20, practices=15, performance=4,
+                            commit_quality=3)
+    r.findings = [
+        Finding(content="锁可能失效", category=Category.BUG, severity=Severity.HIGH,
+                existing_code="", file="src/a.py", line=12),
+        Finding(content="日志没打上下文", category=Category.MAINTAINABILITY,
+                severity=Severity.MEDIUM, existing_code="", file="src/b.py", line=3),
+    ]
+    return r
+
+
+async def test_dingtalk_body_lists_findings_and_summary():
+    captured: list[httpx.Request] = []
+    client = _make_client(captured)
+    notifier = DingTalkNotifier(DINGTALK_WEBHOOK, http=client)
+    await notifier.send(build_review_notification(_pr(), _rich_result()))
+    text = _req_json(captured[0])["markdown"]["text"]
+    assert "**发现的问题（2 条）**" in text          # 分点清单区块
+    assert "1. **[bug] 锁可能失效**（`src/a.py:12`）" in text  # 高危展开编号详条
+    assert "- **问题**：锁可能失效" in text
+    assert "**总结**" in text and "建议先修再合入" in text
+    await client.aclose()
+
+
+async def test_feishu_card_lists_findings():
+    captured: list[httpx.Request] = []
+    client = _make_client(captured)
+    notifier = FeishuNotifier("https://open.feishu.cn/open-apis/bot/v2/hook/x", http=client)
+    await notifier.send(build_review_notification(_pr(), _rich_result()))
+    content = _req_json(captured[0])["card"]["elements"][0]["text"]["content"]
+    assert "**发现的问题（2 条）**" in content
+    assert "1. **[bug] 锁可能失效**" in content
+    assert "**总结**" in content
+    await client.aclose()
+
+
+async def test_wecom_folds_low_severities_and_keeps_bytes_budget():
+    """企微 4096 紧预算：medium/low 折叠成计数行，critical/high 仍展开详条。"""
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"errcode": 0})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        notifier = WeComNotifier(
+            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=x", http=client
+        )
+        msg = build_review_notification(_pr(), _rich_result())
+        msg.mention_names = []
+        await notifier.send(msg)
+    content = _req_json(captured[0])["markdown"]["content"]
+    assert "🟠 高危（1）" in content                       # high 展开
+    assert "🟡 中等 ×1（详见完整报告）" in content          # medium 折叠
+    assert len(content.encode("utf-8")) <= 4096
+    await client.aclose()

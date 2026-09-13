@@ -275,13 +275,14 @@ You must call exactly one tool:
 - `approve_all_comments` — in every other case, including when comments look doubtful, unverifiable, or minor."""
 
 # ── scoring_task（我们自创，OCR 没有）──────────────────────────────────
-SCORING_TASK_SYSTEM = """You are a code review scoring assistant. Given the review comments produced for a set of code changes, grade the reviewed code across five dimensions.
+SCORING_TASK_SYSTEM = """You are a code review scoring assistant. Given the review comments produced for a set of code changes, grade the reviewed code across five dimensions and write a plain-language conclusion.
 
 Rules:
 - Each dimension is a score out of its own maximum (weights sum to 100 with an empty/zero-issue piece as the baseline; healthy code with no issues scores near 100, serious issues subtract).
 - higher correctness/security/practices/performance/commit_quality = better code.
 - commit_quality covers whether the changes are focused, commit messages are meaningful, and the scope stays coherent.
-- Output ONLY a single JSON object with exactly these five integer keys: correctness (0-40), security (0-30), practices (0-20), performance (0-5), commit_quality (0-5). No prose, no code fences, no markdown."""
+- summary is a plain-language review conclusion in Chinese, 2-4 sentences for a general audience: what the change mainly does, where the biggest risk lies, and whether to fix before merging. Do not enumerate every finding there (the system lists findings separately); do not use numbered long paragraphs or code.
+- Output ONLY a single JSON object with exactly these six keys: correctness (0-40), security (0-30), practices (0-20), performance (0-5), commit_quality (0-5), summary (string). No prose outside the JSON, no code fences, no markdown."""
 
 SCORING_TASK_USER = """### Reviewed changes
 
@@ -294,7 +295,7 @@ SCORING_TASK_USER = """### Reviewed changes
 {{comments}}
 
 ### Output
-Return a single JSON object with keys correctness (0-40), security (0-30), practices (0-20), performance (0-5), commit_quality (0-5)."""
+Return a single JSON object with keys correctness (0-40), security (0-30), practices (0-20), performance (0-5), commit_quality (0-5), summary (2-4 plain-language Chinese sentences)."""
 
 # ── memory_compression_task（内存压缩，OCR 同款）─────────────────────────
 # 五维契约：已确认问题(带 file+severity) / 工具调用结论 / 已完成 / 待办 / 当前焦点。

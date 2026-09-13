@@ -17,16 +17,9 @@ import httpx
 from codereview_ai.domain.models import FileDiff, Finding, PullRequest, ReviewResult
 from codereview_ai.forges.base import ForgeAdapter
 from codereview_ai.review.diffparse import CommentableLines, commentable_lines
+from codereview_ai.review.report_render import render_findings_section, render_summary_block
 
 logger = logging.getLogger("codereview_ai.review.result_writer")
-
-#: severity → 展示符号（总结 Markdown 用）。
-_SEVERITY_ICON = {
-    "critical": "🔴",
-    "high": "🟠",
-    "medium": "🟡",
-    "low": "🟢",
-}
 
 
 def partition_findings(
@@ -66,8 +59,13 @@ def finding_to_comment(f: Finding) -> dict[str, object]:
     }
 
 
-def build_summary_markdown(pr: PullRequest, textual: list[Finding], result: ReviewResult) -> str:
-    """生成总结评论（含无法锚定的 findings 文本）。"""
+def build_summary_markdown(pr: PullRequest, findings: list[Finding], result: ReviewResult) -> str:
+    """生成总结评论：评分卡 + 通俗总结 + **全量**分点问题清单（不再只列无法锚定的）。
+
+    行级评论照旧只发可锚定的子集；总结里给全量清单（锚到的带 `file:line`），
+    平台上不点开行级评论也能一眼看全所有问题。清单由 report_render 统一渲染
+    （按严重度分组，critical/high 展开成问题/建议详条，medium/low 单行要点）。
+    """
     scores = result.scores
     lines = [
         f"🤖 AI 代码审查 · {pr.repo_full_name}#{pr.pr_number}",
@@ -81,26 +79,21 @@ def build_summary_markdown(pr: PullRequest, textual: list[Finding], result: Revi
         f"| 性能 | {scores.performance}/5 |",
         f"| 提交质量 | {scores.commit_quality}/5 |",
         "",
-        result.summary,
     ]
-    if textual:
-        lines += [
-            "",
-            "---",
-            "**无法定位到具体行、并入总结的建议：**",
-            "",
-        ]
-        for f in textual:
-            icon = _SEVERITY_ICON.get(str(f.severity), "⚪")
-            lines.append(f"- {icon} **[{str(f.category)}] {f.file}**：{f.content}")
+    summary_block = render_summary_block(result.summary)
+    if summary_block:
+        lines += [summary_block, ""]
+    findings_md = render_findings_section(findings, with_code=True)
+    if findings_md:
+        lines += [findings_md, ""]
     if result.skipped_files:
         lines += [
-            "",
             "---",
+            "",
             "**被过滤、未审查的文件：**",
             *[f"- {p}" for p in result.skipped_files],
         ]
-    return "\n".join(lines)
+    return "\n".join(lines).rstrip()
 
 
 class ResultWriter:
@@ -144,9 +137,9 @@ class ResultWriter:
         if fingerprint and await self._already_delivered(pr, fingerprint):
             logger.info("回写跳过：评论已含指纹 %s（幂等命中）", fingerprint)
             return
-        inline, textual = partition_findings(result.findings, diffs)
+        inline, _textual = partition_findings(result.findings, diffs)
         summary_text = (
-            summary if summary is not None else build_summary_markdown(pr, textual, result)
+            summary if summary is not None else build_summary_markdown(pr, result.findings, result)
         )
         if fingerprint:
             summary_text = f"{summary_text}\n<!-- {fingerprint} -->"

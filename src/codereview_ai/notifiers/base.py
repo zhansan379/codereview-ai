@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from codereview_ai.domain.models import PullRequest, ReviewResult
+from codereview_ai.domain.models import Finding, PullRequest, ReviewResult
 
 #: 各渠道的超长截断上限（reference/im_payloads.md 的限制）
 MAX_TEXT_BYTES: dict[str, int] = {
@@ -37,7 +37,16 @@ class ReviewNotification:
     score: int | None
     summary_md: str
     url: str
+    #: findings 明细（review 类通知填充；日报等 send_markdown 路径为空）。
+    #: 各 sink 用 report_render.render_notification_body 渲染成渠道预算内的分点清单，
+    #: 与 summary_md（通俗总结段落）拼成动态正文。
+    findings: list[Finding] = field(default_factory=list)
     findings_count: dict[str, int] = field(default_factory=dict)
+    #: 作者的**平台用户名**（GitHub login / Gitee 用户名等）——恒作为文案展示，
+    #: 不依赖成员表解析；真 @ 提醒另行经 at_users（解析出平台 ID 才有，且受阈值门控）。
+    author: str = ""
+    source_branch: str = ""  # PR/MR 源分支；push 轨套壳无分支对（源=目标），sink 省略该行
+    target_branch: str = ""
     at_users: list[str] = field(default_factory=list)  # 该渠道可用的 @ID
     mention_names: list[str] = field(default_factory=list)  # 文案点名（非门控）
     at_all: bool = False  # 评分低于阈值时是否 @全员（各渠道原生 @all）
@@ -60,8 +69,9 @@ def build_review_notification(
 ) -> ReviewNotification:
     """把一次审查结果组装成中性通知（供各 sink 渲染）。
 
-    作者不再进 `at_users`（fork username 平台不认），只进 `mention_names` 作文案点名；
-    真正的 @ 由 dispatch 按渠道解析成员表后填充。
+    作者/分支作为元信息行展示：作者恒用平台用户名（不依赖成员表解析），真 @ 由
+    dispatch 按渠道解析成员表后填充 `at_users`（解析出平台 ID 才 @，且受阈值门控）。
+    作者不再进 `mention_names`（避免与作者行重复展示）；该字段留给其他文案点名。
     """
     by_sev: dict[str, int] = {}
     for f in result.findings:
@@ -72,8 +82,12 @@ def build_review_notification(
         score=result.scores.total,
         summary_md=result.summary or "（无摘要）",
         url=pr.web_url,
+        findings=list(result.findings),
         findings_count=by_sev,
-        mention_names=[pr.author] if pr.author else [],
+        author=pr.author,
+        source_branch=pr.source_branch,
+        target_branch=pr.target_branch,
+        mention_names=[],
     )
 
 

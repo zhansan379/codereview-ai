@@ -16,6 +16,7 @@ import time
 import httpx
 
 from codereview_ai.notifiers.base import ReviewNotification, truncate_utf8
+from codereview_ai.review.report_render import branch_meta, render_notification_body
 
 logger = logging.getLogger("codereview_ai.notifiers.feishu")
 
@@ -50,7 +51,13 @@ class FeishuNotifier:
         return timestamp, base64.b64encode(hmac_code).decode("utf-8")
 
     def _render_card(self, msg: ReviewNotification) -> dict[str, object]:
+        # 动态正文：findings 分点清单 + 通俗总结（30000 字节宽裕，不折叠、不逐条截断）
+        body_text = render_notification_body(findings=msg.findings, summary_md=msg.summary_md)
         content_lines = [f"**项目**：{msg.project_name}", f"**MR/PR**：{msg.title}"]
+        if msg.author:
+            content_lines.append(f"**作者**：{msg.author}")
+        if branch := branch_meta(msg.source_branch, msg.target_branch):
+            content_lines.append(f"**{branch}**")
         if msg.score is not None:
             content_lines.append(f"**总分**：{msg.score}")
         if msg.findings_count:
@@ -59,7 +66,7 @@ class FeishuNotifier:
         if msg.mention_names:
             content_lines.append(f"**相关**：{'、'.join(msg.mention_names)}")
         content_lines.append("")
-        content_lines.append(truncate_utf8(msg.summary_md, self.max_text_bytes))
+        content_lines.append(truncate_utf8(body_text, self.max_text_bytes))
         # @ 人：卡片 lark_md 支持 <at user_id>；at_users 已由 dispatch 解析成 open_id
         for oid in msg.at_users:
             content_lines.append(f'<at user_id="{oid}">{oid}</at>')
