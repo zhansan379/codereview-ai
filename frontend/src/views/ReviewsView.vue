@@ -6,6 +6,8 @@
         <div class="card-head">
           <span class="card-title">{{ $t('reviews.filterTitle') }}</span>
           <span class="card-actions">
+            <!-- 列设置齿轮由 ReviewsTable Teleport 过来，贴着现有按钮排，免得表格上方独占一行 -->
+            <span id="reviews-table-tools" style="display: inline-flex"></span>
             <el-button @click="onRefresh">{{ $t('common.refresh') }}</el-button>
             <el-button type="success" :icon="Download" @click="openExport">
               {{ $t('reviews.exportExcel') }}
@@ -188,6 +190,8 @@
       <ReviewsTable
         :items="items"
         :loading="loading"
+        storage-key="reviews"
+        toolbar-target="#reviews-table-tools"
         show-process
         show-retry
         show-stop

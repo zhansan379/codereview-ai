@@ -114,8 +114,14 @@
     </el-row>
 
     <el-card class="table-card" data-tour="recent">
-      <template #header>{{ $t('dashboard.recent') }}</template>
-      <ReviewsTable :items="recent" :loading="loading" time-field="finished_at" @detail="goDetail" />
+      <template #header>
+        <div class="recent-head">
+          <span>{{ $t('dashboard.recent') }}</span>
+          <!-- 列设置齿轮由 ReviewsTable Teleport 过来，落在标题行右侧 -->
+          <span id="dashboard-table-tools" style="display: inline-flex"></span>
+        </div>
+      </template>
+      <ReviewsTable :items="recent" :loading="loading" storage-key="dashboard" toolbar-target="#dashboard-table-tools" time-field="finished_at" @detail="goDetail" />
     </el-card>
   </div>
 </template>
@@ -635,5 +641,11 @@ watch(locale, () => redrawAll())
 }
 .table-card {
   margin-top: 20px;
+}
+/* 最近记录卡标题行：标题居左，列设置齿轮（Teleport 容器）贴右 */
+.recent-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 </style>

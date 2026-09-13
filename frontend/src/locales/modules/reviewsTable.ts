@@ -19,6 +19,12 @@ export default {
     execute: '执行',
     stop: '停止',
     resend: '重新发送',
+    // 列设置弹层：勾选显隐 + 上移/下移调序，偏好存 localStorage
+    columnsSetting: '列设置',
+    columnsHint: '勾选控制显示，↑↓ 调整顺序（只保存在本机浏览器）',
+    moveUp: '上移',
+    moveDown: '下移',
+    resetColumns: '恢复默认',
   },
   en: {
     title: 'Title',
@@ -38,5 +44,10 @@ export default {
     execute: 'Run',
     stop: 'Stop',
     resend: 'Resend',
+    columnsSetting: 'Column settings',
+    columnsHint: 'Tick to show, arrows to reorder. Saved in this browser only.',
+    moveUp: 'Move up',
+    moveDown: 'Move down',
+    resetColumns: 'Reset',
   },
 }
