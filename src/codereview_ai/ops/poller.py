@@ -148,7 +148,8 @@ class PRPoller:
                         await review_repo.mark_not_started_if_pending(
                             int(task_id),
                             reason="no_llm",
-                            error="未配置可用 LLM（或平台适配器），服务未启动审查 worker，任务未开始",
+                            error="未配置可用 LLM（或平台适配器），"
+                                  "服务未启动审查 worker，任务未开始",
                         )
                         report["skipped"] += 1
                         self.progress["skipped"] += 1

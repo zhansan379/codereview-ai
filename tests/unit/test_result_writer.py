@@ -366,7 +366,8 @@ def test_writer_posts_all_when_anchor_fetch_fails():
     forge = _FailingAnchors(set())
     asyncio.run(ResultWriter(forge).write(
         _pr(), [_diff("a.py", DIFF)],
-        ReviewResult(summary="", findings=[_finding(file="a.py", line=2), _finding(content="x", line=1)]),
+        ReviewResult(summary="", findings=[
+            _finding(file="a.py", line=2), _finding(content="x", line=1)]),
         summary="s",
     ))
     assert [c["body"] for c in forge.posted[0]] == ["bug", "x"]

@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -169,7 +170,7 @@ class ReviewRepository:
                 .values(state="skipped", skip_reason=reason, error=error)
             )
             await s.commit()
-            return int(result.rowcount or 0)
+            return int(cast(CursorResult[Any], result).rowcount or 0)
 
     async def mark_not_started_if_pending(
         self, task_id: int, *, reason: str, error: str
@@ -187,7 +188,7 @@ class ReviewRepository:
                 .values(state="skipped", skip_reason=reason, error=error)
             )
             await s.commit()
-            return bool(result.rowcount)
+            return bool(cast(CursorResult[Any], result).rowcount)
 
     async def push_existing_audit(
         self, *, provider: str, repo_id: str, branch: str, head_sha: str

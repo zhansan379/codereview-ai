@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 import httpx
 

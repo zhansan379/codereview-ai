@@ -485,6 +485,8 @@ class GitHubForge(ForgeAdapter):
                 continue
             self._raise_with_body(resp)
             return
+        if resp is None:  # 循环至少跑一轮且成功路径已 return，仅 break 可达此处
+            return
         self._raise_with_body(resp)
 
     def _raise_with_body(self, resp: httpx.Response) -> None:

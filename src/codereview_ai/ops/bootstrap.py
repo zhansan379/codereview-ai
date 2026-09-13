@@ -73,7 +73,7 @@ def get_or_create_poller(app: Any) -> PRPoller | None:
     平台凭据不可用（registry 缺失或未配齐）返回 None，调用方自行报「不可用」。
     `can_run` 用动态判据：worker 懒启动后同一 poller 即恢复入队，不持有过期快照。
     """
-    poller = getattr(app.state, "poller", None)
+    poller: PRPoller | None = getattr(app.state, "poller", None)
     if poller is not None:
         return poller
     registry = getattr(app.state, "forge_registry", None)
@@ -83,16 +83,17 @@ def get_or_create_poller(app: Any) -> PRPoller | None:
     if (registry is None or not registry.available() or enqueuer is None
             or settings is None or engine is None):
         return None
-    app.state.poller = PRPoller(
+    created = PRPoller(
         engine, registry, enqueuer,
         include_closed_default=settings.poll_include_closed,
         can_run=worker_can_run(app),
     )
+    app.state.poller = created
     app.state.poll_running = False
     app.state.poll_last = None
     app.state.poll_error = None
     app.state.poll_run_task = None
-    return app.state.poller
+    return created
 
 
 async def ensure_worker_started(app: Any) -> bool:

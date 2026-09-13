@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -175,7 +176,7 @@ async def test_redeliver_409_when_forge_missing(engine):
         assert exc.value.status_code == 409  # type: ignore[attr-defined]
 
 
-async def test_redeliver_success_initiates(engine):
+async def test_redeliver_success_initiates(engine, monkeypatch):
     """writeback_failed=True + forge 就绪 → 返回「已发起」，后台重发成功翻 writeback_failed=False。
     """
     task_id = await _seed_completed_writeback_failed(engine)
@@ -200,18 +201,25 @@ async def test_redeliver_success_initiates(engine):
     async with session() as s:
         row = (await s.execute(select(ReviewTask)
                                .where(ReviewTask.id == task_id))).scalars().first()
+        # 捕获端点 create_task 出来的真后台任务并 await 跑完再断言。此前测试手动再
+        # 驱动一遍 _background_redeliver，与泄漏的 create_task 并发双跑——去重
+        # (type,title) 是先查后插，并发下 TOCTOU，间歇性多落一条 redeliver_done
+        # （单跑侥幸过、全量/CI 必挂的根因）。改走端点真实投递路径，无双跑。
+        created: list[asyncio.Task[None]] = []
+        real_create_task = asyncio.create_task
+
+        def _capture(coro, **kwargs):
+            t = real_create_task(coro, **kwargs)
+            created.append(t)
+            return t
+
+        monkeypatch.setattr("codereview_ai.api.admin.tasks.asyncio.create_task", _capture)
         out = await redeliver_task(row.id, _request_with_forge(_FakeForge(), engine), s)
         assert isinstance(out, TaskRedelivered)
         assert out.status == "redelivering"
         assert row.writeback_failed is True  # 未同步翻转（后台异步完成）
-    # 直接驱动后台协程（等价于端点里的 create_task）：成功 → 翻 False + 落成功系统消息
-    session = session_factory(engine)
-    async with session() as s:
-        row = (await s.execute(select(ReviewTask)
-                               .where(ReviewTask.id == task_id))).scalars().first()
-        from codereview_ai.storage.review_repo import ReviewRepository
-
-        await _background_redeliver(row, _FakeForge(), ReviewRepository(engine), engine)  # type: ignore[arg-type]
+    assert created, "端点应已投递后台重发任务"
+    await created[0]
     async with session() as s:
         row = (await s.execute(select(ReviewTask)
                                .where(ReviewTask.id == task_id))).scalars().first()

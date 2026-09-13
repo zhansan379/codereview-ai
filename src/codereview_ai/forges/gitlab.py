@@ -167,7 +167,7 @@ class GitLabForge(ForgeAdapter):
         if not isinstance(body, dict):
             return pr
         refs = body.get("diff_refs")
-        updates: dict[str, object] = {
+        updates: dict[str, Any] = {
             # webhook author 可能是事件触发人；API 值恒为 MR 作者
             "author": str(((body.get("author") or {}) or {}).get("username") or pr.author),
             "target_branch": str(body.get("target_branch") or pr.target_branch),
