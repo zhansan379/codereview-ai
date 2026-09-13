@@ -3,6 +3,10 @@ export default {
   'zh-CN': {
     appName: 'CodeReview AI',
     appTitle: 'CodeReview AI 管理后台',
+    groupAnalytics: '分析',
+    groupReview: '审查',
+    groupResource: '资源',
+    groupSystem: '系统',
     dashboard: '仪表盘',
     workrate: '提交分析',
     members: '成员分析',
@@ -26,6 +30,10 @@ export default {
   en: {
     appName: 'CodeReview AI',
     appTitle: 'CodeReview AI Admin',
+    groupAnalytics: 'Analytics',
+    groupReview: 'Review',
+    groupResource: 'Resources',
+    groupSystem: 'System',
     dashboard: 'Dashboard',
     workrate: 'Commit analysis',
     members: 'Member analysis',

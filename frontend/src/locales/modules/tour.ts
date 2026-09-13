@@ -7,7 +7,7 @@ export default {
     welcomeTitle: '欢迎使用 CodeReview AI',
     welcomeDesc: '这是一套 AI 代码审查平台。跟随本引导快速了解各功能区，随时可按 Esc 或右上角 × 退出。',
     menuTitle: '功能导航',
-    menuDesc: '所有功能模块都从左侧菜单进入，菜单项按你的权限显示。',
+    menuDesc: '所有功能模块都从左侧菜单进入，按「分析 / 审查 / 资源 / 系统」分组展示，菜单项按你的权限显示。',
     kpiTitle: '核心指标',
     kpiDesc: '任务总数、问题总数、未修复的高危/严重问题与平均对话轮数一目了然。',
     bandsTitle: '分布概览',
@@ -95,7 +95,8 @@ export default {
     welcomeDesc:
       'This is an AI code review platform. Follow this quick tour to explore the workspace — press Esc or click × anytime to exit.',
     menuTitle: 'Navigation',
-    menuDesc: 'All modules live in the sidebar; menu items appear based on your permissions.',
+    menuDesc:
+      'All modules live in the sidebar, grouped into Analytics / Review / Resources / System; menu items appear based on your permissions.',
     kpiTitle: 'Key metrics',
     kpiDesc: 'Total tasks, findings, unresolved high/critical issues and average chat rounds at a glance.',
     bandsTitle: 'Distribution overview',

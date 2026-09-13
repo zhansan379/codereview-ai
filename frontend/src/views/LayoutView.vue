@@ -10,54 +10,63 @@
         router
         class="menu"
       >
-        <el-menu-item v-if="auth.hasPerm('stats:view')" index="/dashboard">
-          <el-icon><DataBoard /></el-icon>
-          <span>{{ $t('menu.dashboard') }}</span>
-        </el-menu-item>
-        <el-menu-item v-if="auth.hasPerm('stats:view')" index="/workrate">
-          <el-icon><DataAnalysis /></el-icon>
-          <span>{{ $t('menu.workrate') }}</span>
-        </el-menu-item>
-        <el-menu-item v-if="auth.hasPerm('stats:view')" index="/members">
-          <el-icon><User /></el-icon>
-          <span>{{ $t('menu.members') }}</span>
-        </el-menu-item>
-        <el-menu-item v-if="auth.hasPerm('reviews:view')" index="/reviews">
-          <el-icon><Document /></el-icon>
-          <span>{{ $t('menu.reviews') }}</span>
-        </el-menu-item>
-        <el-menu-item v-if="auth.hasPerm('projects:view')" index="/projects">
-          <el-icon><Folder /></el-icon>
-          <span>{{ $t('menu.projects') }}</span>
-        </el-menu-item>
-        <el-menu-item v-if="auth.hasPerm('models:manage')" index="/models">
-          <el-icon><Cpu /></el-icon>
-          <span>{{ $t('menu.models') }}</span>
-        </el-menu-item>
-        <el-menu-item v-if="auth.hasPerm('notifiers:manage')" index="/notifiers">
-          <el-icon><Bell /></el-icon>
-          <span>{{ $t('menu.notifiers') }}</span>
-        </el-menu-item>
-        <el-menu-item v-if="auth.hasPerm('schedules:manage')" index="/schedules">
-          <el-icon><Timer /></el-icon>
-          <span>{{ $t('menu.schedules') }}</span>
-        </el-menu-item>
-        <el-menu-item v-if="auth.hasPerm('caches:manage')" index="/clone-caches">
-          <el-icon><Box /></el-icon>
-          <span>{{ $t('menu.caches') }}</span>
-        </el-menu-item>
-        <el-menu-item v-if="auth.hasPerm('settings:manage')" index="/settings">
-          <el-icon><Setting /></el-icon>
-          <span>{{ $t('menu.settings') }}</span>
-        </el-menu-item>
-        <el-menu-item v-if="auth.hasPerm('users:manage')" index="/users">
-          <el-icon><User /></el-icon>
-          <span>{{ $t('menu.users') }}</span>
-        </el-menu-item>
-        <el-menu-item v-if="auth.hasPerm('roles:manage')" index="/roles">
-          <el-icon><Key /></el-icon>
-          <span>{{ $t('menu.roles') }}</span>
-        </el-menu-item>
+        <!-- 分组标题按子项权限取或：低权限角色不出现「有标题没内容」的空组 -->
+        <el-menu-item-group v-if="auth.hasPerm('stats:view')" :title="$t('menu.groupAnalytics')">
+          <el-menu-item index="/dashboard">
+            <el-icon><DataBoard /></el-icon>
+            <span>{{ $t('menu.dashboard') }}</span>
+          </el-menu-item>
+          <el-menu-item index="/workrate">
+            <el-icon><DataAnalysis /></el-icon>
+            <span>{{ $t('menu.workrate') }}</span>
+          </el-menu-item>
+          <el-menu-item index="/members">
+            <el-icon><User /></el-icon>
+            <span>{{ $t('menu.members') }}</span>
+          </el-menu-item>
+        </el-menu-item-group>
+        <el-menu-item-group v-if="canReviewGroup" :title="$t('menu.groupReview')">
+          <el-menu-item v-if="auth.hasPerm('projects:view')" index="/projects">
+            <el-icon><Folder /></el-icon>
+            <span>{{ $t('menu.projects') }}</span>
+          </el-menu-item>
+          <el-menu-item v-if="auth.hasPerm('reviews:view')" index="/reviews">
+            <el-icon><Document /></el-icon>
+            <span>{{ $t('menu.reviews') }}</span>
+          </el-menu-item>
+          <el-menu-item v-if="auth.hasPerm('schedules:manage')" index="/schedules">
+            <el-icon><Timer /></el-icon>
+            <span>{{ $t('menu.schedules') }}</span>
+          </el-menu-item>
+        </el-menu-item-group>
+        <el-menu-item-group v-if="canResourceGroup" :title="$t('menu.groupResource')">
+          <el-menu-item v-if="auth.hasPerm('models:manage')" index="/models">
+            <el-icon><Cpu /></el-icon>
+            <span>{{ $t('menu.models') }}</span>
+          </el-menu-item>
+          <el-menu-item v-if="auth.hasPerm('notifiers:manage')" index="/notifiers">
+            <el-icon><Bell /></el-icon>
+            <span>{{ $t('menu.notifiers') }}</span>
+          </el-menu-item>
+          <el-menu-item v-if="auth.hasPerm('caches:manage')" index="/clone-caches">
+            <el-icon><Box /></el-icon>
+            <span>{{ $t('menu.caches') }}</span>
+          </el-menu-item>
+        </el-menu-item-group>
+        <el-menu-item-group v-if="canSystemGroup" :title="$t('menu.groupSystem')">
+          <el-menu-item v-if="auth.hasPerm('settings:manage')" index="/settings">
+            <el-icon><Setting /></el-icon>
+            <span>{{ $t('menu.settings') }}</span>
+          </el-menu-item>
+          <el-menu-item v-if="auth.hasPerm('users:manage')" index="/users">
+            <el-icon><User /></el-icon>
+            <span>{{ $t('menu.users') }}</span>
+          </el-menu-item>
+          <el-menu-item v-if="auth.hasPerm('roles:manage')" index="/roles">
+            <el-icon><Key /></el-icon>
+            <span>{{ $t('menu.roles') }}</span>
+          </el-menu-item>
+        </el-menu-item-group>
       </el-menu>
     </el-aside>
 
@@ -305,6 +314,17 @@ const activeMenu = computed(() => {
   return route.path
 })
 
+// 菜单分组显隐：组内任一权限可见即显示整组标题，避免空组
+const canReviewGroup = computed(
+  () => auth.hasPerm('projects:view') || auth.hasPerm('reviews:view') || auth.hasPerm('schedules:manage'),
+)
+const canResourceGroup = computed(
+  () => auth.hasPerm('models:manage') || auth.hasPerm('notifiers:manage') || auth.hasPerm('caches:manage'),
+)
+const canSystemGroup = computed(
+  () => auth.hasPerm('settings:manage') || auth.hasPerm('users:manage') || auth.hasPerm('roles:manage'),
+)
+
 onMounted(() => {
   // 硬刷新后重同步用户与权限
   auth.refresh().catch(() => {})
@@ -352,6 +372,15 @@ function onLogout() {
 }
 .menu {
   border-right: none;
+  /* 分组后 12 项 + 4 个组标题偏高，48px 行高让常见窗口高度下整栏放下、不出滚动条 */
+  --el-menu-item-height: 48px;
+}
+/* 分组标题：EP 默认上下 7px 太松，压紧并把左缘对齐菜单项图标 */
+.menu :deep(.el-menu-item-group__title) {
+  padding: 8px 0 2px 20px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--el-text-color-secondary);
 }
 .header {
   --el-header-height: var(--app-header-height);
