@@ -65,7 +65,7 @@
           />
           <div class="form-tip" v-if="isEdit">{{ $t('notifiers.form.redactedTip') }}</div>
         </el-form-item>
-        <el-form-item v-if="form.channel !== 'wecom'" label="Secret" required>
+        <el-form-item v-if="form.channel !== 'wecom'" label="Secret">
           <el-input
             v-model="form.secret"
             type="password"
