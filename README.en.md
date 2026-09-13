@@ -20,6 +20,19 @@
 
 A code review service that runs on your own machine. Point a webhook at it from GitHub, GitLab or Gitee, and every PR / MR that opens or updates gets reviewed automatically — findings land as inline comments on the exact changed lines, and get pushed to DingTalk / Feishu / WeCom. If a webhook never arrives, or a batch of PRs was already open when you onboarded the project, the admin panel can sweep the platform and pull them in. Models, projects, permissions and stats are all configured from the bundled Vue admin panel.
 
+## Features
+
+- **Three forges via webhook** — GitHub / GitLab / Gitee; every PR / MR that opens or updates is reviewed automatically. One service runs many projects, each with its own switches.
+- **Inline comments on the changed line** — the model only pastes a code snippet and the engine pins the line by content matching; a hallucinated line number never lands a comment.
+- **IM push** — DingTalk / Feishu / WeCom robots; a push with findings detail and the score the moment a review finishes.
+- **Backfill** — missed webhooks, downtime, PRs opened before onboarding: pull them back by hand or on a schedule; heads already reviewed are skipped.
+- **Three-layer pipeline** — LLM diff review + on-demand agentic whole-repo reasoning + optional semgrep static analysis, fused and de-duplicated into one set of findings.
+- **Two review modes** — `diff` and `agentic`, picked per project; any agent failure drops the whole review back to diff, so there is always a deliverable conclusion.
+- **No paying twice across rounds** — unchanged files between adjacent rounds are reused by content hash, saving money on high-frequency PRs.
+- **Model-agnostic** — any provider or self-hosted relay through LiteLLM; credentials are Fernet-encrypted at rest and hot-reload the moment you save them.
+- **Self-hosted admin panel** — dashboard, review records, projects, member & commit analytics, notifier and credential config, all in one Vue 3 app.
+- **Private deployment** — one Docker container + SQLite out of the box, PostgreSQL when you need it; your code never leaves the network.
+
 ## Why it exists
 
 For how it reviews, it sits on the "**deterministic engineering × an agent that goes read the repo**" axis: *anything the engineering can decide for certain, the model never has to gamble on.* Line numbers are pinned by the engine with pure string matching over the code snippet the model pastes back, so a hallucinated line number cannot push a comment off-target. File grouping is cut to hard ceilings and the LLM only makes a closed-book grouping judgment. If the agent goes exploring and anything at all goes sideways, the whole review drops back to diff — an agent failure is never recorded as a task failure.
@@ -156,7 +169,12 @@ Docs:
 - [Gitee onboarding guide](docs/how_use_gitee.md)
 - [Scheduled pull (backfill)](docs/how_use_poll.md)
 - [Use PostgreSQL storage (standard tier)](docs/how_use_postgres.md)
-- [WeCom group robot webhook](https://www.tencentcloud.com/zh/document/product/1254/78645) (Chinese)
+
+IM robot setup (Chinese):
+
+- [DingTalk: custom robot access](https://open.dingtalk.com/document/group/custom-robot-access)
+- [Feishu: custom robot guide](https://open.feishu.cn/document/uktmuktmuktm/uctm5yjl3eto24ynxkjn)
+- [WeCom group robot webhook](https://www.tencentcloud.com/zh/document/product/1254/78645)
 
 ## Install
 

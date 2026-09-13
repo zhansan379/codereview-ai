@@ -32,7 +32,18 @@
 
 <img width="2560" height="1368" alt="image" src="https://github.com/user-attachments/assets/1878447e-93f5-42c5-aa88-849fea0b870f" />
 
+## 功能一览
 
+- **三平台 webhook 接入** — GitHub / GitLab / Gitee，PR / MR 打开或更新即自动审查；一套服务管多个项目，逐项目独立开关
+- **行级 inline 评论** — 意见回写到改动所在的那一行；模型只负责粘贴代码片段，行号由引擎按内容匹配钉出，幻觉行号进不了评论位置
+- **IM 推送** — 钉钉 / 飞书 / 企业微信机器人，审查完成即推，带 findings 明细与评分
+- **主动补拉** — webhook 漏事件、服务停机、接入前的存量 PR，手动一键或定时轮询补回；同 head 已审自动跳过
+- **三层审查管线** — LLM diff 审查 + 按需触发的 agentic 全仓推理 + 可选的 semgrep 静态分析，融合去重成一份意见
+- **两种审查模式** — `diff` 与 `agentic` 逐项目可选；agent 出任何岔子整条退回 diff，永远有一份可交付结论
+- **跨轮缓存** — 相邻轮次未变文件按内容哈希复用上一轮结论，高频 PR 省钱
+- **模型无关** — 经 LiteLLM 接任意厂商或自建中转，凭据 Fernet 加密落库，后台改完即时生效
+- **自托管管理后台** — 仪表盘、审查记录、项目管理、成员分析、提交分析、IM 通知与凭据配置，一个 Vue 3 后台全包
+- **私有化部署** — Docker 单容器 + SQLite 开箱即用，需要时切 PostgreSQL；代码不出内网
 
 ## 为什么需要它
 
@@ -161,6 +172,8 @@ python -c 'import secrets;print(secrets.token_urlsafe(24))'                     
 
 IM 通道配置参考：
 
+- [钉钉：自定义机器人接入](https://open.dingtalk.com/document/group/custom-robot-access)
+- [飞书：自定义机器人使用指南](https://open.feishu.cn/document/uktmuktmuktm/uctm5yjl3eto24ynxkjn)
 - [企业微信群机器人获取 Webhook](https://www.tencentcloud.com/zh/document/product/1254/78645)
 
 ## 安装
