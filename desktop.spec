@@ -23,6 +23,15 @@ for pkg in ("litellm", "tiktoken", "apscheduler"):
     binaries += b
     hiddenimports += h
 
+# tiktoken 0.14 起用 pkgutil.iter_modules 物理扫描顶层命名空间包 tiktoken_ext 发现
+# 编码器插件（不再走 entry_points 元数据）；tiktoken_ext 与 tiktoken 平级、不在包目录内，
+# 上面 collect_all("tiktoken") 收不到它 → 冻结包扫描结果为空 → Unknown encoding cl100k_base。
+# 补实体目录（pkgutil 扫描要求真实磁盘路径，正好与 PyInstaller NSPKG 搜索路径重合）+ 模块本体
+import tiktoken_ext  # noqa: E402
+
+datas.append((list(tiktoken_ext.__path__)[0], "tiktoken_ext"))
+hiddenimports += ["tiktoken_ext.openai_public"]
+
 # SQLAlchemy 方言按 URL scheme 动态加载（默认 sqlite+aiosqlite；切 PG 时 postgresql+asyncpg），
 # 方言模块和 DBAPI 驱动（aiosqlite/asyncpg，项目源码零静态 import）都要显式收，
 # 否则启动建引擎时 ModuleNotFoundError（实测踩过：缺 aiosqlite）
