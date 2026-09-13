@@ -103,6 +103,9 @@ class ReviewTask(Base):
     state: Mapped[str] = mapped_column(String(16), default="queued")
     attempt: Mapped[int] = mapped_column(Integer, default=0)
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    # PR/MR 在平台上真实创建时间（补拉行=API created_at，webhook 行=从 payload 提取）。
+    # 可空：存量行为 NULL，提交分析按 pr_created_at → payload → queued_at 兜底取时。
+    pr_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str] = mapped_column(Text, default="")

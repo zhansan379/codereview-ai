@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from collections.abc import Callable
 
 import httpx
@@ -38,6 +39,7 @@ def _sample_pr_payload() -> dict:
             "base": {"ref": "master", "sha": "9000"},
             "user": {"login": "bob"},
             "draft": False,
+            "created_at": "2026-09-12T22:33:10+08:00",
         },
     }
 
@@ -77,6 +79,8 @@ def test_parse_pull_request_maps_fields():
     assert pr.base_sha == "9000"
     assert pr.is_draft is False
     assert pr.author == "bob"  # pull_request.user.login 优先于 sender
+    # 平台真实创建时间：带时区偏移解析为 UTC
+    assert pr.created_at == datetime(2026, 9, 12, 14, 33, 10, tzinfo=UTC)
 
 
 def test_parse_non_pull_request_is_none():

@@ -137,12 +137,22 @@ def _commit_author(commit: dict[str, Any], fallback: str) -> str:
     return fallback
 
 
+def _payload_created_at(payload: str) -> datetime | None:
+    """从原始 webhook JSON 提取 PR/MR 平台创建时间（存量行 pr_created_at 列为空时兜底）。"""
+    data = _payload_dict(payload)
+    for key in ("pull_request", "object_attributes"):
+        node = data.get(key)
+        if isinstance(node, dict):
+            ts = _parse_iso(node.get("created_at"))
+            if ts is not None:
+                return ts
+    return None
+
+
 def _events_from_row(
     event_type: str, pr_author: str, queued_at: datetime, payload: str
 ) -> list[_Event]:
-    """一行 review_task → 提交事件列表（push 轨尽量展开到每条 commit）。"""
-    if event_type != "push":
-        return [] if not pr_author else []
+    """push 轨一行 review_task → 每条 commit 一个事件（调用方已把 mr 轨分流直取）。"""
     data = _payload_dict(payload)
     pusher = _push_pusher(data)
     raw_commits = data.get("commits")
@@ -463,6 +473,8 @@ async def _load_events(
     if project_id:
         wheres.append(ReviewTask.project_id == project_id)
     if days:
+        # 窗口近似按入队时间过滤（真实时间的行只可能更早，宁可多装不漏装；
+        # 事件级精确窗口在聚合侧无 SQL 可下钻，days=0（全部时间）不受影响）
         wheres.append(
             ReviewTask.queued_at >= datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days)
         )
@@ -470,7 +482,7 @@ async def _load_events(
         select(
             ReviewTask.event_type, ReviewTask.project_id, ReviewTask.pr_author,
             ReviewTask.queued_at, ReviewTask.payload,
-            ReviewTask.provider, ReviewTask.repo_id,
+            ReviewTask.provider, ReviewTask.repo_id, ReviewTask.pr_created_at,
         ).where(*wheres)
     )).all()
 
@@ -481,7 +493,7 @@ async def _load_events(
     pid_by_key = {f"{p.provider}:{p.repo_id}": p.id for p in proj_rows}
 
     events: list[_Event] = []
-    for event_type, row_pid, pr_author, queued_at, payload, provider, repo_id in rows:
+    for event_type, row_pid, pr_author, queued_at, payload, provider, repo_id, pr_created in rows:
         key = f"{provider}:{repo_id}"
         label = label_by_key.get(key, repo_id)
         pid = row_pid if row_pid is not None else pid_by_key.get(key)
@@ -489,12 +501,17 @@ async def _load_events(
         if queued is None:
             continue
         if event_type != "push":
-            # MR 轨：作者缺失（历史/异常行）不进统计，避免聚成「无名」桶
+            # MR 轨取时优先级：平台创建时间（列）→ payload.created_at（存量 webhook 行）→
+            # 入队时间兜底（补拉存量行），杜绝「补拉时刻」污染时段分布。
+            effective = (
+                _as_utc_naive(pr_created) if pr_created is not None else None
+            ) or _payload_created_at(payload) or queued
+            # 作者缺失（历史/异常行）不进统计，避免聚成「无名」桶
             who = pr_author or ""
             if author and who != author:
                 continue
             if who:
-                events.append(_Event(author=who, ts=queued, project_id=pid, repo_label=label))
+                events.append(_Event(author=who, ts=effective, project_id=pid, repo_label=label))
             continue
         for ev in _events_from_row(event_type, pr_author, queued, payload):
             if not ev.author:

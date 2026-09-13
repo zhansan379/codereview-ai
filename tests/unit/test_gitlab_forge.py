@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from collections.abc import Callable
 
 import httpx
@@ -38,6 +39,7 @@ def _sample_mr_payload() -> dict:
             "target_branch": "main",
             "last_commit": {"id": "abc123"},
             "url": "https://gitlab.example.com/acme/widgets/-/merge_requests/42",
+            "created_at": "2026-09-12T14:33:10Z",
         },
     }
 
@@ -65,6 +67,8 @@ def test_parse_merge_request_maps_fields():
     assert pr.target_branch == "main"
     assert pr.head_sha == "abc123"
     assert pr.author == "alice"
+    # 平台真实创建时间：Z 后缀解析为 tz-aware UTC
+    assert pr.created_at == datetime(2026, 9, 12, 14, 33, 10, tzinfo=UTC)
 
 
 def test_parse_non_merge_request_is_none():
@@ -217,6 +221,7 @@ def test_list_open_pulls_maps_items():
                 "web_url": "https://gitlab.example.com/acme/widgets/-/merge_requests/101",
                 "diff_refs": {"base_sha": "b0", "head_sha": "h1", "start_sha": "s0"},
                 "author": {"username": "bob"},
+                "created_at": "2026-09-12T10:00:00Z",
             }
         ])
 
@@ -231,6 +236,7 @@ def test_list_open_pulls_maps_items():
     assert pr.head_sha == "h1"
     assert pr.author == "bob"
     assert pr.diff_refs == {"base_sha": "b0", "head_sha": "h1", "start_sha": "s0"}
+    assert pr.created_at == datetime(2026, 9, 12, 10, 0, tzinfo=UTC)
 
 
 def test_list_pulls_empty_body():

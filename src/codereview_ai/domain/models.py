@@ -14,6 +14,31 @@ from datetime import UTC, datetime
 from enum import StrEnum
 
 
+def parse_forge_datetime(value: object) -> datetime | None:
+    """容错解析平台 API/webhook 里的 ISO8601 时间戳（`...Z` / 带偏移均可）。
+
+    各平台 `created_at` 字段口径不一（GitHub 系 `2026-09-12T14:33:10Z`、Gitee 可带
+    `+08:00`），解析失败一律返回 None 由调用方退化，绝不抛错阻断主链。
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def as_naive_utc(dt: datetime) -> datetime:
+    """归一成 naive UTC（DB 存储口径：queued_at/时间列均为无时区 UTC）。
+
+    aware 值换算 UTC 后剥掉 tzinfo（SQLite 方言剥 tzinfo 不换算，直接存会错 8 小时）；
+    naive 值假定已是 UTC 原样返回。
+    """
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(UTC).replace(tzinfo=None)
+
+
 class ChangeType(StrEnum):
     NEW_FILE = "new"
     DELETED_FILE = "deleted"
@@ -48,6 +73,8 @@ class PullRequest:
     diff_refs: dict[str, object] | None = None  # gitlab：base/head/start sha，position 必填  # noqa: E501
     author: str = ""
     is_draft: bool = False
+    # PR/MR 在平台上真实创建时间（列表/详情 API 均带）；供提交分析用真实时间而非入队时间
+    created_at: datetime | None = None
 
 
 @dataclass(frozen=True)

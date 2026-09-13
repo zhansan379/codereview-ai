@@ -11,19 +11,42 @@ review_task/review_finding 落库**：两轨（mr/push）幂等抢占靠部分�
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from codereview_ai.domain.models import Finding
+from codereview_ai.domain.models import Finding, as_naive_utc, parse_forge_datetime
 from codereview_ai.review.increments import IncrementReference, finding_fingerprint
 from codereview_ai.storage.db import session_factory
 from codereview_ai.storage.models import Project, ReviewFinding, ReviewTask
 
 #: 短标题缺失时（静态/旧 LLM）由完整分析 content 兜底截断。
 _MAX_TITLE = 40
+
+
+def _pr_created_at_from_payload(payload: str) -> Any:
+    """从原始 webhook JSON 提取 PR/MR 平台创建时间；无则 None（绝不抛错）。
+
+    路径与 forge 解析同源：GitHub/Gitee `pull_request.created_at`、GitLab
+    `object_attributes.created_at`。供 ensure_task 在调用方未显式给值时兜底提取，
+    让 webhook 行落库即带真实时间。
+    """
+    try:
+        data = json.loads(payload or "")
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    for key in ("pull_request", "object_attributes"):
+        node = data.get(key)
+        if isinstance(node, dict):
+            dt = parse_forge_datetime(node.get("created_at"))
+            if dt is not None:
+                return dt
+    return None
 
 
 def _finding_title(f: Finding) -> str:
@@ -196,6 +219,7 @@ class ReviewRepository:
         payload: str = "",
         trace_id: str = "",
         diff_snapshot: str = "",
+        pr_created_at: Any = None,
     ) -> int | None:
         """按幂等键幂等落一条 `queued` 审计行并返回 id；已被抢占/在审返回 None。
 
@@ -209,6 +233,9 @@ class ReviewRepository:
         - `queued`（等待 worker 消费/本生产者的入队行）→ 返回该 id，调用方照常处理并翻
           running（队列消费者即该行的拥有者）；终态（`failed`/`completed`/`skipped`）→ 返回
           该 id，供调用方重试/复用（已失败的 head 不应被永久跳过）。
+
+        `pr_created_at`：PR/MR 平台创建时间；未显式给值且是 mr 轨时从 payload 兜底提取，
+        都没有则存 NULL（提交分析退化为 queued_at）。
         """
         session = session_factory(self._engine)
         async with session() as s:
@@ -234,6 +261,11 @@ class ReviewRepository:
                     Project.provider == provider, Project.repo_id == repo_id
                 )
             )).scalar_one_or_none()
+            if pr_created_at is None and event_type == "mr":
+                pr_created_at = _pr_created_at_from_payload(payload)
+            if isinstance(pr_created_at, datetime):
+                # DB 存储口径 naive UTC（SQLite 剥 tzinfo 不换算，必须先归一）
+                pr_created_at = as_naive_utc(pr_created_at)
             task = ReviewTask(
                 provider=provider, repo_id=repo_id, pr_number=pr_number,
                 event_type=event_type, branch=branch, head_sha=head_sha,
@@ -242,6 +274,7 @@ class ReviewRepository:
                 payload=payload,
                 trace_id=trace_id, diff_snapshot=diff_snapshot,
                 project_id=project_id,
+                pr_created_at=pr_created_at,
             )
             s.add(task)
             try:

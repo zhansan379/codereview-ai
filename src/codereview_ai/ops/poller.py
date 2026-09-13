@@ -128,6 +128,7 @@ class PRPoller:
                         pr_author=pr.author,
                         web_url=pr.web_url,
                         payload="",  # 已解析 PR 直接入队，无需原始 body
+                        pr_created_at=pr.created_at,  # 平台真实创建时间，提交分析不再退化为入队时间
                     )
                     # 3) 入队异步审查，不等待 LLM 完成。
                     await self._enqueuer.enqueue_pr(proj.provider, pr)

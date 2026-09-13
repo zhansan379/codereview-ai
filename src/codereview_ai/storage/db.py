@@ -4,8 +4,8 @@
   `postgresql+asyncpg://...`（standard）。
 - SQLite 每个连接初始化 `WAL / busy_timeout / foreign_keys`（修复旧项目
   `database is locked` 与 fd 泄漏问题，见 reference/antipatterns.md）。
-- 建表统一走 `Base.metadata.create_all`（方言编译器生成 DDL），不做存量表补列
-  （schema 已稳定；SQLite/PG 首次建表即最新结构，见 init_db）。
+- 建表统一走 `Base.metadata.create_all`（方言编译器生成 DDL）；存量表的新增列由
+  `_COLUMN_FALLBACKS` 登记后幂等补齐（见 init_db/_ensure_columns）。
 """
 
 from __future__ import annotations
@@ -185,14 +185,51 @@ def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
 
 
 async def init_db(engine: AsyncEngine) -> None:
-    """建表（create_all，只建缺失表；schema 已稳定，不做存量表补列）。
+    """建表（create_all，只建缺失表）+ 存量表增量补列（幂等，仅登记过的列）。
 
-    SQLite/PG 的 DDL 由方言编译器各自生成；已存在（含旧版本建）的表一律跳过。
+    SQLite/PG 的 DDL 由方言编译器各自生成；已存在（含旧版本建）的表一律跳过——
+    补列走 `_ensure_columns`（create_all 不 ALTER 存量表）。
     """
     from codereview_ai.storage.models import Base
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _ensure_columns(conn)
+
+
+#: 存量表增量补列登记：(表名, 列名, DDL 片段)。create_all 只建新表不加列，
+#: 存量库升级依赖此处幂等补齐；DDL 片段仅 SQLite 用（PG 按列名 IF NOT EXISTS 补）。
+_COLUMN_FALLBACKS: tuple[tuple[str, str, str], ...] = (
+    ("review_task", "pr_created_at", "DATETIME"),
+)
+
+
+async def _ensure_columns(conn: object) -> None:
+    """为存量表补登记过的新列；两方言幂等（PG `IF NOT EXISTS`，SQLite 查 PRAGMA）。"""
+    from sqlalchemy import text
+
+    is_pg = (getattr(conn, "dialect", None) is not None and conn.dialect.name == "postgresql")  # type: ignore[attr-defined]
+    for table, name, ddl in _COLUMN_FALLBACKS:
+        try:
+            if is_pg:
+                await conn.execute(  # type: ignore[attr-defined]
+                    text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} TIMESTAMPTZ NULL")
+                )
+            else:
+                cols = {
+                    row[1]
+                    for row in (
+                        await conn.execute(  # type: ignore[attr-defined]
+                            text(f"PRAGMA table_info({table})")
+                        )
+                    ).fetchall()
+                }
+                if name not in cols:
+                    await conn.execute(  # type: ignore[attr-defined]
+                        text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+                    )
+        except Exception:  # noqa: BLE001 — 补列失败不阻断启动（表可能尚不存在等）
+            logger.warning("存量表补列失败（不阻断启动）：%s.%s", table, name, exc_info=True)
 
 
 async def get_session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:

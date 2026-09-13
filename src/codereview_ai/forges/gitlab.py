@@ -19,7 +19,13 @@ from typing import Any
 
 import httpx
 
-from codereview_ai.domain.models import CommitInfo, FileDiff, PullRequest, PushEvent
+from codereview_ai.domain.models import (
+    CommitInfo,
+    FileDiff,
+    PullRequest,
+    PushEvent,
+    parse_forge_datetime,
+)
 from codereview_ai.forges.base import (
     ForgeAdapter,
     change_type_from_flags,
@@ -64,6 +70,7 @@ def parse_merge_request_payload(data: dict[str, Any]) -> PullRequest | None:
         base_sha="",  # webhook 里不一定有，交给 fetch_pull_request 从 API 补齐
         diff_refs=None,
         author=str(((data.get("user") or {}) or {}).get("username") or ""),
+        created_at=parse_forge_datetime(oa.get("created_at")),
     )
 
 
@@ -210,6 +217,7 @@ class GitLabForge(ForgeAdapter):
                     if isinstance(refs, dict) else None
                 ),
                 author=str(((item.get("author") or {}) or {}).get("username") or ""),
+                created_at=parse_forge_datetime(item.get("created_at")),
             ))
         return out
 

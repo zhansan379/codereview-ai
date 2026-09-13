@@ -106,7 +106,7 @@ export default {
       rest_ratio: '{pct}% 的提交发生在休息时段——技术产出很拼，但身体是长期资产，注意节奏',
       healthy: '提交节奏整体健康，保持当前工作节律即可',
     },
-    note: '说明：统计基于审查任务的提交时间戳（MR 取入队时间、push 取各提交时间），反映代码提交行为的辛苦程度，不代表全部工作时间，仅供参考。',
+    note: '说明：统计基于代码提交行为的时间戳（MR/PR 优先取平台创建时间，早期无记录的历史数据退化为入队时间；push 取各提交时间），反映代码提交行为的辛苦程度，不代表全部工作时间，仅供参考。',
     empty: '当前筛选范围内暂无提交数据',
   },
   en: {
@@ -215,7 +215,7 @@ export default {
       rest_ratio: '{pct}% of commits land in rest hours — productivity is great, but health is a long-term asset',
       healthy: 'Overall healthy rhythm — keep it up',
     },
-    note: 'Note: based on review-task commit timestamps (MR queued time / push commit time). Reflects commit-time intensity only, not total working hours.',
+    note: 'Note: based on code-commit timestamps (MR/PR prefers the platform creation time; legacy rows without it fall back to queue time; push uses each commit time). Reflects commit-time intensity only, not total working hours.',
     empty: 'No commits in the selected range',
   },
 }

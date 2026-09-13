@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from collections.abc import Callable
 
 import httpx
@@ -39,6 +40,7 @@ def _sample_pr_payload() -> dict:
             "base": {"ref": "main", "sha": "9000"},
             "draft": False,
             "head_sha": "abc123",
+            "created_at": "2026-09-12T14:33:10Z",
         },
     }
 
@@ -67,6 +69,8 @@ def test_parse_pull_request_maps_fields():
     assert pr.base_sha == "9000"
     assert pr.is_draft is False
     assert pr.author == "alice"
+    # 平台真实创建时间：Z 后缀解析为 tz-aware UTC
+    assert pr.created_at == datetime(2026, 9, 12, 14, 33, 10, tzinfo=UTC)
 
 
 def test_parse_non_pull_request_is_none():
@@ -92,6 +96,7 @@ def _open_pulls_body() -> list[dict]:
             "base": {"ref": "main", "sha": "b0", "repo": {"full_name": "acme/widgets"}},
             "user": {"login": "bob"},
             "draft": False,
+            "created_at": "2026-09-12T10:00:00Z",
         }
     ]
 
@@ -114,6 +119,7 @@ def test_list_pulls_maps_items():
     assert pr.head_sha == "h1"
     assert pr.base_sha == "b0"
     assert pr.author == "bob"
+    assert pr.created_at == datetime(2026, 9, 12, 10, 0, tzinfo=UTC)
 
 
 def test_list_pulls_empty_body():

@@ -20,7 +20,7 @@ from typing import Any
 
 import httpx
 
-from codereview_ai.domain.models import ChangeType, FileDiff, PullRequest
+from codereview_ai.domain.models import ChangeType, FileDiff, PullRequest, parse_forge_datetime
 from codereview_ai.forges.base import (
     ForgeAdapter,
     repo_path_from_url,
@@ -74,6 +74,7 @@ def parse_pull_request_payload(data: dict[str, Any]) -> PullRequest | None:
         author=str(((event.get("user") or {}).get("login"))
                    or ((data.get("sender") or {}).get("login")) or ""),
         is_draft=bool(event.get("draft")),
+        created_at=parse_forge_datetime(event.get("created_at")),
     )
 
 
@@ -119,6 +120,7 @@ def pull_request_from_item(item: dict[str, Any], repo_id: str = "") -> PullReque
         base_sha=str(base.get("sha") or ""),
         author=str(((item.get("user") or {}).get("login")) or ""),
         is_draft=bool(item.get("draft")),
+        created_at=parse_forge_datetime(item.get("created_at")),
     )
 
 
