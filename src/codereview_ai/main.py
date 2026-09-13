@@ -163,11 +163,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         forge_registry = ForgeRegistry(provider_repo, http)
         await forge_registry.refresh_all()
         app.state.forge_registry = forge_registry
+        # 有无可用审查 worker（LLM+平台齐备，启动时定格）：False 时入队路径把任务直接
+        # 落「未开始(no_llm)」而非排队——队列里没有消费者，排队只是永卡。
+        runner_ready = reviewer is not None and forge_registry.available()
+        app.state.enqueuer.can_run = lambda: runner_ready
         # 补拉功能不依赖 LLM，只要 forge 可用就可以创建
         if forge_registry.available():
             poll = PRPoller(
                 engine, forge_registry, app.state.enqueuer,
                 include_closed_default=settings.poll_include_closed,
+                can_run=lambda: runner_ready,
             )
             app.state.poller = poll
             app.state.poll_running = False
@@ -187,9 +192,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if reviewer is not None and forge_registry.available():
             review_repo = review_repo_for_enqueue
             # —— 启动回放（DESIGN §9.2 / 崩溃恢复）：重启后把遗留卡死的 queued/running
-            #    且带 payload 的任务重新投回内存队列自动续跑（幂等：已审过的同 head 会被
-            #    增量决策短路，不重复审查）。否则数据库里的 queued 行将永远孤死无失败原因。
-            n_replay = await replay_pending_tasks(review_repo, app.state.enqueuer)
+            #    任务重新投回内存队列自动续跑（幂等：已审过的同 head 会被增量决策短路，
+            #    不重复审查）。补拉通道的 payload 空行同样回放（按 PR 实时 fetch）。
+            #    否则数据库里的 queued 行将永远孤死无失败原因。
+            pending_rows = await review_repo.pending_for_replay()
+            n_replay = await replay_pending_tasks(review_repo, app.state.enqueuer, pending_rows)
             if n_replay:
                 logger.info("启动回放：重新入队 %s 条遗留任务续跑", n_replay)
             # F4/M4.7：路由从 DB notifier_config 拉取（project_id=None→仅全局默认）
@@ -319,6 +326,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "未配置可用 LLM 模型（env CR_LLM_MODEL / DB model_config）或可用平台"
                 "（env CR_GITHUB_TOKEN/CR_GITLAB_TOKEN 或设置页 DB），webhook 仍可入队但无 worker"
             )
+            # 遗留的 queued/running 行没有消费者，永卡排队无意义 → 批量落「未开始」，
+            # 条件就绪（配置 LLM 后重启）由用户在审查记录页手动执行。
+            n_hold = await review_repo_for_enqueue.mark_pending_not_started(
+                reason="no_llm",
+                error="启动时未配置可用 LLM（或平台适配器），服务未启动审查 worker，任务未开始",
+            )
+            if n_hold:
+                logger.warning("已把 %s 条遗留排队任务转为「未开始」（no_llm）", n_hold)
 
         app_port = os.environ.get("CR_APP_PORT", "5001")
         logger.info("管理后台已就绪：http://127.0.0.1:%s/admin", app_port)

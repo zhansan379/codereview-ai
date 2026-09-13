@@ -206,6 +206,8 @@ async def test_mr_force_rerun_bypasses_gate(tmp_path):
         task = (await s.execute(sa.select(ReviewTask).where(ReviewTask.event_type == "mr"))
                 ).scalar_one()
         assert task.state == "skipped" and task.skip_reason == "mr_disabled"
+        # 模拟 tasks.retry 的完整动作：翻回 queued + 置 force_rerun
+        task.state = "queued"
         task.force_rerun = True
         await s.commit()
 

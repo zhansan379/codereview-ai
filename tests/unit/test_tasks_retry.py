@@ -77,7 +77,9 @@ class _FakeEnqueuer:
 
 
 def _request(enqueuer) -> SimpleNamespace:
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(enqueuer=enqueuer)))
+    # worker_pool 非空 = 「worker 就绪」，否则 retry 会被无 worker 守卫 409 拦下
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(enqueuer=enqueuer,
+                                                                    worker_pool=object())))
 
 
 async def test_mr_retry_without_payload_rebuilds_pr(engine, admin):

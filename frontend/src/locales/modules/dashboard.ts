@@ -1,5 +1,5 @@
 // 仪表盘（DashboardView）
-// 注意「任务状态分布」用的措辞（已完成/跳过）与审查记录列表（审查成功/已跳过）不同，
+// 注意「任务状态分布」用的措辞（已完成/未开始）与审查记录列表（审查成功/未开始）不同，
 // 是刻意保留的既有差异，所以状态标签放在这里，不复用 enum.state.*。
 export default {
   'zh-CN': {
@@ -51,7 +51,7 @@ export default {
       queued: '排队中',
       completed: '已完成',
       failed: '失败',
-      skipped: '跳过',
+      skipped: '未开始',
     },
     mode: {
       agentic: 'Agent 审查',
@@ -113,7 +113,7 @@ export default {
       queued: 'Queued',
       completed: 'Completed',
       failed: 'Failed',
-      skipped: 'Skipped',
+      skipped: 'Not started',
     },
     mode: {
       agentic: 'Agent review',

@@ -538,6 +538,37 @@ export function retryTask(id: number): Promise<{ id: number; state: string; atte
   return client.post(`/tasks/${id}/retry`).then((r) => r.data)
 }
 
+/** 停止排队中的任务：queued → 未开始（manual_stop）。 */
+export function stopTask(id: number): Promise<{ id: number; state: string; skip_reason: string }> {
+  return client.post(`/tasks/${id}/stop`).then((r) => r.data)
+}
+
+export interface BatchItemResult {
+  id: number
+  status: 'executed' | 'ignored' | 'denied'
+}
+export interface BatchResult {
+  executed: number
+  ignored: number
+  denied: number
+  results: BatchItemResult[]
+}
+
+/** 批量执行勾选的未开始/失败任务（逐行走单条重试逻辑）。 */
+export function batchExecuteTasks(ids: number[]): Promise<BatchResult> {
+  return client.post('/tasks/batch-execute', { ids }).then((r) => r.data)
+}
+
+/** 批量停止勾选的排队中任务（queued → 未开始）。 */
+export function batchStopTasks(ids: number[]): Promise<BatchResult> {
+  return client.post('/tasks/batch-stop', { ids }).then((r) => r.data)
+}
+
+/** 批量删除勾选的审查记录（含 findings 级联）。 */
+export function batchDeleteReviews(ids: number[]): Promise<{ deleted: number; denied: number }> {
+  return client.post('/reviews/batch-delete', { ids }).then((r) => r.data)
+}
+
 export function redeliverTask(id: number): Promise<{ id: number; status: string }> {
   return client.post(`/tasks/${id}/redeliver`).then((r) => r.data)
 }

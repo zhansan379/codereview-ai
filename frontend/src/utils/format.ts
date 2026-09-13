@@ -26,7 +26,9 @@ export function stateTagType(state: string): string {
   if (state === 'completed' || state === 'success' || state === 'reviewed') return 'success'
   if (state === 'failed') return 'danger'
   if (state === 'running') return 'warning' // 正在被 worker 审查（活跃）
-  if (state === 'skipped' || state === 'queued') return 'info' // queued 只剩崩溃孤儿/重放前
+  // skipped=未开始（门控跳过/未配置 LLM/手动停止/分支已删），queued=排队中：
+  // 都是「还没跑出结果」，同为 info 灰；queued 正常只是过场，长期停留即孤儿/无 worker。
+  if (state === 'skipped' || state === 'queued') return 'info'
   return 'warning'
 }
 
@@ -35,6 +37,11 @@ export function stateTagType(state: string): string {
 // 保持签名不变就不用动所有调用点；在模板/computed 里调用时仍会跟踪 locale，切换即刷新。
 export function stateLabel(state: string): string {
   return enumLabel('state', state)
+}
+
+// 未开始原因 → 展示标签（skipped 行的 skip_reason 分型，见 enum.skipReason）
+export function skipReasonLabel(reason: string | null | undefined): string {
+  return enumLabel('skipReason', reason)
 }
 
 // 执行模式 → 展示标签（NULL=未执行审查，如 skipped/failed/empty 空审）

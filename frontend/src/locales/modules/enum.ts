@@ -1,8 +1,10 @@
 // 枚举值 → 展示标签。key 与后端返回的原始值一一对应;
 // 查不到词条时调用方回退显示原始值(后端新增枚举不会显示成空白)。
 //
-// 注意:仪表盘「任务状态分布」用的是另一套措辞(已完成/跳过),在 dashboard 模块里,
-// 这里保持审查记录列表/详情页的措辞(审查成功/已跳过),不要合并。
+// 注意:仪表盘「任务状态分布」用的是另一套措辞(已完成/未开始),在 dashboard 模块里,
+// 这里保持审查记录列表/详情页的措辞(审查成功/未开始),不要合并。
+// skipped 的语义是「未开始」:没能开跑的任务（门控跳过/未配置 LLM/手动停止/分支已删），
+// 条件就绪后由用户手动执行，详见 skipReason 分型。
 export default {
   'zh-CN': {
     state: {
@@ -12,7 +14,15 @@ export default {
       success: '成功',
       reviewed: '已审',
       failed: '失败',
-      skipped: '已跳过',
+      skipped: '未开始',
+    },
+    skipReason: {
+      no_llm: '未配置 LLM',
+      manual_stop: '手动停止',
+      mr_disabled: 'MR 审查未开启',
+      push_disabled: 'push 审查未开启',
+      branch_mismatch: '分支不在审查范围',
+      branch_deleted: '分支已删除',
     },
     severity: {
       critical: '严重',
@@ -54,7 +64,15 @@ export default {
       success: 'Success',
       reviewed: 'Reviewed',
       failed: 'Failed',
-      skipped: 'Skipped',
+      skipped: 'Not started',
+    },
+    skipReason: {
+      no_llm: 'LLM not configured',
+      manual_stop: 'Manually stopped',
+      mr_disabled: 'MR review off',
+      push_disabled: 'push review off',
+      branch_mismatch: 'Branch not in scope',
+      branch_deleted: 'Branch deleted',
     },
     severity: {
       critical: 'Critical',

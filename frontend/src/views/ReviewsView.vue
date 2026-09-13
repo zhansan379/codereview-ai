@@ -149,20 +149,60 @@
       </template>
     </el-dialog>
 
+    <!-- 多选批量操作条：勾选后才出现，按钮按所选行的状态自动适配生效范围 -->
+    <el-card v-if="selection.length > 0" class="batch-card">
+      <div class="batch-bar">
+        <span class="batch-count">{{ $t('reviews.batchSelected', { n: selection.length }) }}</span>
+        <span class="batch-actions">
+          <el-button
+            type="primary"
+            size="small"
+            :disabled="executableCount === 0"
+            :loading="batchBusy"
+            @click="onBatchExecute"
+          >
+            {{ $t('reviews.batchExecute') }} ({{ executableCount }})
+          </el-button>
+          <el-button
+            type="warning"
+            size="small"
+            :disabled="stoppableCount === 0"
+            :loading="batchBusy"
+            @click="onBatchStop"
+          >
+            {{ $t('reviews.batchStop') }} ({{ stoppableCount }})
+          </el-button>
+          <el-button
+            type="danger"
+            size="small"
+            :loading="batchBusy"
+            @click="onBatchDelete"
+          >
+            {{ $t('reviews.batchDelete') }} ({{ selection.length }})
+          </el-button>
+        </span>
+      </div>
+    </el-card>
+
     <el-card data-tour="reviews-detail-table">
       <ReviewsTable
         :items="items"
         :loading="loading"
         show-process
         show-retry
+        show-stop
+        selectable
         show-redeliver
         show-delete
         :retrying-id="retryingId"
+        :stopping-id="stoppingId"
         :redelivering-id="redeliveringId"
         @detail="goDetail"
         @retry="onRetry"
+        @stop="onStop"
         @redeliver="onRedeliver"
         @delete="onDelete"
+        @selection-change="onSelectionChange"
       />
 
       <!-- 服务端分页 -->
@@ -189,9 +229,13 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   listReviews,
   retryTask,
+  stopTask,
   redeliverTask,
   exportReviews,
   deleteReview,
+  batchExecuteTasks,
+  batchStopTasks,
+  batchDeleteReviews,
   type ReviewFilter,
   type ReviewItem,
 } from '../api'
@@ -392,6 +436,109 @@ async function onRetry(row: ReviewItem) {
   }
 }
 
+// ── 多选批量操作：执行（未开始/失败）、停止（排队中）、删除 ─────────────
+const selection = ref<ReviewItem[]>([])
+const stoppingId = ref<number | null>(null)
+const batchBusy = ref(false)
+
+function onSelectionChange(rows: ReviewItem[]) {
+  selection.value = rows
+}
+
+// 各批量按钮只作用于状态匹配的所选行；括号里的计数让用户操作前就有预期
+const executableCount = computed(
+  () => selection.value.filter((r) => r.state === 'skipped' || r.state === 'failed').length,
+)
+const stoppableCount = computed(
+  () => selection.value.filter((r) => r.state === 'queued').length,
+)
+
+// 把批量结果翻译成人话：「执行 3 条，2 条状态不符已跳过」；一条没执行成给 warning
+function batchToast(prefix: string, executed: number, ignored: number, denied: number) {
+  const parts = [t(`${prefix}.done`, { n: executed })]
+  if (ignored) parts.push(t(`${prefix}.ignored`, { n: ignored }))
+  if (denied) parts.push(t(`${prefix}.denied`, { n: denied }))
+  const msg = parts.join('，')
+  if (executed > 0) ElMessage.success(msg)
+  else ElMessage.warning(msg)
+}
+
+async function onBatchExecute() {
+  const ids = selection.value
+    .filter((r) => r.state === 'skipped' || r.state === 'failed')
+    .map((r) => r.id)
+  if (!ids.length) return
+  batchBusy.value = true
+  try {
+    const res = await batchExecuteTasks(ids)
+    batchToast('reviews.batchExecuteResult', res.executed, res.ignored, res.denied)
+    load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || t('reviews.batchFailed'))
+  } finally {
+    batchBusy.value = false
+  }
+}
+
+async function onBatchStop() {
+  const ids = selection.value.filter((r) => r.state === 'queued').map((r) => r.id)
+  if (!ids.length) return
+  batchBusy.value = true
+  try {
+    const res = await batchStopTasks(ids)
+    batchToast('reviews.batchStopResult', res.executed, res.ignored, res.denied)
+    load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || t('reviews.batchFailed'))
+  } finally {
+    batchBusy.value = false
+  }
+}
+
+async function onBatchDelete() {
+  const ids = selection.value.map((r) => r.id)
+  try {
+    await ElMessageBox.confirm(t('reviews.batchDeleteConfirm', { n: ids.length }), t('common.tip'), {
+      type: 'warning',
+    })
+  } catch {
+    return // 用户取消
+  }
+  batchBusy.value = true
+  try {
+    const res = await batchDeleteReviews(ids)
+    if (res.denied) {
+      ElMessage.warning(t('reviews.batchDeleteResult.done', { n: res.deleted })
+        + '，' + t('reviews.batchDeleteResult.denied', { n: res.denied }))
+    } else {
+      ElMessage.success(t('reviews.batchDeleteResult.done', { n: res.deleted }))
+    }
+    if (items.value.length <= ids.length && query.offset > 0) {
+      query.offset -= query.limit
+      syncUrl()
+    }
+    load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || t('common.deleteFailed'))
+  } finally {
+    batchBusy.value = false
+  }
+}
+
+// 停止单条排队中的任务：queued → 未开始（手动停止），残留队列项由后端幂等 no-op
+async function onStop(row: ReviewItem) {
+  stoppingId.value = row.id
+  try {
+    await stopTask(row.id)
+    ElMessage.success(t('reviews.stopSubmitted'))
+    load()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || t('reviews.stopFailed'))
+  } finally {
+    stoppingId.value = null
+  }
+}
+
 // 重新发送评论（writeback_failed 行）：从 DB 取已持久化成果补发，不重算。
 // 后端 fire-and-forget 后台执行，成功与否在后台翻转 writeback_failed，这里仅提示已发起。
 async function onRedeliver(row: ReviewItem) {
@@ -438,6 +585,25 @@ onMounted(() => {
 <style scoped>
 .filter-card {
   margin-bottom: 5px;
+}
+.batch-card {
+  margin-bottom: 5px;
+}
+.batch-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.batch-count {
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+.batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .card-head {
   display: flex;

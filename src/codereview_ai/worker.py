@@ -24,7 +24,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from codereview_ai.domain.models import FileDiff, Finding, PullRequest, PushEvent, ReviewResult
-from codereview_ai.forges.base import ForgeAdapter
+from codereview_ai.forges.base import ForgeAdapter, repo_path_from_url
 from codereview_ai.logging import TRACE_ID
 from codereview_ai.notifiers.dispatch import NotifierDispatcher
 from codereview_ai.queue.base import TaskMeta, TaskQueue
@@ -312,6 +312,9 @@ class QueueEnqueuer:
 
     `on_enqueue`（可空）：入队时异步执行的回调，用于「入队即建 mr 审计行」，让队列里
     等待的 PR 从入队起就在管理页可见为『排队中』；回调失败不阻断入队（审计由 process 兜底）。
+    `can_run`（可空）：返回 False 表示服务内没有可用 worker（LLM/平台未配置，启动时
+    定格）——此时**不投内存队列**（没有消费者会认领），审计行直接落「未开始」
+    （skipped/no_llm），如实表达「现在跑不了，条件就绪后手动执行」。
     """
 
     def __init__(
@@ -319,13 +322,24 @@ class QueueEnqueuer:
         queue: TaskQueue,
         store: EventStore,
         *,
-        on_enqueue: Callable[[str, bytes], Awaitable[None]] | None = None,
+        on_enqueue: Callable[..., Awaitable[None]] | None = None,
+        can_run: Callable[[], bool] | None = None,
     ) -> None:
         self._queue = queue
         self._store = store
         self.on_enqueue = on_enqueue
+        self.can_run = can_run
 
     async def enqueue(self, provider: str, raw: bytes) -> str:
+        if self.can_run is not None and not self.can_run():
+            if self.on_enqueue is not None:
+                try:
+                    await self.on_enqueue(provider, raw, hold=True)
+                except TypeError:  # 注入的旧回调只收 (provider, raw)，不认 hold
+                    await self.on_enqueue(provider, raw)
+                except Exception as exc:  # noqa: BLE001 建行失败不阻断响应
+                    logger.warning("入队建行失败（%s）：%s", provider, exc)
+            return ""
         meta = await self._queue.enqueue(provider)
         self._store.put(meta.task_id, provider, raw)
         if self.on_enqueue is not None:
@@ -349,24 +363,63 @@ class QueueEnqueuer:
 
 
 async def replay_pending_tasks(
-    review_repo: ReviewRepository, enqueuer: QueueEnqueuer
+    review_repo: ReviewRepository,
+    enqueuer: QueueEnqueuer,
+    rows: list[Any] | None = None,
 ) -> int:
-    """启动回放（DESIGN §9.2 / 崩溃恢复）：把遗留 queued/running 且带 payload 的任务
-    重新投回内存队列，让上次被杀死的审查续跑。
+    """启动回放（DESIGN §9.2 / 崩溃恢复）：把遗留 queued/running 任务重新投回内存队列，
+    让上次被杀死的审查续跑。
 
     内存队列「重启即清空」(`queue.asyncio`)，DB 侧遗留的 queued 行不会被消费而变成
-    孤死任务、无失败原因可查。此函数在 worker 启动前调用，扫描 DB 待回放行并据此
-    重新入队。幂等安全：同 head 已 completed 的重放由增量决策/`ensure_task` 短路，
-    不重复审查也不重复写 finding。
+    孤死任务、无失败原因可查。此函数在 worker 启动前调用；`rows` 缺省时自行扫描
+    （`pending_for_replay` 已**不要求 payload 非空**——补拉通道的行同样回放）：
+    - 有原始 payload → 原事件重放；
+    - payload 为空的 mr 行（补拉/补审入队）→ 按行字段重建 PR 走实时 fetch 通道；
+    - 无 payload 且非 mr 的行（现行写入路径不会产生）→ 留 queued 并告警。
+    幂等安全：同 head 已 completed 的重放由增量决策/`ensure_task` 短路，不重复审查
+    也不重复写 finding。
+
+    无可用 worker 时调用方不应走本函数，改用 `mark_pending_not_started` 批量落未开始。
     """
-    rows = await review_repo.pending_for_replay()
-    for _task_id, provider, payload in rows:
-        await enqueuer.enqueue(provider, payload.encode())
-    return len(rows)
+    if rows is None:
+        rows = await review_repo.pending_for_replay()
+    requeued = 0
+    for row in rows:
+        try:
+            if row.payload:
+                await enqueuer.enqueue(row.provider, row.payload.encode())
+            elif row.event_type == "mr" and row.pr_number is not None:
+                await enqueuer.enqueue_pr(row.provider, _pr_from_task_row(row))
+            else:
+                logger.warning(
+                    "回放跳过任务 %s：无 payload 且非 mr 轨（provider=%s, event=%s）",
+                    row.id, row.provider, row.event_type,
+                )
+                continue
+            requeued += 1
+        except Exception:  # noqa: BLE001 单行入队失败不中断整批回放
+            logger.warning("回放任务 %s 入队失败", row.id, exc_info=True)
+    return requeued
+
+
+def _pr_from_task_row(row: Any) -> PullRequest:
+    """从审计行字段重建中立 PR，供补拉通道同款 fetch 路径重放（payload 为空的行）。"""
+    return PullRequest(
+        provider=row.provider,
+        repo_id=row.repo_id,
+        repo_full_name=(repo_path_from_url(row.web_url, row.provider) if row.web_url else ""),
+        web_url=row.web_url,
+        pr_number=row.pr_number or 0,
+        title=row.pr_title,
+        source_branch=row.branch,
+        target_branch="",  # 审计行不落 target；fetch_pull_request 会补 diff_refs
+        head_sha=row.head_sha,
+        base_sha=row.base_sha,
+    )
 
 
 async def scribble_queued_task(
-    review_repo: ReviewRepository, forge: ForgeAdapter | None, raw: bytes
+    review_repo: ReviewRepository, forge: ForgeAdapter | None, raw: bytes, *, hold: bool = False
 ) -> None:
     """入队即建 mr 审计行：让队列里等待的 PR 从入队起可见为『排队中』。
 
@@ -374,10 +427,13 @@ async def scribble_queued_task(
     长任务后面的会完全不可见。此函数在入队时用同一套 parse 幂等建行（state=queued）；
     worker 开审后同一个 `ensure_task` 命中该行 → 标 running（DESIGN §9.2）。
 
+    `hold=True`（无可用 worker：LLM/平台未配置）：不投内存队列，行直接落「未开始」
+    （skipped/no_llm）——如实表达「现在跑不了，条件就绪后手动执行」。
+
     安全：已审过的同 head 重放会被增量决策短路（REASON_ALREADY），重复 webhook 不建
-    重复行也不重复审查。**只对 mr 轨建行**——push 轨靠 `push_existing_audit`「存在=已
-    处理」做幂等预检，预建行会被误判成已处理而跳过；且 push 审计行本就是开审即建，
-    排队不可见的窗口极小。
+    重复行也不重复审查；hold 翻转只作用于 queued/running 行，绝不碰 completed 终态。
+    **只对 mr 轨建行**——push 轨靠 `push_existing_audit`「存在=已处理」做幂等预检，
+    预建行会被误判成已处理而跳过；且 push 审计行本就是开审即建，排队不可见的窗口极小。
     """
     if forge is None:
         logger.warning("scribble_queued_task: forge is None")
@@ -402,12 +458,18 @@ async def scribble_queued_task(
     if not forge.should_review(action):
         logger.warning("scribble_queued_task: should_review(%s) returned False", action)
         return
-    await review_repo.ensure_task(
+    task_id = await review_repo.ensure_task(
         provider=pr.provider, repo_id=pr.repo_id, pr_number=pr.pr_number,
         event_type="mr", branch=pr.source_branch, head_sha=pr.head_sha,
         base_sha=pr.base_sha, pr_title=pr.title, pr_author=pr.author, web_url=pr.web_url,
         payload=raw.decode("utf-8", "replace"),
     )
+    if hold and task_id is not None:
+        await review_repo.mark_not_started_if_pending(
+            int(task_id),
+            reason="no_llm",
+            error="未配置可用 LLM（或平台适配器），服务未启动审查 worker，任务未开始",
+        )
 
 
 def _event_action(data: dict[str, Any]) -> str:

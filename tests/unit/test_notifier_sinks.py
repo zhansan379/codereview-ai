@@ -378,3 +378,61 @@ async def test_wecom_folds_low_severities_and_keeps_bytes_budget():
     assert "🟡 中等 ×1（详见完整报告）" in content          # medium 折叠
     assert len(content.encode("utf-8")) <= 4096
     await client.aclose()
+
+
+# ── 作者/分支元信息行（作者恒用平台用户名；真@仍走 at_users 平台 ID）────────
+
+
+async def test_dingtalk_renders_author_and_branch_lines():
+    captured: list[httpx.Request] = []
+    client = _make_client(captured)
+    notifier = DingTalkNotifier(DINGTALK_WEBHOOK, http=client)
+    await notifier.send(build_review_notification(_pr(), _result(85, [])))
+    text = _req_json(captured[0])["markdown"]["text"]
+    assert "- 作者：alice" in text
+    assert "- 源分支 f → 目标分支 m" in text
+    await client.aclose()
+
+
+async def test_dingtalk_omits_branch_line_when_push_shell():
+    """push 轨套壳 PR（源=目标=分支名）不是真分支对 → 不渲染分支行。"""
+    captured: list[httpx.Request] = []
+    client = _make_client(captured)
+    notifier = DingTalkNotifier(DINGTALK_WEBHOOK, http=client)
+    msg = build_review_notification(_pr(), _result(85, []))
+    msg.source_branch = msg.target_branch = "main"
+    await notifier.send(msg)
+    text = _req_json(captured[0])["markdown"]["text"]
+    assert "源分支" not in text
+    assert "- 作者：alice" in text  # 作者行不受影响
+    await client.aclose()
+
+
+async def test_feishu_renders_author_and_branch_lines():
+    captured: list[httpx.Request] = []
+    client = _make_client(captured)
+    notifier = FeishuNotifier("https://open.feishu.cn/open-apis/bot/v2/hook/x", http=client)
+    await notifier.send(build_review_notification(_pr(), _result(85, [])))
+    content = _req_json(captured[0])["card"]["elements"][0]["text"]["content"]
+    assert "**作者**：alice" in content
+    assert "**源分支 f → 目标分支 m**" in content
+    await client.aclose()
+
+
+async def test_wecom_renders_author_and_branch_within_budget():
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"errcode": 0})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        notifier = WeComNotifier(
+            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=x", http=client
+        )
+        await notifier.send(build_review_notification(_pr(), _rich_result()))
+    content = _req_json(captured[0])["markdown"]["content"]
+    assert "> 作者：alice" in content
+    assert "> 源分支 f → 目标分支 m" in content
+    assert len(content.encode("utf-8")) <= 4096  # meta 行计入固定字节，截断后仍不超
+    await client.aclose()

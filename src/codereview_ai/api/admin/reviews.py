@@ -486,6 +486,46 @@ async def delete_review(
     await session.commit()
 
 
+class BatchDeleteRequest(BaseModel):
+    ids: list[int]
+
+
+class BatchDeleteResult(BaseModel):
+    deleted: int
+    denied: int
+
+
+@router.post("/batch-delete", response_model=BatchDeleteResult)
+async def batch_delete_reviews(
+    body: BatchDeleteRequest, user: CurrentUser, session: AsyncSession = Depends(get_db)
+) -> BatchDeleteResult:
+    """批量删除勾选的审查记录（含 findings 级联，逐行校验权限）。
+
+    逐行独立判定：不存在/越界的 id 记入 denied，不中断其余；与单条删除同一套
+    级联与「删 completed 动增量基线」语义。
+    """
+    deleted = denied = 0
+    seen: set[int] = set()
+    for rid in body.ids:
+        if rid in seen:
+            continue
+        seen.add(rid)
+        row = (await session.execute(
+            select(ReviewTask).where(ReviewTask.id == rid)
+        )).scalar_one_or_none()
+        if row is None or not await review_task_allowed(session, user, row):
+            denied += 1
+            continue
+        pid = await review_task_project_id(session, row)
+        if not await user_can(session, user, "reviews:manage", project_id=pid):
+            denied += 1
+            continue
+        await session.delete(row)
+        await session.commit()
+        deleted += 1
+    return BatchDeleteResult(deleted=deleted, denied=denied)
+
+
 def _truncate_inplace(value: object, cap: int = 4000) -> object:
     """把 request/response 里任意深度**超过 cap 的字符串**就地压到头部 + 截断标记。
 

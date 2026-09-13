@@ -1,8 +1,12 @@
-"""任务监控 REST（DESIGN §14.2）：任务列表 + 手动重试。
+"""任务监控 REST（DESIGN §14.2）：任务列表 + 手动重试/停止 + 批量操作。
 
-`POST /tasks/{id}/retry` 把 failed（或可补审的 push skipped）重置为 queued 并 attempt+1
-（DESIGN §9.2），便于后台一键重新入队/补审。failed 与门控/配置类 skipped 可重试，
-删分支（branch_deleted）等其余状态 409。push 轨重试会置 force_rerun 以绕过幂等预检。
+- `POST /tasks/{id}/retry` 把 failed / skipped（未开始）重置为 queued 并 attempt+1
+  （DESIGN §9.2）。failed=审过但出错重跑；skipped=未开始（门控跳过/未配置 LLM/手动
+  停止/分支已删）手动执行——置 force_rerun 绕过门控与幂等预检强制审一次。
+- `POST /tasks/{id}/stop` 把 queued 行翻成未开始（skipped/manual_stop）：内存队列里的
+  残留项被 worker 认领后经 `ensure_task` 的未开始不可抢占语义自动 no-op，无需动队列。
+- `POST /tasks/batch-execute` / `batch-stop`：审查记录页多选批量执行/停止，逐行复用
+  单条逻辑，逐行返回状态（executed/ignored/denied），部分失败不中断其余。
 """
 
 from __future__ import annotations
@@ -68,6 +72,29 @@ class TaskRedelivered(BaseModel):
     status: str
 
 
+class TaskStopped(BaseModel):
+    id: int
+    state: str
+    skip_reason: str
+
+
+class BatchIdsRequest(BaseModel):
+    ids: list[int]
+
+
+class BatchItemResult(BaseModel):
+    id: int
+    #: executed=已执行；ignored=状态不符跳过；denied=无权限/不存在
+    status: str
+
+
+class BatchResult(BaseModel):
+    executed: int
+    ignored: int
+    denied: int
+    results: list[BatchItemResult]
+
+
 async def _get_or_404(session: AsyncSession, task_id: int) -> ReviewTask:
     row = (await session.execute(select(ReviewTask).where(ReviewTask.id == task_id))).scalar_one_or_none()  # noqa: E501
     if row is None:
@@ -92,12 +119,6 @@ async def list_tasks(
     return [TaskOut.model_validate(r) for r in rows]
 
 
-#: 只要「门控/配置类」跳过的可补审；删分支（branch_deleted）无 head 可审，禁止。
-#: 两轨各自放行：push 轨 push_disabled/branch_mismatch；mr 轨 mr_disabled（MR 无分支规则）。
-_RETRYABLE_PUSH_REASONS = {"push_disabled", "branch_mismatch"}
-_RETRYABLE_MR_REASONS = {"mr_disabled"}
-
-
 def _pr_from_task(row: ReviewTask) -> PullRequest:
     """从审计行重建一个中立 PR，供补拉同款 fetch 路径重放。
 
@@ -120,22 +141,58 @@ def _pr_from_task(row: ReviewTask) -> PullRequest:
 
 
 def _retryable(row: ReviewTask) -> bool:
-    """该行是否允许手动重试/补审。
+    """该行是否允许手动重试/执行。
 
-    - `failed` → 照旧可重试；
-    - `skipped` + 门控/配置类原因 → 可补审（前端「补审」，绕过门控强审）。两轨各自放行：
-      push 轨 `push_disabled`/`branch_mismatch`，mr 轨 `mr_disabled`；
-    - 其余（queued/running/completed、branch_deleted）→ 不可。
+    - `failed` → 重试（审过但出错，重跑一次）；
+    - `skipped`（未开始）→ 执行：门控跳过（绕过开关强制审一次）、未配置 LLM、手动停止、
+      分支已删（push 轨全零 after）均放行——最后一类执行会自然失败转 failed，用户能在
+      error 里看到明确原因，好过按钮永远点不了；
+    - 其余（queued/running/completed）→ 不可。
     """
-    if row.state == "failed":
-        return True
-    if row.state != "skipped":
-        return False
-    reasons = (
-        _RETRYABLE_PUSH_REASONS if row.event_type == "push"
-        else (_RETRYABLE_MR_REASONS if row.event_type == "mr" else frozenset())
-    )
-    return row.skip_reason in reasons
+    return row.state in ("failed", "skipped")
+
+
+async def _requeue_row(request: Request, session: AsyncSession, row: ReviewTask) -> None:
+    """把一行翻回 queued 并重新投进内存队列。
+
+    simple 档队列：仅翻 DB 侧 queued 不会让内存 worker 重新拾取。持原事件且
+    enqueuer 就绪时把任务重新投进队列，worker 才会真去跑；否则退化为只记状态翻转。
+    置 force_rerun：push/mr 轨重跑都会被门控短路，由 worker 强制补审并消费清除
+    （DESIGN §7.7）。
+    """
+    row.state = "queued"
+    row.attempt += 1
+    row.error = ""
+    row.skip_reason = ""
+    row.queued_at = _utcnow()
+    await session.commit()
+    await session.refresh(row)
+    enqueuer = getattr(request.app.state, "enqueuer", None)
+    re_enqueued = False
+    if enqueuer is not None:
+        if row.payload:
+            row.force_rerun = True
+            await session.commit()
+            await enqueuer.enqueue(row.provider, row.payload.encode())
+            re_enqueued = True
+        elif row.event_type == "mr" and row.pr_number is not None:
+            # 无原始 body（补拉/补审入队，payload 为空）：重建 PR 走补拉 fetch 路径再审；
+            # 同样置 force_rerun，使 worker 的 mr 门控放行这次手动补审。否则任务只翻 queued、
+            # 内存队列里没有它，会永卡「排队中」。
+            row.force_rerun = True
+            await session.commit()
+            await enqueuer.enqueue_pr(row.provider, _pr_from_task(row))
+            re_enqueued = True
+        else:
+            logger.warning("重试任务 %s：无 payload 且非 mr，无法重放（provider=%s, event=%s）",
+                           row.id, row.provider, row.event_type)
+    if re_enqueued:
+        logger.info("重试任务 %s：已重新入队（provider=%s）", row.id, row.provider)
+
+
+def _reviews_runnable(request: Request) -> bool:
+    """服务内是否启动了审查 worker（LLM+平台齐备，启动时定格）。"""
+    return getattr(request.app.state, "worker_pool", None) is not None
 
 
 @router.post("/{task_id}/retry", response_model=TaskRetried)
@@ -156,39 +213,128 @@ async def retry_task(
             status.HTTP_409_CONFLICT,
             f"该任务当前状态不可重试（{row.state}）",
         )
-    row.state = "queued"
-    row.attempt += 1
-    row.error = ""
-    row.skip_reason = ""
-    row.queued_at = _utcnow()
-    await session.commit()
+    if not _reviews_runnable(request):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "服务未启动审查 worker（未配置可用 LLM 或平台适配器），请配置后重启服务再执行",
+        )
+    await _requeue_row(request, session, row)
     await session.refresh(row)
-    # simple 档队列：仅翻 DB 侧 queued 不会让内存 worker 重新拾取。持原事件且
-    # enqueuer 就绪时把任务重新投进队列，worker 才会真去跑；否则退化为只记状态翻转。
-    enqueuer = getattr(request.app.state, "enqueuer", None)
-    re_enqueued = False
-    if enqueuer is not None:
-        if row.payload:
-            # push/mr 轨重跑都会被门控短路；置 force_rerun 由 worker 强制补审并消费清除
-            #（DESIGN §7.7，mr 轨同为补审语义）
-            row.force_rerun = True
-            await session.commit()
-            await enqueuer.enqueue(row.provider, row.payload.encode())
-            re_enqueued = True
-        elif row.event_type == "mr" and row.pr_number is not None:
-            # 无原始 body（补拉/补审入队，payload 为空）：重建 PR 走补拉 fetch 路径再审；
-            # 同样置 force_rerun，使 worker 的 mr 门控放行这次手动补审。否则任务只翻 queued、
-            # 内存队列里没有它，会永卡「排队中」。
-            row.force_rerun = True
-            await session.commit()
-            await enqueuer.enqueue_pr(row.provider, _pr_from_task(row))
-            re_enqueued = True
-        else:
-            logger.warning("重试任务 %s：无 payload 且非 mr，无法重放（provider=%s, event=%s）",
-                           row.id, row.provider, row.event_type)
-        if re_enqueued:
-            logger.info("重试任务 %s：已重新入队（provider=%s）", row.id, row.provider)
     return TaskRetried(id=row.id, state=row.state, attempt=row.attempt)
+
+
+@router.post("/{task_id}/stop", response_model=TaskStopped)
+async def stop_task(
+    task_id: int,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_db),
+) -> TaskStopped:
+    """停止排队中的任务：翻成「未开始」（skipped/manual_stop）。
+
+    不直接操作内存队列（asyncio 队列无按 id 摘除）；残留的队列项被 worker 认领后，
+    `ensure_task` 命中未开始行不可抢占 → 自动 no-op 消费掉。running/completed 等其余
+    状态不可停止（已在审的任务中断属另一语义，暂不支持）。
+    """
+    row = await _get_or_404(session, task_id)
+    if not await review_task_allowed(session, user, row):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "任务不存在")
+    pid = await review_task_project_id(session, row)
+    if not await user_can(session, user, "reviews:manage", project_id=pid):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "无权限停止该任务")
+    if row.state != "queued":
+        raise HTTPException(status.HTTP_409_CONFLICT, f"仅排队中的任务可停止（{row.state}）")
+    row.state = "skipped"
+    row.skip_reason = "manual_stop"
+    row.error = "排队中被手动停止，未开始审查"
+    await session.commit()
+    logger.info("任务 %s 已手动停止（queued → 未开始）", row.id)
+    return TaskStopped(id=row.id, state=row.state, skip_reason=row.skip_reason)
+
+
+async def _batch_rows(
+    session: AsyncSession, user: CurrentUser, ids: list[int]
+) -> list[tuple[int, ReviewTask | None, bool]]:
+    """按 ids 取行并做可见范围校验；返回 (请求 id, row 或 None, 是否允许) 保序去重列表。"""
+    out: list[tuple[int, ReviewTask | None, bool]] = []
+    seen: set[int] = set()
+    for tid in ids:
+        if tid in seen:
+            continue
+        seen.add(tid)
+        row = (await session.execute(
+            select(ReviewTask).where(ReviewTask.id == tid)
+        )).scalar_one_or_none()
+        if row is None or not await review_task_allowed(session, user, row):
+            out.append((tid, None, False))
+            continue
+        out.append((tid, row, True))
+    return out
+
+
+@router.post("/batch-execute", response_model=BatchResult)
+async def batch_execute_tasks(
+    body: BatchIdsRequest,
+    request: Request,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_db),
+) -> BatchResult:
+    """批量执行勾选的「未开始」（含 failed 重试）任务：逐行走单条重试逻辑。
+
+    逐行独立判定权限/状态，部分失败不中断其余；结果逐行返回供前端汇总提示。
+    """
+    results: list[BatchItemResult] = []
+    executed = ignored = denied = 0
+    worker_ready = _reviews_runnable(request)
+    for tid, row, allowed in await _batch_rows(session, user, body.ids):
+        if not allowed or row is None:
+            denied += 1
+            results.append(BatchItemResult(id=tid, status="denied"))
+            continue
+        pid = await review_task_project_id(session, row)
+        if not await user_can(session, user, "reviews:manage", project_id=pid):
+            denied += 1
+            results.append(BatchItemResult(id=tid, status="denied"))
+            continue
+        if not _retryable(row) or not worker_ready:
+            ignored += 1
+            results.append(BatchItemResult(id=tid, status="ignored"))
+            continue
+        await _requeue_row(request, session, row)
+        executed += 1
+        results.append(BatchItemResult(id=tid, status="executed"))
+    return BatchResult(executed=executed, ignored=ignored, denied=denied, results=results)
+
+
+@router.post("/batch-stop", response_model=BatchResult)
+async def batch_stop_tasks(
+    body: BatchIdsRequest,
+    user: CurrentUser,
+    session: AsyncSession = Depends(get_db),
+) -> BatchResult:
+    """批量停止勾选的「排队中」任务：逐行翻成未开始（manual_stop）。"""
+    results: list[BatchItemResult] = []
+    executed = ignored = denied = 0
+    for tid, row, allowed in await _batch_rows(session, user, body.ids):
+        if not allowed or row is None:
+            denied += 1
+            results.append(BatchItemResult(id=tid, status="denied"))
+            continue
+        pid = await review_task_project_id(session, row)
+        if not await user_can(session, user, "reviews:manage", project_id=pid):
+            denied += 1
+            results.append(BatchItemResult(id=tid, status="denied"))
+            continue
+        if row.state != "queued":
+            ignored += 1
+            results.append(BatchItemResult(id=tid, status="ignored"))
+            continue
+        row.state = "skipped"
+        row.skip_reason = "manual_stop"
+        row.error = "排队中被手动停止，未开始审查"
+        await session.commit()
+        executed += 1
+        results.append(BatchItemResult(id=tid, status="executed"))
+    return BatchResult(executed=executed, ignored=ignored, denied=denied, results=results)
 
 
 async def _background_redeliver(

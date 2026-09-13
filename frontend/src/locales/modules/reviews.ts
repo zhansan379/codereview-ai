@@ -1,4 +1,4 @@
-// 审查列表页（筛选条件 + Excel 导出对话框）
+// 审查列表页（筛选条件 + Excel 导出对话框 + 多选批量操作）
 // 严重度/状态/任务状态的选项文案复用 enum.* 词条，避免同一枚举两处维护。
 export default {
   'zh-CN': {
@@ -32,6 +32,29 @@ export default {
     redelivered: '已发起重新发送，稍后刷新查看结果',
     redeliverFailed: '重新发送失败',
     deleteConfirm: '确认删除审查记录 #{id}（其问题列表将一并删除）？',
+    // ── 多选批量操作 ──
+    batchSelected: '已选 {n} 条',
+    batchExecute: '执行',
+    batchStop: '停止',
+    batchDelete: '删除',
+    batchFailed: '批量操作失败',
+    stopSubmitted: '已停止，任务转为未开始',
+    stopFailed: '停止失败',
+    batchExecuteResult: {
+      done: '已执行 {n} 条',
+      ignored: '{n} 条状态不符已跳过',
+      denied: '{n} 条无权限',
+    },
+    batchStopResult: {
+      done: '已停止 {n} 条',
+      ignored: '{n} 条不处于排队中已跳过',
+      denied: '{n} 条无权限',
+    },
+    batchDeleteConfirm: '确认删除选中的 {n} 条审查记录（其问题列表将一并删除）？',
+    batchDeleteResult: {
+      done: '已删除 {n} 条',
+      denied: '{n} 条无权限未删除',
+    },
   },
   en: {
     filterTitle: 'Filters',
@@ -64,5 +87,28 @@ export default {
     redelivered: 'Re-delivery started, refresh later to see the result',
     redeliverFailed: 'Re-delivery failed',
     deleteConfirm: 'Delete review #{id}? Its findings will be removed as well.',
+    // ── Batch operations ──
+    batchSelected: '{n} selected',
+    batchExecute: 'Run',
+    batchStop: 'Stop',
+    batchDelete: 'Delete',
+    batchFailed: 'Batch operation failed',
+    stopSubmitted: 'Stopped, task is now not started',
+    stopFailed: 'Stop failed',
+    batchExecuteResult: {
+      done: '{n} executed',
+      ignored: '{n} skipped (state mismatch)',
+      denied: '{n} denied',
+    },
+    batchStopResult: {
+      done: '{n} stopped',
+      ignored: '{n} not queued, skipped',
+      denied: '{n} denied',
+    },
+    batchDeleteConfirm: 'Delete {n} selected reviews? Their findings will be removed as well.',
+    batchDeleteResult: {
+      done: '{n} deleted',
+      denied: '{n} denied',
+    },
   },
 }

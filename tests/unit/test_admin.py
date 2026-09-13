@@ -46,6 +46,8 @@ async def app(tmp_path) -> AsyncIterator[tuple[FastAPI, str]]:
     )
     fast.state.config_repository = ConfigRepository(engine, encryption_key=_fernet_key())
     fast.state.forge_registry = None  # 单测不启动 worker；热更分支被跳过
+    fast.state.worker_pool = object()  # 默认模拟 worker 就绪（retry/执行不被 409 拦）；
+    # 「无 worker 拒绝执行」的路径在 test_retry_without_worker_rejected 单独覆盖
     try:
         yield fast, token
     finally:
@@ -482,8 +484,12 @@ def test_retry_reenqueues_payload(app):
         assert calls == [("gitlab", payload_bytes)]
 
 
-def test_tasks_retry_skipped_recoverable_only(app):
-    """门控/配置类 skipped 可补审；删分支 skipped 有 head 可审，禁止重试（409）。"""
+def test_tasks_retry_skipped_all_not_started_executable(app):
+    """未开始（skipped）行全部可执行：门控跳过、删分支一律放行（后者执行会自然失败转 failed）。
+
+    skipped 语义即「未开始」——门控关闭/未配置 LLM/手动停止/分支已删都归此；用户手动
+    执行置 force_rerun 绕过门控强制审一次。
+    """
     fast, token = app
 
     async def _seed() -> None:
@@ -505,20 +511,26 @@ def test_tasks_retry_skipped_recoverable_only(app):
         async def enqueue(self, provider: str, raw: bytes) -> str:
             return "t-x"
 
+        async def enqueue_pr(self, provider: str, pr) -> str:
+            return "t-y"
+
     fast.state.enqueuer = _FakeEnqueuer()
 
     with _client(fast, token) as c:
         lst = c.get("/api/tasks").json()
         disabled = next(t for t in lst if t["skip_reason"] == "push_disabled")
         deleted = next(t for t in lst if t["skip_reason"] == "branch_deleted")
-        # skip_reason 已在列表响应露出，前端据此亮「补审」按钮
+        # skip_reason 已在列表响应露出，前端据此展示「未开始 · 原因」
         assert disabled["skip_reason"] == "push_disabled"
 
         r = c.post(f"/api/tasks/{disabled['id']}/retry")
         assert r.status_code == 200, r.text
         assert r.json()["state"] == "queued"
-        assert c.post(f"/api/tasks/{deleted['id']}/retry").status_code == 409
-        # mr 轨：mr_disabled 门控类 skipped 可补审；非门控的 branch_mismatch 仍 409
+        # 分支已删也放行执行（后端 fetch 不到 diff 会转 failed，用户能看到原因）
+        r = c.post(f"/api/tasks/{deleted['id']}/retry")
+        assert r.status_code == 200, r.text
+        assert r.json()["state"] == "queued"
+        # mr 轨：门控跳过与 no_llm 同样可执行
         async def _mr() -> None:
             session = session_factory(fast.state.engine)
             async with session() as s:
@@ -528,20 +540,142 @@ def test_tasks_retry_skipped_recoverable_only(app):
                                  payload='{"x":1}'))
                 s.add(ReviewTask(provider="gitlab", repo_id="1", pr_number=6, event_type="mr",
                                  branch="main", head_sha="m2", state="skipped",
-                                 skip_reason="branch_mismatch"))
+                                 skip_reason="no_llm"))
                 await s.commit()
         asyncio.get_event_loop().run_until_complete(_mr())
         mrs = c.get("/api/tasks").json()
         disabled_mr = next(
             t for t in mrs if t["event_type"] == "mr" and t["skip_reason"] == "mr_disabled"
         )
-        other_mr = next(
-            t for t in mrs if t["event_type"] == "mr" and t["skip_reason"] == "branch_mismatch"
+        no_llm_mr = next(
+            t for t in mrs if t["event_type"] == "mr" and t["skip_reason"] == "no_llm"
         )
         r = c.post(f"/api/tasks/{disabled_mr['id']}/retry")
         assert r.status_code == 200, r.text
         assert r.json()["state"] == "queued"
-        assert c.post(f"/api/tasks/{other_mr['id']}/retry").status_code == 409
+        r = c.post(f"/api/tasks/{no_llm_mr['id']}/retry")
+        assert r.status_code == 200, r.text
+
+
+def test_retry_completed_and_queued_still_rejected(app):
+    """completed/queued/running 不在可执行范围：409（只有 failed 与未开始可执行）。"""
+    fast, token = app
+
+    async def _seed() -> None:
+        session = session_factory(fast.state.engine)
+        async with session() as s:
+            s.add(ReviewTask(provider="gitlab", repo_id="1", pr_number=8, event_type="mr",
+                             branch="main", head_sha="c1", state="completed"))
+            s.add(ReviewTask(provider="gitlab", repo_id="1", pr_number=9, event_type="mr",
+                             branch="main", head_sha="c2", state="queued"))
+            s.add(ReviewTask(provider="gitlab", repo_id="1", pr_number=10, event_type="mr",
+                             branch="main", head_sha="c3", state="running"))
+            await s.commit()
+
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(_seed())
+
+    with _client(fast, token) as c:
+        assert c.post("/api/tasks/1/retry").status_code == 409  # completed
+        assert c.post("/api/tasks/2/retry").status_code == 409  # queued
+        assert c.post("/api/tasks/3/retry").status_code == 409  # running
+
+
+def test_retry_without_worker_rejected(app):
+    """无 worker（LLM/平台未配置）时执行被拒：任务只会永卡排队，明确 409 提示。"""
+    fast, token = app
+    fast.state.worker_pool = None  # 摘掉 worker 模拟「未配置 LLM」
+    fast.state.enqueuer = _NoWorkerEnqueuer()
+
+    async def _seed() -> None:
+        session = session_factory(fast.state.engine)
+        async with session() as s:
+            s.add(ReviewTask(provider="gitlab", repo_id="1", pr_number=11, event_type="mr",
+                             branch="main", head_sha="nw1", state="skipped",
+                             skip_reason="no_llm", payload='{"x":1}'))
+            await s.commit()
+
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(_seed())
+
+    with _client(fast, token) as c:
+        r = c.post("/api/tasks/1/retry")
+        assert r.status_code == 409
+        assert "worker" in r.json()["detail"]
+
+
+class _NoWorkerEnqueuer:
+    async def enqueue(self, provider: str, raw: bytes) -> str:
+        return ""
+
+
+def test_stop_queued_task_flips_to_not_started(app):
+    """停止排队中任务：queued → skipped/manual_stop；其余状态 409；404 照旧。"""
+    fast, token = app
+
+    async def _seed() -> None:
+        session = session_factory(fast.state.engine)
+        async with session() as s:
+            s.add(ReviewTask(provider="gitlab", repo_id="1", pr_number=20, event_type="mr",
+                             branch="main", head_sha="s1", state="queued"))
+            s.add(ReviewTask(provider="gitlab", repo_id="1", pr_number=21, event_type="mr",
+                             branch="main", head_sha="s2", state="running"))
+            await s.commit()
+
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(_seed())
+
+    with _client(fast, token) as c:
+        r = c.post("/api/tasks/1/stop")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["state"] == "skipped" and body["skip_reason"] == "manual_stop"
+        assert c.post("/api/tasks/2/stop").status_code == 409  # running 不可停
+        assert c.post("/api/tasks/9999/stop").status_code == 404
+
+
+def test_batch_execute_and_stop(app):
+    """批量执行/停止：逐行独立判定，状态不符计入 ignored，不中断其余。"""
+    fast, token = app
+
+    async def _seed() -> None:
+        session = session_factory(fast.state.engine)
+        async with session() as s:
+            s.add(ReviewTask(provider="gitlab", repo_id="1", pr_number=1, event_type="mr",
+                             branch="main", head_sha="x1", state="skipped",
+                             skip_reason="no_llm", payload='{"x":1}'))
+            s.add(ReviewTask(provider="gitlab", repo_id="1", pr_number=2, event_type="mr",
+                             branch="main", head_sha="x2", state="completed"))
+            s.add(ReviewTask(provider="gitlab", repo_id="1", pr_number=3, event_type="mr",
+                             branch="main", head_sha="x3", state="queued"))
+            s.add(ReviewTask(provider="gitlab", repo_id="1", pr_number=4, event_type="mr",
+                             branch="main", head_sha="x4", state="queued"))
+            await s.commit()
+
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(_seed())
+
+    with _client(fast, token) as c:
+        # 批量执行：skipped 行执行、completed 行 ignored
+        r = c.post("/api/tasks/batch-execute", json={"ids": [1, 2]})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["executed"] == 1 and body["ignored"] == 1
+        # 批量停止：两条 queued 都停成未开始
+        r = c.post("/api/tasks/batch-stop", json={"ids": [3, 4, 9999]})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["executed"] == 2 and body["denied"] == 1
+        lst = c.get("/api/tasks").json()
+        stopped = [t for t in lst if t["skip_reason"] == "manual_stop"]
+        assert len(stopped) == 2
+        # 批量删除
+        r = c.post("/api/reviews/batch-delete", json={"ids": [3, 4, 9999]})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["deleted"] == 2 and body["denied"] == 1
+        remaining = {t["id"] for t in c.get("/api/tasks").json()}
+        assert remaining == {1, 2}
 
 
 def test_retry_push_failed_sets_force_rerun(app):

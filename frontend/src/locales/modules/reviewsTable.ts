@@ -14,7 +14,10 @@ export default {
     queuedAt: '排队时间',
     finishedAt: '完成时间',
     retry: '重试',
-    reReview: '补审',
+    // 「执行」：未开始（门控跳过/未配置 LLM/手动停止）的任务手动开跑一次，
+    // 会绕过项目审查开关强制审；failed 走「重试」语义。
+    execute: '执行',
+    stop: '停止',
     resend: '重新发送',
   },
   en: {
@@ -31,8 +34,9 @@ export default {
     queuedAt: 'Queued at',
     finishedAt: 'Finished at',
     retry: 'Retry',
-    // 「补审」是给被跳过、从未审过的任务补一次，不是重审，所以不能叫 Re-review
-    reReview: 'Review',
+    // 「Run」：kick off a not-started task once (bypasses project switches)
+    execute: 'Run',
+    stop: 'Stop',
     resend: 'Resend',
   },
 }

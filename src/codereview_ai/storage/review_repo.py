@@ -14,7 +14,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -133,27 +133,61 @@ class ReviewRepository:
             )).scalars().all()
         return IncrementReference(row.head_sha, frozenset(fingerprint_rows))
 
-    async def pending_for_replay(self) -> list[tuple[int, str, str]]:
-        """启动回放候选：遗留 `state IN ('queued','running')` 且带 payload 的任务。
+    async def pending_for_replay(self) -> list[ReviewTask]:
+        """启动回放候选：全部遗留 `state IN ('queued','running')` 的任务行。
 
-        返回 `[(task_id, provider, payload)]`。`running` 行（上次崩溃残留）先复位回
-        `queued`，避免悬死。重启后据此把卡死的任务重新入队续跑——幂等安全：同 head
-        已 completed 的重放会被增量决策/`ensure_task` 短路，不重复审查也不重复写 finding。
+        返回行对象（含 payload 与 mr 轨行字段）。**不再要求 payload 非空**——补拉通道
+        （payload 为空）入队的行同样回放，由调用方按 payload 有无选择重放路径（原始事件
+        重放 / 按 PR 实时 fetch）。`running` 行（上次崩溃残留）先复位回 `queued`，避免悬死。
+        重放幂等安全：同 head 已 completed 的重放会被增量决策/`ensure_task` 短路，
+        不重复审查也不重复写 finding。
         """
         session = session_factory(self._engine)
         async with session() as s:
             rows = (await s.execute(
                 select(ReviewTask)
-                .where(ReviewTask.state.in_(("queued", "running")), ReviewTask.payload != "")
+                .where(ReviewTask.state.in_(("queued", "running")))
                 .order_by(ReviewTask.id)
             )).scalars().all()
-            out: list[tuple[int, str, str]] = []
             for r in rows:
                 if r.state == "running":
                     r.state = "queued"  # 崩溃残留复位，避免重启后仍悬死
-                out.append((int(r.id), r.provider, r.payload))
             await s.commit()
-        return out
+            return list(rows)
+
+    async def mark_pending_not_started(self, *, reason: str, error: str) -> int:
+        """把全部遗留 queued/running 行批量转为「未开始」（skipped + skip_reason）。
+
+        供启动时**无可用 worker**（LLM/平台未配置）的场景：与其让任务永卡排队，不如
+        如实落未开始，待条件就绪后由用户手动执行。返回翻转行数。
+        """
+        session = session_factory(self._engine)
+        async with session() as s:
+            result = await s.execute(
+                update(ReviewTask)
+                .where(ReviewTask.state.in_(("queued", "running")))
+                .values(state="skipped", skip_reason=reason, error=error)
+            )
+            await s.commit()
+            return int(result.rowcount or 0)
+
+    async def mark_not_started_if_pending(
+        self, task_id: int, *, reason: str, error: str
+    ) -> bool:
+        """把一条**仍在排队**的任务转为「未开始」（skipped + skip_reason）。
+
+        只翻 queued/running 行，绝不触碰 completed/failed 等终态（重复 webhook 命中
+        已审 head 时不能把成功记录改掉）。供「无 worker 入队」的 hold 路径使用。
+        """
+        session = session_factory(self._engine)
+        async with session() as s:
+            result = await s.execute(
+                update(ReviewTask)
+                .where(ReviewTask.id == task_id, ReviewTask.state.in_(("queued", "running")))
+                .values(state="skipped", skip_reason=reason, error=error)
+            )
+            await s.commit()
+            return bool(result.rowcount)
 
     async def push_existing_audit(
         self, *, provider: str, repo_id: str, branch: str, head_sha: str
@@ -251,8 +285,11 @@ class ReviewRepository:
                 stmt = stmt.where(ReviewTask.pr_number == pr_number)
             existing = (await s.execute(stmt.limit(1))).scalars().first()
             if existing is not None:
-                # 正在被别的生产者审 → 跳过；排队中/终态 → 可处理（队列消费者即拥有者）
-                if existing.state == "running":
+                # 正在被别的生产者审 → 跳过；排队中/终态 → 可处理（队列消费者即拥有者）。
+                # `skipped`（未开始：门控跳过/未配置 LLM/手动停止）**不可抢占**——按「条件
+                # 恢复也不自动开跑，仅手动执行复活」的约定，残留队列项与重复 webhook 命中
+                # 未开始行时一律 no-op；手动执行路径会先把行翻回 queued 再入队，不受影响。
+                if existing.state in ("running", "skipped"):
                     return None
                 return int(existing.id)
             # 归属项目（RBAC 隔离）：按 (provider, repo_id) 实时归到 project 行；未注册项目 → None

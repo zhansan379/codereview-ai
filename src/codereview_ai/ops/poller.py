@@ -4,7 +4,8 @@ webhook 之外补一条**主动通道**：按启用项目调 `ForgeAdapter.list_
 （默认仅打开态；设置页「补拉范围」开关开启后同时含已关闭/已合并），给每个未审过的 PR
 落一条 `queued` 审计行（入 DB），再入队到 worker 队列，**立即返回**——审查由 worker
 异步消费（与 webhook 同一条审查核心 `review_pull_request`，见 worker.py）。补拉本身不再
-阻塞在 LLM 耗时上，页面只需要在「入队」这一瞬间等待几秒。
+阻塞在 LLM 耗时上，页面只需要在「入队」这一瞬间等待几秒。无可用 worker（LLM/平台未配
+置）时行直接落「未开始」（skipped/no_llm）而非 queued，条件就绪后手动执行复活。
 
 复用跳过靠 `ReviewRepository.poll_skip`：同 head 已有「已处理」的 mr 行（`completed` 已审过 /
 `skipped` 门控跳过 / `queued`·`running` 在途）→ 记为 `skipped`、不入队（与审查核心的
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
@@ -45,10 +47,15 @@ class PRPoller:
         enqueuer: QueueEnqueuer,
         *,
         include_closed_default: bool = False,
+        can_run: Callable[[], bool] | None = None,
     ) -> None:
         self._engine = engine
         self._registry = registry
         self._enqueuer = enqueuer
+        # `can_run`：服务内有无可用审查 worker（LLM/平台齐备，启动时定格）。False 时
+        # 补拉仍照常发现+落行，但行直接落「未开始」（skipped/no_llm）而不是 queued——
+        # 队列里没有消费者，投进去只会永卡排队；条件就绪后由用户手动执行复活。
+        self._can_run = can_run
         self._project_repo = ProjectRepository(engine)
         # 补拉范围默认值（env `CR_POLL_INCLUDE_CLOSED`）；每轮优先读库键
         # `poll_include_closed`，缺行则回落此默认（与 push/mr 默认开关同一套热读语义）。
@@ -116,7 +123,7 @@ class PRPoller:
                         self.progress["skipped"] += 1
                         continue
                     # 2) 落 queued 审计行（幂等键抢占，在审/已排队则入队后 core 仍会去重）。
-                    await review_repo.ensure_task(
+                    task_id = await review_repo.ensure_task(
                         provider=proj.provider,
                         repo_id=proj.repo_id,
                         pr_number=pr.pr_number,
@@ -130,7 +137,23 @@ class PRPoller:
                         payload="",  # 已解析 PR 直接入队，无需原始 body
                         pr_created_at=pr.created_at,  # 平台真实创建时间，提交分析不再退化为入队时间
                     )
-                    # 3) 入队异步审查，不等待 LLM 完成。
+                    if task_id is None:
+                        # 幂等键已被别的生产者抢占（在审/未开始行）→ 不重复入队
+                        report["skipped"] += 1
+                        self.progress["skipped"] += 1
+                        continue
+                    # 3) 无可用 worker（LLM/平台未配置）：行落「未开始(no_llm)」不入队，
+                    #    如实表达「现在跑不了」；条件就绪后由用户手动执行复活。
+                    if self._can_run is not None and not self._can_run():
+                        await review_repo.mark_not_started_if_pending(
+                            int(task_id),
+                            reason="no_llm",
+                            error="未配置可用 LLM（或平台适配器），服务未启动审查 worker，任务未开始",
+                        )
+                        report["skipped"] += 1
+                        self.progress["skipped"] += 1
+                        continue
+                    # 4) 入队异步审查，不等待 LLM 完成。
                     await self._enqueuer.enqueue_pr(proj.provider, pr)
                     report["new"] += 1  # 已入队，待 worker 异步审查
                     self.progress["new"] += 1

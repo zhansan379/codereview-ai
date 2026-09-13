@@ -135,7 +135,8 @@ async def test_ensure_task_terminal_returns_existing_id_for_retry(engine):
 
 
 async def test_pending_for_replay_picks_stuck_queued_and_running(engine):
-    """连续拿 `queued/running` 且带 payload 的行；completed/failed/空 payload 不入选。"""
+    """连续拿 `queued/running` 行（**不限 payload**，补拉空 payload 行同样入选）；
+    completed/failed/skipped 不入选。"""
     session = session_factory(engine)
     async with session() as s:
         s.add(ReviewTask(provider="gitlab", repo_id="9", pr_number=1, event_type="mr",
@@ -151,7 +152,9 @@ async def test_pending_for_replay_picks_stuck_queued_and_running(engine):
         await s.commit()
 
     rows = await ReviewRepository(engine).pending_for_replay()
-    assert {(p, v) for _, p, v in rows} == {("gitlab", '{"x":1}'), ("github", '{"y":2}')}
+    assert {(r.provider, r.payload) for r in rows} == {
+        ("gitlab", '{"x":1}'), ("github", '{"y":2}'), ("gitlab", ""),
+    }
 
     # running 崩溃残留已复位回 queued，不再悬死
     async with session() as s:
@@ -205,3 +208,86 @@ async def test_replay_pending_tasks_requeues_into_queue(engine):
     assert meta is not None
     # payload 与 provider 已随事件重新暂存，重放可继续走完整管线
     assert store.get(meta.task_id) == ("gitlab", b'{"k":"v"}')
+
+
+async def test_replay_covers_payload_empty_mr_row(engine):
+    """补拉通道的空 payload mr 行同样回放：按行字段重建 PR 走 `enqueue_pr` 实时 fetch 通道。"""
+    session = session_factory(engine)
+    async with session() as s:
+        s.add(ReviewTask(provider="gitlab", repo_id="9", pr_number=63, event_type="mr",
+                         branch="test", head_sha="h-empty", state="queued", payload="",
+                         pr_title="Create test", web_url="https://gitlab.com/g/r/-/merge_requests/63"))
+        await s.commit()
+
+    queue = AsyncioTaskQueue()
+    enqueuer = QueueEnqueuer(queue, EventStore())
+    n = await replay_pending_tasks(ReviewRepository(engine), enqueuer)
+
+    assert n == 1
+    meta = await queue.claim()
+    assert meta is not None  # 空行也进了内存队列（此前被 payload 过滤永卡排队）
+
+
+# ── 未开始（skipped）语义：不可抢占 + 批量/条件翻转 ──────────────────────
+
+
+async def test_ensure_task_skipped_row_not_claimable(engine):
+    """未开始行不可被 `ensure_task` 抢占：残留队列项/重复 webhook 命中 → None，不自动复活。"""
+    repo = ReviewRepository(engine)
+    tid = await repo.ensure_task(
+        provider="gitlab", repo_id="9", pr_number=42, event_type="mr",
+        branch="main", head_sha="h-hold",
+    )
+    await repo.mark_state(tid, state="skipped", skip_reason="manual_stop")
+    again = await repo.ensure_task(
+        provider="gitlab", repo_id="9", pr_number=42, event_type="mr",
+        branch="main", head_sha="h-hold",
+    )
+    assert again is None  # 未开始只等手动执行，不被残留队列项复活
+
+
+async def test_mark_pending_not_started_bulk_flips_only_pending(engine):
+    """无 worker 批量落未开始：queued/running 翻 skipped(no_llm)，终态行原样不动。"""
+    session = session_factory(engine)
+    async with session() as s:
+        s.add(ReviewTask(provider="gitlab", repo_id="9", pr_number=1, event_type="mr",
+                         branch="f", head_sha="b1", state="queued", payload=""))
+        s.add(ReviewTask(provider="gitlab", repo_id="9", pr_number=2, event_type="mr",
+                         branch="f", head_sha="b2", state="running", payload=""))
+        s.add(ReviewTask(provider="gitlab", repo_id="9", pr_number=3, event_type="mr",
+                         branch="f", head_sha="b3", state="completed", payload=""))
+        s.add(ReviewTask(provider="gitlab", repo_id="9", pr_number=4, event_type="mr",
+                         branch="f", head_sha="b4", state="failed", payload=""))
+        await s.commit()
+
+    n = await ReviewRepository(engine).mark_pending_not_started(
+        reason="no_llm", error="启动时未配置可用 LLM")
+    assert n == 2
+
+    async with session() as s:
+        states = {
+            h: st for h, st in (await s.execute(
+                select(ReviewTask.head_sha, ReviewTask.state)
+            )).all()
+        }
+    assert states == {"b1": "skipped", "b2": "skipped", "b3": "completed", "b4": "failed"}
+
+
+async def test_mark_not_started_if_pending_spares_terminal(engine):
+    """hold 翻转只作用于 queued/running 行：重复 webhook 命中已审 head 不能改成未开始。"""
+    repo = ReviewRepository(engine)
+    tid = await repo.ensure_task(
+        provider="gitlab", repo_id="9", pr_number=42, event_type="mr",
+        branch="main", head_sha="h-done",
+    )
+    await repo.mark_state(tid, state="completed", summary_md="ok")
+
+    flipped = await repo.mark_not_started_if_pending(
+        int(tid), reason="no_llm", error="x")
+
+    assert flipped is False
+    async with session_factory(engine)() as s:
+        st = (await s.execute(
+            select(ReviewTask.state).where(ReviewTask.id == tid)
+        )).scalar_one()
+    assert st == "completed"
