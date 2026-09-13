@@ -24,6 +24,12 @@ const router = createRouter({
           meta: { titleKey: 'menu.dashboard' },
         },
         {
+          path: '/workrate',
+          name: 'Workrate',
+          component: () => import('../views/WorkrateView.vue'),
+          meta: { titleKey: 'menu.workrate' },
+        },
+        {
           path: '/reviews',
           name: 'Reviews',
           component: () => import('../views/ReviewTabsView.vue'),

@@ -14,6 +14,10 @@
           <el-icon><DataBoard /></el-icon>
           <span>{{ $t('menu.dashboard') }}</span>
         </el-menu-item>
+        <el-menu-item v-if="auth.hasPerm('stats:view')" index="/workrate">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>{{ $t('menu.workrate') }}</span>
+        </el-menu-item>
         <el-menu-item v-if="auth.hasPerm('reviews:view')" index="/reviews">
           <el-icon><Document /></el-icon>
           <span>{{ $t('menu.reviews') }}</span>
@@ -112,6 +116,7 @@ import { ElNotification } from 'element-plus'
 import { Warning } from '@element-plus/icons-vue'
 import {
   DataBoard,
+  DataAnalysis,
   Document,
   Folder,
   Cpu,

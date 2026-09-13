@@ -706,3 +706,77 @@ export function acknowledgeNotification(id: number): Promise<{ acknowledged: num
 export function acknowledgeAllNotifications(): Promise<{ acknowledged: number }> {
   return client.post('/notifications/acknowledge-all').then((r) => r.data)
 }
+
+// ===== 提交分析（工作辛苦度报告 /stats/workrate）=====
+export interface WorkratePart {
+  code: string
+  value: number
+  score: number
+  max: number
+}
+export interface WorkrateAuthor {
+  name: string
+  commits: number
+  active_days: number
+  late_night: number
+  weekend: number
+  index: number
+  level: string
+}
+export interface WorkrateReport {
+  scope: {
+    project_id: number
+    author: string
+    days: number
+    commits: number
+    projects_count: number
+    from: string
+    to: string
+  }
+  kpi: {
+    total: number
+    active_days: number
+    daily_avg: number
+    longest_streak: number
+    streak_from: string
+    streak_to: string
+    late_night: number
+    late_night_pct: number
+    night: number
+    night_pct: number
+    non_work: number
+    non_work_pct: number
+    weekend: number
+    weekend_pct: number
+    night_or_weekend: number
+    night_or_weekend_pct: number
+  }
+  index: { score: number; level: string; parts: WorkratePart[] }
+  hourly: { hour: number; count: number; band: string }[]
+  weekday: { day: number; count: number }[]
+  monthly: { month: string; count: number }[]
+  repos: { name: string; count: number }[]
+  authors: WorkrateAuthor[]
+  insights: { code: string; params: Record<string, any> }[]
+  suggestions: { code: string; params: Record<string, any> }[]
+}
+export interface WorkrateOptions {
+  authors: { name: string; count: number }[]
+  projects: { id: number | null; count: number; name: string }[]
+}
+
+export function getWorkrateReport(params: {
+  project_id?: number
+  author?: string
+  days?: number
+  tz?: number
+}): Promise<WorkrateReport> {
+  return client.get('/stats/workrate/report', { params }).then((r) => r.data)
+}
+
+export function getWorkrateOptions(params: {
+  project_id?: number
+  days?: number
+}): Promise<WorkrateOptions> {
+  return client.get('/stats/workrate/options', { params }).then((r) => r.data)
+}
