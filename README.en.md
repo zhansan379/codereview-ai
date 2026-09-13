@@ -143,6 +143,15 @@ python -c 'import secrets;print(secrets.token_urlsafe(24))'                     
 
 > `CR_ENCRYPTION_KEY` must be a valid 32-byte urlsafe-base64 Fernet key — `secrets.token_urlsafe` will not do.
 
+### Option 3: Windows desktop edition (exe — no Docker, no Python)
+
+No Docker, no Python: download `codereview-ai-windows-x64.zip` from [GitHub Releases](https://github.com/zhansan379/codereview-ai/releases/latest), unzip it anywhere, and double-click `codereview-ai.exe`.
+
+- On first launch the four secrets are generated into the data directory's `.env`, and the **admin login password** is printed to the console; the browser opens `http://127.0.0.1:5001/admin/` automatically.
+- Keep the console window open (closing it stops the service); data lives next to the exe (portable mode) or in `%LOCALAPPDATA%\codereview-ai` — the console prints which one.
+- Feature parity with the Docker edition; ruff ships in the package, and semgrep can be added later with `pip install semgrep`.
+- Cross-machine webhook callbacks need `--host 0.0.0.0`; flags, upgrade and uninstall are covered in the [desktop guide](docs/how_use_desktop.md).
+
 Sign in, configure a model and a forge, then add a webhook pointing at `POST http://<your-host>:5001/webhook` and open a PR.
 
 Docs:

@@ -143,6 +143,15 @@ python -c 'import secrets;print(secrets.token_urlsafe(24))'                     
 
 > `CR_ENCRYPTION_KEY` 必须是合法的 32 字节 urlsafe-base64 Fernet 密钥，不能用 `secrets.token_urlsafe` 顶替。
 
+### 方式三：Windows 桌面单机版（exe，免 Docker 免 Python）
+
+不装 Docker 也不装 Python：从 [GitHub Release](https://github.com/zhansan379/codereview-ai/releases/latest) 下载 `codereview-ai-windows-x64.zip`，解压到任意目录，双击 `codereview-ai.exe` 即用。
+
+- 首次启动自动生成四枚密钥写入数据目录的 `.env`，并在控制台打印**后台登录密码**；浏览器自动打开 `http://127.0.0.1:5001/admin/`
+- 控制台窗口保持开着（关窗 = 停止服务）；数据存在 exe 旁（便携模式）或 `%LOCALAPPDATA%\codereview-ai`，控制台会打印实际位置
+- 功能与 Docker 版一致，ruff 静态检查随包附带；需要 semgrep 时机器上 `pip install semgrep` 即可
+- 接收跨机 webhook 回调要加 `--host 0.0.0.0`；常用参数、升级与卸载见[桌面版教程](docs/how_use_desktop.md)
+
 后台登录后配置模型与平台，然后在 GitHub / GitLab / Gitee 添加 webhook 指向 `POST http://<你的主机>:5001/webhook`，打开一个 PR 即可看到审查评论。
 
 详细教程：
