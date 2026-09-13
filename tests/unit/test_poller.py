@@ -287,3 +287,25 @@ async def test_run_once_include_closed_env_default_true(engine):
     )
     await poller.run_once()
     assert forge.list_calls == [("acme/widgets", True)]
+
+
+async def test_run_once_holds_rows_when_no_worker(engine):
+    """无 worker（can_run=False）补拉：行落「未开始」（no_llm）不入队，不永卡排队。
+
+    回归：动态创建 poller 的路径必须传 can_run（此前 pull.py 漏传导致首启未配
+    LLM 时拉取的任务永卡「排队中」，重启才被启动兜底洗成「未开始」）。
+    """
+    await _seed_project(engine)
+    enqueuer = FakeEnqueuer()
+    poller = PRPoller(
+        engine, FakeRegistry({"github": FakeForge([_pr(201, "head-hold")])}), enqueuer,
+        can_run=lambda: False,
+    )
+
+    report = await poller.run_once()
+    assert report["new"] == 0 and report["skipped"] == 1 and report["errors"] == []
+    assert enqueuer.calls == []  # 未投内存队列（没有消费者会认领）
+    async with session_factory(engine)() as s:
+        row = (await s.execute(select(ReviewTask))).scalar_one()
+    assert row.state == "skipped" and row.skip_reason == "no_llm"
+    assert "worker" in row.error

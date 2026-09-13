@@ -31,6 +31,7 @@ from codereview_ai.forges.base import provider_from_url_host, repo_path_from_url
 from codereview_ai.forges.registry import SUPPORTED_PROVIDERS
 from codereview_ai.forges.scopes import Capability, probe_capabilities
 from codereview_ai.forges.signatures import GITEA, GITEE, GITHUB, GITLAB
+from codereview_ai.ops.bootstrap import ensure_worker_started
 from codereview_ai.storage.models import ForgeConfig, _utcnow
 
 
@@ -187,6 +188,8 @@ async def update_forge(
     reg = getattr(request.app.state, "forge_registry", None)
     if reg is not None:
         await reg.refresh_all()
+    # 配好即生效：模型+平台齐备则现场拉起审查 worker（幂等），无需重启
+    await ensure_worker_started(request.app)
     return ForgeOut(
         provider=row.provider,
         url=row.url or DEFAULT_FORGE_URLS.get(row.provider, ""),

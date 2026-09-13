@@ -691,3 +691,29 @@ def test_count_diff_lines_added_minus():
     ]
     # 3 个变更行（added/removed/added）+ 1（only new）= 4；---/+++ 头与 @@ 不计
     assert _count_diff_lines(diffs) == 4
+
+
+async def test_enqueue_hold_without_worker_lands_not_started(tmp_path):
+    """无 worker（can_run=False）：不投内存队列，行直接落「未开始」（no_llm）。
+
+    on_enqueue 回调必须透传 hold（main._on_enqueue 同款签名）——吞掉 hold 的话
+    行会落 queued，而队列里没有消费者，任务永卡「排队中」。
+    """
+    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'q.db'}")
+    await init_db(engine)
+    repo = ReviewRepository(engine)
+    forge = _FakeForge()
+    queue = AsyncioTaskQueue()
+    enqueuer = QueueEnqueuer(
+        queue, EventStore(),
+        on_enqueue=lambda p, r, *, hold=False: scribble_queued_task(repo, forge, r, hold=hold),
+        can_run=lambda: False,
+    )
+
+    task_id = await enqueuer.enqueue("gitlab", _mr_payload())
+    assert task_id == ""  # hold 路径不投内存队列
+
+    async with session_factory(engine)() as s:
+        row = (await s.execute(select(ReviewTask))).scalar_one()
+    assert row.state == "skipped" and row.skip_reason == "no_llm"
+    assert "worker" in row.error

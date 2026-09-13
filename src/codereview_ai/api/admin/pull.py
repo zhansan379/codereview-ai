@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from codereview_ai.api.deps import get_current_user, require_permission
+from codereview_ai.ops.bootstrap import get_or_create_poller
 
 router = APIRouter(
     prefix="/pulls",
@@ -51,11 +52,14 @@ class PollStatus(BaseModel):
 
 
 async def _get_or_create_poller(request: Request) -> Any:
-    """获取或创建 poller，支持动态创建（凭据后配也能用）。"""
+    """获取或创建 poller，支持动态创建（凭据后配也能用）。
+
+    构造统一走 `ops.bootstrap.get_or_create_poller`（`can_run` 动态判 worker_pool，
+    修复动态创建路径漏传 `can_run` 导致「无 worker 时补拉任务永卡排队中」的缺陷）。
+    """
     poller = getattr(request.app.state, "poller", None)
     if poller is not None:
         return poller
-    # 动态创建：需要 engine, forge_registry, enqueuer
     engine = getattr(request.app.state, "engine", None)
     forge_registry = getattr(request.app.state, "forge_registry", None)
     enqueuer = getattr(request.app.state, "enqueuer", None)
@@ -63,20 +67,10 @@ async def _get_or_create_poller(request: Request) -> Any:
         raise HTTPException(503, "补拉不可用：服务初始化未完成")
     if not forge_registry.available():
         raise HTTPException(503, "补拉不可用：需配置平台凭据（GitHub/GitLab/Gitee Token）")
-    # 创建 poller
-    from codereview_ai.config.settings import Settings
-    from codereview_ai.ops.poller import PRPoller
-    settings = getattr(request.app.state, "settings", None) or Settings()
-    poll = PRPoller(
-        engine, forge_registry, enqueuer,
-        include_closed_default=settings.poll_include_closed,
-    )
-    request.app.state.poller = poll
-    request.app.state.poll_running = False
-    request.app.state.poll_last = None
-    request.app.state.poll_error = None
-    request.app.state.poll_run_task = None
-    return poll
+    created = get_or_create_poller(request.app)
+    if created is None:  # 理论不可达（上方已校验）；兜底同文案
+        raise HTTPException(503, "补拉不可用：需配置平台凭据（GitHub/GitLab/Gitee Token）")
+    return created
 
 
 async def _background_poll(app: Any, poller: Any) -> None:

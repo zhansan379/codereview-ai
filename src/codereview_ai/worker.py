@@ -312,9 +312,9 @@ class QueueEnqueuer:
 
     `on_enqueue`（可空）：入队时异步执行的回调，用于「入队即建 mr 审计行」，让队列里
     等待的 PR 从入队起就在管理页可见为『排队中』；回调失败不阻断入队（审计由 process 兜底）。
-    `can_run`（可空）：返回 False 表示服务内没有可用 worker（LLM/平台未配置，启动时
-    定格）——此时**不投内存队列**（没有消费者会认领），审计行直接落「未开始」
-    （skipped/no_llm），如实表达「现在跑不了，条件就绪后手动执行」。
+    `can_run`（可空）：返回 False 表示服务内没有可用 worker（LLM/平台未配置，动态判据
+    见 ops.bootstrap.worker_can_run）——此时**不投内存队列**（没有消费者会认领），审计行
+    直接落「未开始」（skipped/no_llm），如实表达「现在跑不了，条件就绪后手动执行或懒启动续跑」。
     """
 
     def __init__(

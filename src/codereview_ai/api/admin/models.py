@@ -16,6 +16,7 @@ from starlette import status
 
 from codereview_ai.api.deps import get_current_user, get_db, require_permission
 from codereview_ai.crypto import MASK, decrypt, encrypt, is_masked
+from codereview_ai.ops.bootstrap import ensure_worker_started
 from codereview_ai.review.llm_gateway import LLMGateway
 from codereview_ai.storage.models import ModelConfig
 
@@ -104,6 +105,8 @@ async def create_model(
     session.add(row)
     await session.commit()
     await session.refresh(row)
+    # 配好即生效：条件齐备（模型+平台）则现场拉起审查 worker（幂等），无需重启
+    await ensure_worker_started(request.app)
     return await _to_out(row)
 
 
@@ -130,6 +133,8 @@ async def update_model(
         row.api_key_encrypted = encrypt(body.api_key, enc_key)
     await session.commit()
     await session.refresh(row)
+    # 配好即生效：条件齐备（模型+平台）则现场拉起审查 worker（幂等），无需重启
+    await ensure_worker_started(request.app)
     return await _to_out(row)
 
 

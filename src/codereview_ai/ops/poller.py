@@ -52,9 +52,9 @@ class PRPoller:
         self._engine = engine
         self._registry = registry
         self._enqueuer = enqueuer
-        # `can_run`：服务内有无可用审查 worker（LLM/平台齐备，启动时定格）。False 时
-        # 补拉仍照常发现+落行，但行直接落「未开始」（skipped/no_llm）而不是 queued——
-        # 队列里没有消费者，投进去只会永卡排队；条件就绪后由用户手动执行复活。
+        # `can_run`：服务内有无可用审查 worker（动态判据，见 ops.bootstrap.worker_can_run）。
+        # False 时补拉仍照常发现+落行，但行直接落「未开始」（skipped/no_llm）而不是
+        # queued——队列里没有消费者，投进去只会永卡排队；worker 懒启动后自动恢复入队。
         self._can_run = can_run
         self._project_repo = ProjectRepository(engine)
         # 补拉范围默认值（env `CR_POLL_INCLUDE_CLOSED`）；每轮优先读库键

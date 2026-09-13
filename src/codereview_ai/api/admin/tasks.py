@@ -33,6 +33,7 @@ from codereview_ai.api.deps import (
 )
 from codereview_ai.domain.models import PullRequest
 from codereview_ai.forges.base import ForgeAdapter, repo_path_from_url
+from codereview_ai.ops.bootstrap import ensure_worker_started
 from codereview_ai.review.result_writer import redeliver, review_fingerprint
 from codereview_ai.storage.models import ReviewTask, _utcnow
 from codereview_ai.storage.review_repo import ReviewRepository
@@ -192,8 +193,25 @@ async def _requeue_row(request: Request, session: AsyncSession, row: ReviewTask)
 
 
 def _reviews_runnable(request: Request) -> bool:
-    """服务内是否启动了审查 worker（LLM+平台齐备，启动时定格）。"""
+    """服务内是否已启动审查 worker（动态判据：worker 懒启动后即为 True）。"""
     return getattr(request.app.state, "worker_pool", None) is not None
+
+
+async def _ensure_runnable(request: Request) -> None:
+    """执行前置守卫：worker 不在则先尝试懒启动（模型/凭据后配的场景），起不来再 409。
+
+    worker 是否存在已不再是启动时定格——保存模型/平台凭据后 `ensure_worker_started`
+    会实时解析配置现场拉起；这里兜住「没走到保存钩子」的入口（如 env 配置、其他端点）。
+    """
+    if _reviews_runnable(request):
+        return
+    await ensure_worker_started(request.app)
+    if not _reviews_runnable(request):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "未配置可用 LLM（或平台适配器），服务未启动审查 worker，"
+            "请先在设置页配置模型并保存后再执行",
+        )
 
 
 @router.post("/{task_id}/retry", response_model=TaskRetried)
@@ -214,11 +232,7 @@ async def retry_task(
             status.HTTP_409_CONFLICT,
             f"该任务当前状态不可重试（{row.state}）",
         )
-    if not _reviews_runnable(request):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "服务未启动审查 worker（未配置可用 LLM 或平台适配器），请配置后重启服务再执行",
-        )
+    await _ensure_runnable(request)
     await _requeue_row(request, session, row)
     await session.refresh(row)
     return TaskRetried(id=row.id, state=row.state, attempt=row.attempt)
@@ -285,6 +299,12 @@ async def batch_execute_tasks(
     """
     results: list[BatchItemResult] = []
     executed = ignored = denied = 0
+    # 先尝试懒启动（模型/凭据后配的场景）；起不来不炸批量接口，逐行按 ignored 处理
+    if not _reviews_runnable(request):
+        try:
+            await _ensure_runnable(request)
+        except HTTPException:
+            pass
     worker_ready = _reviews_runnable(request)
     for tid, row, allowed in await _batch_rows(session, user, body.ids):
         if not allowed or row is None:
