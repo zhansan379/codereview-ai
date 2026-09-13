@@ -22,6 +22,8 @@ A code review service that runs on your own machine. Point a webhook at it from 
 
 ## Features
 
+<img alt="Core capabilities" src="./assets/features.webp">
+
 - **Three forges via webhook** — GitHub / GitLab / Gitee; every PR / MR that opens or updates is reviewed automatically. One service runs many projects, each with its own switches.
 - **Inline comments on the changed line** — the model only pastes a code snippet and the engine pins the line by content matching; a hallucinated line number never lands a comment.
 - **IM push** — DingTalk / Feishu / WeCom robots; a push with findings detail and the score the moment a review finishes.
@@ -38,26 +40,6 @@ A code review service that runs on your own machine. Point a webhook at it from 
 For how it reviews, it sits on the "**deterministic engineering × an agent that goes read the repo**" axis: *anything the engineering can decide for certain, the model never has to gamble on.* Line numbers are pinned by the engine with pure string matching over the code snippet the model pastes back, so a hallucinated line number cannot push a comment off-target. File grouping is cut to hard ceilings and the LLM only makes a closed-book grouping judgment. If the agent goes exploring and anything at all goes sideways, the whole review drops back to diff — an agent failure is never recorded as a task failure.
 
 That baseline wasn't built from nothing — which parts can safely be left to the model and which must be shored up by deterministic engineering came from studying this exact family of tools. Its lineage: the diff / agent dual-tracks and the "model pastes a snippet, never a line number" anchoring are ported straight from **open-code-review** (Alibaba) — its grouping / plan gate / budget gate / resolver; the cross-group content-fingerprint de-dup follows **pr-agent**'s *body_fp OR code_fp*; and the "webhook in → async queue → inline write-back + IM push + self-hosted admin" platform shape is closest to **AI-Codereview-Gitlab**.
-
-**Strengths**
-
-<img alt="Core capabilities" src="./assets/features.webp">
-
-- **The most robust line anchoring** — the model only pastes a code snippet and the engine pins the line. OCR is "model gives a line + post-hoc relocation"; this project never accepts a line number from the model at all. That is the sharpest split from tools like pr-agent that take inline positions from model line numbers — a hallucinated coordinate never even enters the comment.
-
-- **One service that runs every project** — not a "run once per PR" Action but a resident service: webhook verification → async queue → inline write-back, with multi-project, backfill polling, crash replay and a per-project on/off in one admin panel. Value: events don't get lost, state is recoverable, team-level operation.
-
-- **Nothing falls through** — a webhook that never arrived, events during a restart, PRs already open before you onboarded the project: pull them back by hand, or schedule a poll that scans every enabled project on an interval. Heads already reviewed are skipped. Value: this is the resident service's core edge over an Action.
-
-- **An agent failure is never an incident** — agentic whole-repo reasoning is read-only; any hitch drops the whole review back to diff. OCR also degrades gracefully, but it has no service-level guarantee of "fall back to the diff, a sure conclusion". Value: there's always a deliverable conclusion — a "task failed" with no one owning it never happens.
-
-- **Code stays inside** — SQLite + Docker self-hosted deployment; platform and model credentials are Fernet-encrypted at rest and hot-reload the moment you save them. Value: enterprise onboarding, especially finance, government, and mid-to-large teams.
-
-- **A three-layer pipeline, fused on demand** — LLM diff review, optional agentic whole-repo reasoning, and semgrep static analysis merge into one set of findings; but you don't run all three for every PR — LLM + semgrep by default, agentic triggered on high-risk / large PRs. Value: coverage, determinism and cost in one, without making the user face three reports.
-
-- **A minimal admin loop** — dashboard, review records, projects, IM notifiers, clone cache don't all need to exist; the essentials are project config, review records, manual backfill, credential management and IM setup. Value: operable, diagnosable, closes the loop.
-
-- **No paying twice across rounds** — unchanged files between adjacent rounds are reused by content hash; a one-shot review has no "previous round" to reuse. Value: saves money on high-frequency PRs, but the cache key must include the model, the rules and the config version.
 
 ## How it works
 
