@@ -154,7 +154,8 @@ async def ensure_worker_started(app: Any) -> bool:
             enabled=settings.push_review_enabled,
             branch_match=_branch_glob_match(settings.push_branch_globs),
         )
-        # §11 静态分析：默认开，缺工具自动降级，不影响主链
+        # §11 静态分析：默认关；配置页「静态分析」开关（app_setting）每任务热读可覆盖，
+        # 缺工具自动降级，不影响主链
         ws = Path(settings.static_workspace_dir) if settings.static_workspace_dir else None
         rules = Path(settings.semgrep_rules_dir) if settings.semgrep_rules_dir else None
         static_analyzer = StaticAnalyzer(

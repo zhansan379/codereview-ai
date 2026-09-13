@@ -12,6 +12,8 @@
 - `GET /settings/push-review-default`：读全局 push 自动审查默认开关；`source` 标
   `"db"`（落库生效）或 `"env"`（无落库行，由 env `CR_PUSH_REVIEW_ENABLED` 决定）。
 - `POST /settings/push-review-default`：写库并热更（worker 每事件热读即生效，不依赖重启）。
+- `GET/POST /settings/static-analysis`：静态分析（ruff/semgrep）总开关，
+  存 `app_setting["static_analysis_enabled"]`；worker 每任务热读即生效。
 - `GET/POST /settings/poll-include-closed`：补拉范围开关（是否同时拉取已关闭/已合并 PR/MR），
   存 `app_setting["poll_include_closed"]`；缺行回落 env `CR_POLL_INCLUDE_CLOSED`，
   poller 每轮热读即生效。
@@ -31,6 +33,7 @@ from codereview_ai.storage.setting_repo import (
     MR_REVIEW_DEFAULT_KEY,
     POLL_INCLUDE_CLOSED_KEY,
     PUSH_REVIEW_DEFAULT_KEY,
+    STATIC_ANALYSIS_ENABLED_KEY,
     SettingRepository,
 )
 
@@ -61,6 +64,36 @@ def _repo(request: Request) -> SettingRepository:
 def _pool(request: Request) -> Any:
     """已启动的 worker 池；未启动（缺 LLM/平台）返回 None。"""
     return getattr(request.app.state, "worker_pool", None)
+
+
+# —— 静态分析总开关（§11：ruff/semgrep 融合；worker 每任务热读即生效）——
+
+class StaticAnalysisOut(BaseModel):
+    enabled: bool
+    source: str  # "db"（落库生效）| "env"（无落库行，跟随 CR_REVIEW_STATIC_ENABLED）
+
+
+class StaticAnalysisWrite(BaseModel):
+    enabled: bool
+
+
+@router.get("/static-analysis", response_model=StaticAnalysisOut)
+async def get_static_analysis(request: Request) -> StaticAnalysisOut:
+    repo = _repo(request)
+    env_default = request.app.state.settings.review_static_enabled
+    db_value = await repo.get_bool_optional(STATIC_ANALYSIS_ENABLED_KEY)
+    if db_value is not None:
+        return StaticAnalysisOut(enabled=db_value, source="db")
+    return StaticAnalysisOut(enabled=env_default, source="env")
+
+
+@router.post("/static-analysis", response_model=StaticAnalysisOut)
+async def set_static_analysis(
+    body: StaticAnalysisWrite, request: Request
+) -> StaticAnalysisOut:
+    await _repo(request).set(STATIC_ANALYSIS_ENABLED_KEY, "1" if body.enabled else "0")
+    # worker 每任务热读本键即生效，无需重启后端
+    return StaticAnalysisOut(enabled=body.enabled, source="db")
 
 
 @router.get("/concurrency", response_model=ConcurrencyOut)

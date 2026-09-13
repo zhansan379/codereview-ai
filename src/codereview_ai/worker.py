@@ -55,6 +55,7 @@ from codereview_ai.storage.review_repo import ReviewRepository
 from codereview_ai.storage.setting_repo import (
     MR_REVIEW_DEFAULT_KEY,
     PUSH_REVIEW_DEFAULT_KEY,
+    STATIC_ANALYSIS_ENABLED_KEY,
     SettingRepository,
 )
 
@@ -285,6 +286,29 @@ async def _run_static(
     except Exception as exc:  # noqa: BLE001
         logger.warning("静态分析异常降级：%s", exc)
         return []
+
+
+async def _static_findings_gated(
+    analyzer: StaticAnalyzer | None, diffs: list[FileDiff], engine: AsyncEngine | None
+) -> list[Finding]:
+    """静态分析总开关热读后的执行入口：app_setting 落库行优先，缺行跟随 env 默认。
+
+    配置页「静态分析」开关落 `app_setting["static_analysis_enabled"]`，改完即生效
+    无需重启；DB 关闭 → 直接返回空（连 ruff/semgrep 子进程都不起）。无 engine
+    （离线/测试）时读不到 DB，沿用 analyzer 自身的 enabled（构造时取 env 值）。
+    """
+    if analyzer is None or not diffs:
+        return []
+    if engine is not None:
+        try:
+            db_val = await SettingRepository(engine).get_bool_optional(
+                STATIC_ANALYSIS_ENABLED_KEY)
+        except Exception:  # noqa: BLE001 —— 开关读不到按未配置处理，绝不阻断主链
+            logger.warning("静态分析开关读取失败，按 env 默认继续", exc_info=True)
+            db_val = None
+        if db_val is False:
+            return []
+    return await _run_static(analyzer, diffs)
 
 
 class EventStore:
@@ -644,7 +668,7 @@ async def _do_review_pull_request(
         if cfg and cfg.review_strategy:
             review_strategy = cfg.review_strategy
         # 静态分析先跑（DESIGN §11）：失败降级为空，不影响主链
-        static_findings = await _run_static(static_analyzer, diffs)
+        static_findings = await _static_findings_gated(static_analyzer, diffs, engine)
         # 审查的 LLM 调用经 contextvar 采集进 review_conversation（adapter 读到 recorder 即采）
         async with conversation_capture(recorder):
             # diff 模式不走对话采集 → 通道 gateway 回调落 ModelUsage，看板 Token/成本能按模式拆分
@@ -963,7 +987,7 @@ async def _review_push_event(
                                              summary_md="_扩展名过滤或无待审变更_", score_total=0)
             return
         pr = _push_as_pr(ev)
-        static_findings = await _run_static(static_analyzer, diffs)
+        static_findings = await _static_findings_gated(static_analyzer, diffs, engine)
         usage_sink = diff_usage_sink(engine, audit_id) \
             if engine is not None and audit_id else None
         result, exec_mode = await _review_agent_or_diff(

@@ -342,6 +342,18 @@ export function setMrReviewDefault(data: { enabled: boolean }): Promise<MrReview
   return client.post('/settings/mr-review-default', data).then((r) => r.data)
 }
 
+// ===== 静态分析总开关（§11：ruff/semgrep 融合，全局默认）=====
+export interface StaticAnalysisSetting {
+  enabled: boolean
+  source: 'db' | 'env'
+}
+export function getStaticAnalysis(): Promise<StaticAnalysisSetting> {
+  return client.get('/settings/static-analysis').then((r) => r.data)
+}
+export function setStaticAnalysis(data: { enabled: boolean }): Promise<StaticAnalysisSetting> {
+  return client.post('/settings/static-analysis', data).then((r) => r.data)
+}
+
 // ===== 补拉范围开关（§9：是否同时拉取已关闭/已合并的 PR/MR）=====
 export interface PollIncludeClosedSetting {
   enabled: boolean

@@ -236,6 +236,24 @@ def test_push_review_default_api_roundtrip(app):
         assert r == {"enabled": False, "source": "db"}
 
 
+def test_static_analysis_api_roundtrip(app):
+    """§11 静态分析总开关 API：初始回落 env（默认关）、POST 落库、GET 读回 db。"""
+    fast, token = app
+    with _client(fast, token) as c:
+        # 无落库行 → 回落 env 默认（settings.review_static_enabled 默认 False），source=env
+        g = c.get("/api/settings/static-analysis").json()
+        assert g == {"enabled": False, "source": "env"}
+
+        # 开启并落库 → source=db，后续 GET 读回库值
+        r = c.post("/api/settings/static-analysis", json={"enabled": True}).json()
+        assert r == {"enabled": True, "source": "db"}
+        assert c.get("/api/settings/static-analysis").json()["enabled"] is True
+
+        # 关闭 → 库值覆盖，不回落 env
+        r = c.post("/api/settings/static-analysis", json={"enabled": False}).json()
+        assert r == {"enabled": False, "source": "db"}
+
+
 def test_mr_review_default_api_roundtrip(app):
     """§7.7 MR 轨全局自动审查默认开关 API（与 push 对称）：初始回落 env、POST 落库、GET 读回。"""
     fast, token = app

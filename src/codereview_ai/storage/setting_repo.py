@@ -25,6 +25,10 @@ MR_REVIEW_DEFAULT_KEY = "mr_review_default"
 #: False=仅打开态；True=同时拉取已关闭/已合并 PR/MR（补拉通道与手动按钮共用）。
 POLL_INCLUDE_CLOSED_KEY = "poll_include_closed"
 
+#: 静态分析（ruff/semgrep）总开关的键（值 "1"/"0"）。worker 每任务热读，缺行回落到
+#: env `CR_REVIEW_STATIC_ENABLED`（默认关）；配置页可改，落库即生效无需重启。
+STATIC_ANALYSIS_ENABLED_KEY = "static_analysis_enabled"
+
 
 class SettingRepository:
     """`app_setting` 表读取/写入；值一律存字符串，调用方按需转换。"""

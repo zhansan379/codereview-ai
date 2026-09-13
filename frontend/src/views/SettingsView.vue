@@ -204,6 +204,35 @@
       </div>
     </el-card>
 
+    <el-card class="static-card">
+      <template #header>{{ $t('settings.staticTitle') }}</template>
+      <p class="intro">
+        {{ $t('settings.staticIntro') }}
+        <el-tooltip placement="top" :show-after="50">
+          <template #content>
+            {{ $t('settings.staticTip.what') }}<br/>{{ $t('settings.staticTip.when') }}
+          </template>
+          <el-icon style="vertical-align: -2px; margin-left: 4px; cursor: help"><QuestionFilled /></el-icon>
+        </el-tooltip>
+      </p>
+      <el-form label-width="auto">
+        <el-form-item :label="$t('settings.staticLabel')">
+          <el-switch v-model="staticEnabled" />
+          <span class="field-hint" style="margin-left: 8px">{{ $t('settings.staticHint') }}</span>
+        </el-form-item>
+        <el-form-item v-if="staticSource === 'env'" :label="$t('settings.staticSourceLabel')">
+          <span class="hint">
+            <i18n-t keypath="settings.envSourceHint" scope="global">
+              <template #env><code>CR_REVIEW_STATIC_ENABLED</code></template>
+            </i18n-t>
+          </span>
+        </el-form-item>
+      </el-form>
+      <div class="save-bar">
+        <el-button type="primary" :loading="staticSaving" @click="onSaveStaticAnalysis">{{ $t('settings.saveStatic') }}</el-button>
+      </div>
+    </el-card>
+
     <el-card class="note-card">
       <template #header>{{ $t('settings.securityTitle') }}</template>
       <el-descriptions :column="1" border>
@@ -252,7 +281,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { listForges, updateForge, testForge, getConcurrency, setConcurrency, getPushReviewDefault, setPushReviewDefault, getMrReviewDefault, setMrReviewDefault, getPollIncludeClosed, setPollIncludeClosed } from '../api'
+import { listForges, updateForge, testForge, getConcurrency, setConcurrency, getPushReviewDefault, setPushReviewDefault, getMrReviewDefault, setMrReviewDefault, getPollIncludeClosed, setPollIncludeClosed, getStaticAnalysis, setStaticAnalysis } from '../api'
 import type { ForgeCapability } from '../api'
 
 const { t } = useI18n()
@@ -306,6 +335,35 @@ const mrSaving = ref(false)
 const pollIncludeClosed = ref(false)
 const pollScopeSource = ref<'db' | 'env'>('db')
 const pollScopeSaving = ref(false)
+
+// —— 静态分析总开关（§11：ruff/semgrep 融合；默认关）——
+const staticEnabled = ref(false)
+const staticSource = ref<'db' | 'env'>('db')
+const staticSaving = ref(false)
+
+async function loadStaticAnalysis() {
+  try {
+    const st = await getStaticAnalysis()
+    staticEnabled.value = st.enabled
+    staticSource.value = st.source
+  } catch {
+    /* 后端未暴露该接口时（旧版）静默跳过，不阻塞设置页加载 */
+  }
+}
+
+async function onSaveStaticAnalysis() {
+  staticSaving.value = true
+  try {
+    const st = await setStaticAnalysis({ enabled: staticEnabled.value })
+    staticEnabled.value = st.enabled
+    staticSource.value = st.source
+    ElMessage.success(st.enabled ? t('settings.staticOn') : t('settings.staticOff'))
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || t('common.saveFailed'))
+  } finally {
+    staticSaving.value = false
+  }
+}
 
 async function loadPollScope() {
   try {
@@ -455,6 +513,7 @@ onMounted(() => {
   loadPushDefault()
   loadMrDefault()
   loadPollScope()
+  loadStaticAnalysis()
 })
 </script>
 
