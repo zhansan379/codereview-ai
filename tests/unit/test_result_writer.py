@@ -319,3 +319,54 @@ def test_redeliver_uses_persisted_findings_and_summary():
     assert any("持久化的问题" in b for b in forge.inline_bodies)  # findings 从 DB 取回
     assert "已持久化总结" in forge.summary_bodies[0]  # summary 用持久化值覆盖，不重算
     assert forge.summary_bodies[0].endswith("<!-- fp000 -->")
+
+
+# ── 行级锚点去重：分批回写中途失败后的重发不双发 ─────────────────────────
+
+
+class _AnchoredForge:
+    """list_inline_anchors 返回预置锚点，post_inline/post_summary 记录收到的内容。"""
+
+    def __init__(self, anchors: set[tuple[str, int, str, str]]) -> None:
+        self._anchors = anchors
+        self.posted: list[list[dict]] = []
+        self.summaries: list[str] = []
+
+    async def list_inline_anchors(self, pr) -> set[tuple[str, int, str, str]]:
+        return self._anchors
+
+    async def post_inline(self, pr, comments: list[dict]) -> None:
+        self.posted.append(comments)
+
+    async def post_summary(self, pr, body: str) -> None:
+        self.summaries.append(body)
+
+
+def test_writer_dedupes_delivered_inline_by_anchor():
+    """已投锚点命中的 finding 跳过，只补未投的（分批中途失败重发不双发）。"""
+    delivered = _finding(file="a.py", line=2, side="RIGHT", content="bug")
+    fresh = _finding(file="a.py", line=1, side="RIGHT", content="another")
+    forge = _AnchoredForge({("a.py", 2, "RIGHT", "bug")})
+    asyncio.run(ResultWriter(forge).write(
+        _pr(), [_diff("a.py", DIFF)],
+        ReviewResult(summary="", findings=[delivered, fresh]),
+        summary="s",
+    ))
+    assert [c["body"] for c in forge.posted[0]] == ["another"]  # 已投的不进 payload
+    assert forge.summaries  # 总结照发（指纹 sentinel 由它承载）
+
+
+def test_writer_posts_all_when_anchor_fetch_fails():
+    """锚点拉取失败（网络错误）→ 原样照发，退回不去重行为。"""
+
+    class _FailingAnchors(_AnchoredForge):
+        async def list_inline_anchors(self, pr):
+            raise httpx.ConnectError("boom")
+
+    forge = _FailingAnchors(set())
+    asyncio.run(ResultWriter(forge).write(
+        _pr(), [_diff("a.py", DIFF)],
+        ReviewResult(summary="", findings=[_finding(file="a.py", line=2), _finding(content="x", line=1)]),
+        summary="s",
+    ))
+    assert [c["body"] for c in forge.posted[0]] == ["bug", "x"]

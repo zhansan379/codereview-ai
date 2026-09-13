@@ -6,13 +6,15 @@
 - 新增/修改文件的新侧全文可从该文件的完整 unified patch 还原（按 hunk 的新侧起始行号
   铺回 `+` 行与上下文），供锚定定位、覆盖集、未变更复用、静态分析用的全文兜底。
 - GitHub 的 changes 同样可能延迟返回空数组 → `asyncio.sleep` + 指数退避重试（与 GitLab 一致）。
-- 回写：总结走 `issues/{n}/comments`，行级走单次 `pulls/{n}/reviews` 批量（event=COMMENT）。
+- 回写：总结走 `issues/{n}/comments`，行级走 `pulls/{n}/reviews` 批量（event=COMMENT），
+  评论按小批分次 POST——单次几十条会触发 GitHub 的 secondary rate limit（403 临时封禁）。
 - 发批量的 HTTP 客户端在构造时注入（测试用 httpx.MockTransport，离线可测）。
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import replace
 from typing import Any
 
@@ -35,9 +37,21 @@ from codereview_ai.forges.base import (
 )
 from codereview_ai.forges.signatures import GITHUB
 
+logger = logging.getLogger("codereview_ai.forges.github")
+
 #: 空 files 数组时指数退避的初始/最大延时（秒）。
 _RETRY_DELAY_0 = 0.5
 _RETRY_ATTEMPTS = 3
+
+#: 单次 POST /pulls/{n}/reviews 的评论条数上限与批间隔：一把梭几十条会触发 GitHub 的
+#: secondary rate limit（内容创建反滥用限流，403 临时封禁且不计入 5000/h 主限额），
+#: 按小批 + 批间隔投放实测可避开。
+_REVIEW_BATCH_SIZE = 10
+_REVIEW_BATCH_DELAY = 3.0
+#: 命中次级限流（403/429 且响应体含 secondary rate limit）时等待后重试；
+#: 等待秒数优先用响应的 Retry-After 头，缺失则用 _RATELIMIT_FALLBACK_DELAY。
+_RATELIMIT_RETRIES = 2
+_RATELIMIT_FALLBACK_DELAY = 60.0
 
 #: GitHub files API 的 status → ChangeType。
 _STATUS_TO_CHANGE = {
@@ -269,19 +283,20 @@ class GitHubForge(ForgeAdapter):
     async def post_summary(self, pr: PullRequest, body: str) -> None:
         """整体总结：POST /issues/{n}/comments，字段名 body。"""
         owner, repo = _owner_repo(pr.repo_id)
-        resp = await self._http.post(
+        await self._post_ratelimit_safe(
             f"{self._base}/repos/{owner}/{repo}/issues/{pr.pr_number}/comments",
-            headers=self._auth_headers(),
-            json={"body": body},
+            {"body": body},
+            what="总结评论",
         )
-        resp.raise_for_status()
 
     async def post_inline(self, pr: PullRequest, comments: list[dict[str, Any]]) -> None:
-        """逐条行级评论：单次 `pulls/{n}/reviews` 批量（event=COMMENT），只发一封通知。
+        """逐条行级评论：`pulls/{n}/reviews` 批量（event=COMMENT），只发一封通知。
 
         comments 元素用 path/line/side（锚点，非会漂移的 legacy position，DESIGN §13.2）；
         删行（side=LEFT）用 old_line，新增/修改用 line。行号已在 result_writer 层按
         可评论行集合过滤，此处不再校验。缺失 head_sha 或行号时不投。
+        单次评论条数按 `_REVIEW_BATCH_SIZE` 分批（单次几十条触发 GitHub 次级限流 403），
+        批间隔 `_REVIEW_BATCH_DELAY`；各批独立走限流重试。
         """
         owner, repo = _owner_repo(pr.repo_id)
         if not pr.head_sha:
@@ -301,12 +316,17 @@ class GitHubForge(ForgeAdapter):
             })
         if not batch:
             return
-        resp = await self._http.post(
-            f"{self._base}/repos/{owner}/{repo}/pulls/{pr.pr_number}/reviews",
-            headers=self._auth_headers(),
-            json={"commit_id": pr.head_sha, "event": "COMMENT", "comments": batch},
-        )
-        resp.raise_for_status()
+        url = f"{self._base}/repos/{owner}/{repo}/pulls/{pr.pr_number}/reviews"
+        total = (len(batch) + _REVIEW_BATCH_SIZE - 1) // _REVIEW_BATCH_SIZE
+        for start in range(0, len(batch), _REVIEW_BATCH_SIZE):
+            chunk = batch[start:start + _REVIEW_BATCH_SIZE]
+            await self._post_ratelimit_safe(
+                url,
+                {"commit_id": pr.head_sha, "event": "COMMENT", "comments": chunk},
+                what=f"行级评论第 {start // _REVIEW_BATCH_SIZE + 1}/{total} 批",
+            )
+            if start + _REVIEW_BATCH_SIZE < len(batch):
+                await asyncio.sleep(_REVIEW_BATCH_DELAY)
 
     async def list_comments(self, pr: PullRequest) -> list[str]:
         """列出 PR 上已存在评论正文（行级 review 评论 + issues 总结评论），供幂等去重。"""
@@ -325,6 +345,35 @@ class GitHubForge(ForgeAdapter):
                 if isinstance(item, dict) and item.get("body"):
                     bodies.append(str(item["body"]))
         return bodies
+
+    async def list_inline_anchors(self, pr: PullRequest) -> set[tuple[str, int, str, str]]:
+        """已投行级评论的锚点集合 (path, line, side, body)，分批回写的补发去重用。
+
+        GitHub 对 LEFT 侧评论的行号回 `original_line`（与 RIGHT 侧的 `line` 字段不同位），
+        两处都取兜底。拉取失败返回空集（上层照发，与 `list_comments` 的降级语义一致）。
+        """
+        owner, repo = _owner_repo(pr.repo_id)
+        try:
+            resp = await self._http.get(
+                f"{self._base}/repos/{owner}/{repo}/pulls/{pr.pr_number}/comments",
+                headers=self._auth_headers(),
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError:
+            return set()
+        items = resp.json()
+        if not isinstance(items, list):
+            return set()
+        out: set[tuple[str, int, str, str]] = set()
+        for c in items:
+            if not isinstance(c, dict):
+                continue
+            path = c.get("path")
+            side = str(c.get("side") or "RIGHT")
+            line = c.get("line") if side == "RIGHT" else (c.get("original_line") or c.get("line"))
+            if path and line:
+                out.add((str(path), int(line), side, str(c.get("body") or "")))
+        return out
 
     # ── push 轨（§7.7）：compare / 单 commit / head commit 总结回写 ──
     async def get_push_changes(self, ev: PushEvent) -> list[FileDiff]:
@@ -361,12 +410,11 @@ class GitHubForge(ForgeAdapter):
     async def post_commit_summary(self, ev: PushEvent, text: str) -> None:
         """总结回写到 head commit：POST commits/{sha}/comments，字段 **body**（§13.1）。"""
         owner, repo = _owner_repo(ev.repo_id)
-        resp = await self._http.post(
+        await self._post_ratelimit_safe(
             f"{self._base}/repos/{owner}/{repo}/commits/{ev.after}/comments",
-            headers=self._auth_headers(),
-            json={"body": text},
+            {"body": text},
+            what="commit 总结评论",
         )
-        resp.raise_for_status()
 
     async def post_commit_status(
         self, pr: PullRequest, *, passed: bool, description: str = ""
@@ -398,6 +446,44 @@ class GitHubForge(ForgeAdapter):
         if "/" not in path:
             return None
         return {"repo_id": path, "repo_full_name": path, "web_url": url.rstrip("/")}
+
+    async def _post_ratelimit_safe(self, url: str, payload: dict[str, Any], *, what: str) -> None:
+        """回写 POST 的统一出口：容忍次级限流重试，4xx/5xx 带平台原始消息抛出。
+
+        GitHub 的内容创建反滥用限流表现为 403（偶发 429），不计入 5000/h 主限额，
+        响应体 message 以 secondary rate limit 起头——等待（Retry-After 头优先）后重试
+        通常即过。`raise_for_status` 只给状态码不带 message，排查时会误判成凭据问题，
+        故这里把响应体 message 拼进 HTTPStatusError 再抛。
+        """
+        resp: httpx.Response | None = None
+        for attempt in range(_RATELIMIT_RETRIES + 1):
+            resp = await self._http.post(url, headers=self._auth_headers(), json=payload)
+            if resp.status_code in (403, 429) and "secondary rate limit" in resp.text.lower():
+                if attempt >= _RATELIMIT_RETRIES:
+                    break
+                delay = float(resp.headers.get("retry-after") or _RATELIMIT_FALLBACK_DELAY)
+                logger.warning("GitHub 回写%s命中次级限流，%.0fs 后重试（%d/%d）",
+                               what, delay, attempt + 1, _RATELIMIT_RETRIES)
+                await asyncio.sleep(delay)
+                continue
+            self._raise_with_body(resp)
+            return
+        self._raise_with_body(resp)
+
+    def _raise_with_body(self, resp: httpx.Response) -> None:
+        """4xx/5xx 抛 HTTPStatusError 时把响应体 message 拼进异常文案（类型不变）。"""
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            try:
+                gh_msg = str(resp.json().get("message") or "")
+            except ValueError:
+                gh_msg = ""
+            if not gh_msg:
+                raise
+            raise httpx.HTTPStatusError(
+                f"{exc}：平台消息「{gh_msg}」", request=exc.request, response=resp
+            ) from None
 
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token}", "Accept": "application/vnd.github.v3+json"}  # noqa: E501

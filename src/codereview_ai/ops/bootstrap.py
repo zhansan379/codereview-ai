@@ -193,7 +193,7 @@ async def ensure_worker_started(app: Any) -> bool:
                     review_filter_enabled=settings.agent_review_filter_enabled,
                     scoring_enabled=settings.agent_scoring_enabled,
                     plan_line_threshold=settings.agent_plan_line_threshold,
-                    plan_group_line_threshold=settings.agent_group_line_threshold,
+                    plan_group_line_threshold=settings.agent_plan_group_line_threshold,
                 )
 
                 def _agent_llm_factory() -> Any:

@@ -207,6 +207,15 @@ class ForgeAdapter(ABC):
         """
         return []
 
+    async def list_inline_anchors(self, pr: PullRequest) -> set[tuple[str, int, str, str]]:
+        """已投行级评论的锚点集合 (path, line, side, body)，分批回写的补发去重用。
+
+        非抽象默认返回空：不支持的平台/极简测试桩返回空集，上层跳过锚点去重（照发，
+        与 list_comments 的降级语义一致）。分批回写中途失败后重发，已落地批次靠这里
+        跳过——指纹 sentinel 在总结评论末尾，行级未投完前它不会出现。
+        """
+        return set()
+
     # ── push 轨（§7.7）：非抽象默认，未实现的分析/测试子类可只保 MR 轨 ──
     def parse_push_event(self, data: dict[str, Any]) -> PushEvent | None:
         """从 webhook 的 push 事件解析出中立 PushEvent；不支持/非 push 返回 None。"""

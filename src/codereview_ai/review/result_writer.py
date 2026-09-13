@@ -144,14 +144,45 @@ class ResultWriter:
         if fingerprint:
             summary_text = f"{summary_text}\n<!-- {fingerprint} -->"
         if inline:
-            await self._post(
-                lambda: self.forge.post_inline(pr, [finding_to_comment(f) for f in inline]),
-                what="行级评论",
-            )
+            pending = await self._drop_delivered(pr, inline)
+            if pending:
+                await self._post(
+                    lambda: self.forge.post_inline(pr, [finding_to_comment(f) for f in pending]),
+                    what="行级评论",
+                )
         await self._post(
             lambda: self.forge.post_summary(pr, summary_text),
             what="总结评论",
         )
+
+    async def _drop_delivered(
+        self, pr: PullRequest, inline: list[Finding]
+    ) -> list[Finding]:
+        """按锚点 (path, line, side, body) 剔除平台上已投过的行级 finding。
+
+        GitHub 行级评论分批回写后，中途失败重发时指纹 sentinel（总结末尾）尚未落地，
+        幂等检查不会整体跳过——已落地的批次全靠这里去重，否则整包重投、行级双发。
+        适配器不支持锚点列表（默认空集）或拉取失败 → 原样照发，退回旧行为。
+        """
+        fn = getattr(self.forge, "list_inline_anchors", None)
+        if fn is None:
+            return inline
+        try:
+            known = await fn(pr)
+        except httpx.HTTPError:
+            logger.warning("拉取已投行级评论锚点失败，跳过去重照发", exc_info=True)
+            return inline
+        if not known:
+            return inline
+        pending = [
+            f for f in inline
+            if (f.file, f.line if f.side == "RIGHT" else f.old_line, f.side, f.content)
+            not in known
+        ]
+        skipped = len(inline) - len(pending)
+        if skipped:
+            logger.info("行级评论锚点去重：平台已投 %d 条，本次只补 %d 条", skipped, len(pending))
+        return pending
 
     async def _already_delivered(self, pr: PullRequest, fingerprint: str) -> bool:
         """平台是否已含该指纹，命中即视为本审查已投递（幂等跳过）。

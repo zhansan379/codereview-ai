@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from collections.abc import Callable
 
 import httpx
+import pytest
 
 from codereview_ai.domain.models import ChangeType, PullRequest, PushEvent
 from codereview_ai.forges import github as gh_mod
@@ -354,6 +355,90 @@ def test_post_inline_drops_missing_path_and_skips_empty_batch():
         {},
     ]))
     assert sent == []  # 全程不发单次 review 请求
+
+
+def test_post_inline_splits_into_batches(monkeypatch):
+    """>10 条分批 POST：每批 ≤ _REVIEW_BATCH_SIZE，批数 = ceil(n/size)。"""
+    monkeypatch.setattr(gh_mod, "_REVIEW_BATCH_DELAY", 0)
+    sizes: list[int] = []
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        sizes.append(len(json.loads(r.content)["comments"]))
+        return httpx.Response(200, json={})
+
+    f = _forge(handler)
+    pr = _pr()
+    comments = [{"side": "RIGHT", "line": i + 1, "body": f"c{i}", "path": "a.py"}
+                for i in range(25)]
+    asyncio.run(f.post_inline(pr, comments))
+    assert sizes == [10, 10, 5]
+
+
+def test_post_inline_retries_on_secondary_ratelimit(monkeypatch):
+    """403 + secondary rate limit → 等待后重试并成功（共 2 次请求）。"""
+    monkeypatch.setattr(gh_mod, "_RATELIMIT_FALLBACK_DELAY", 0)
+    calls = {"n": 0}
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(
+                403, json={"message": "You have exceeded a secondary rate limit ..."})
+        return httpx.Response(200, json={})
+
+    asyncio.run(_forge(handler).post_inline(_pr(), [
+        {"side": "RIGHT", "line": 5, "body": "x", "path": "a.py"},
+    ]))
+    assert calls["n"] == 2
+
+
+def test_post_inline_ratelimit_exhausted_error_carries_platform_message(monkeypatch):
+    """限流重试耗尽 → 抛 HTTPStatusError，文案带平台 message（不再只有状态码+URL）。"""
+    monkeypatch.setattr(gh_mod, "_RATELIMIT_FALLBACK_DELAY", 0)
+    calls = {"n": 0}
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(403, json={"message": "You have exceeded a secondary rate limit"})
+
+    with pytest.raises(httpx.HTTPStatusError) as ei:
+        asyncio.run(_forge(handler).post_inline(_pr(), [
+            {"side": "RIGHT", "line": 5, "body": "x", "path": "a.py"},
+        ]))
+    assert "平台消息" in str(ei.value)
+    assert "secondary rate limit" in str(ei.value)
+    assert calls["n"] == gh_mod._RATELIMIT_RETRIES + 1
+
+
+def test_post_inline_plain_403_no_retry_and_carries_message():
+    """非限流 403（如权限不足）不重试，异常文案同样带平台 message。"""
+    calls = {"n": 0}
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(
+            403, json={"message": "Resource not accessible by personal access token"})
+
+    with pytest.raises(httpx.HTTPStatusError) as ei:
+        asyncio.run(_forge(handler).post_inline(_pr(), [
+            {"side": "RIGHT", "line": 5, "body": "x", "path": "a.py"},
+        ]))
+    assert calls["n"] == 1
+    assert "Resource not accessible" in str(ei.value)
+
+
+def test_list_inline_anchors_maps_path_line_side_body():
+    """锚点取 path/line/side/body；LEFT 侧行号取 original_line，缺 path 的丢弃。"""
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[
+            {"path": "a.py", "line": 5, "side": "RIGHT", "body": "x"},
+            {"path": "a.py", "line": None, "original_line": 3, "side": "LEFT", "body": "y"},
+            {"line": 9, "side": "RIGHT", "body": "no-path"},
+        ])
+
+    anchors = asyncio.run(_forge(handler).list_inline_anchors(_pr()))
+    assert anchors == {("a.py", 5, "RIGHT", "x"), ("a.py", 3, "LEFT", "y")}
 
 
 def test_get_push_changes_returns_empty_when_after_all_zero():
