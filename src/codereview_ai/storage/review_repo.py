@@ -248,6 +248,7 @@ class ReviewRepository:
         base_sha: str = "",
         pr_title: str = "",
         pr_author: str = "",
+        target_branch: str = "",
         web_url: str = "",
         push_commits: str = "",
         payload: str = "",
@@ -305,7 +306,8 @@ class ReviewRepository:
                 pr_created_at = as_naive_utc(pr_created_at)
             task = ReviewTask(
                 provider=provider, repo_id=repo_id, pr_number=pr_number,
-                event_type=event_type, branch=branch, head_sha=head_sha,
+                event_type=event_type, branch=branch, target_branch=target_branch,
+                head_sha=head_sha,
                 base_sha=base_sha, pr_title=pr_title, pr_author=pr_author,
                 web_url=web_url, push_commits=push_commits, state="queued",
                 payload=payload,

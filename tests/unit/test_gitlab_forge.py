@@ -191,10 +191,16 @@ def test_fetch_files_exhausts_retries_returns_empty(monkeypatch):
 def test_fetch_pull_request_populates_diff_refs():
     def handler(r: httpx.Request) -> httpx.Response:
         assert API_BASE in str(r.url)
-        return httpx.Response(200, json={"diff_refs": {"base_sha": "b", "head_sha": "h", "start_sha": "s"}})  # noqa: E501
+        return httpx.Response(200, json={  # noqa: E501
+            "diff_refs": {"base_sha": "b", "head_sha": "h", "start_sha": "s"},
+            "author": {"username": "bob"}, "target_branch": "main",
+        })
 
     pr = asyncio.run(_forge(handler).fetch_pull_request(_pr()))
     assert pr.diff_refs == {"base_sha": "b", "head_sha": "h", "start_sha": "s"}
+    # API author（MR 作者 bob）纠正 webhook 里的「事件触发人」alice；target 一并补齐
+    assert pr.author == "bob"
+    assert pr.target_branch == "main"
     assert pr.pr_number == 42  # 其余字段不变
 
 

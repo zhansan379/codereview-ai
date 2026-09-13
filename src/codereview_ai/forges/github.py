@@ -213,11 +213,17 @@ class GitHubForge(ForgeAdapter):
             return pr
         head = body.get("head") or {}
         base = body.get("base") or {}
+        head_d = head if isinstance(head, dict) else {}
+        base_d = base if isinstance(base, dict) else {}
         return replace(
             pr,
-            head_sha=str((head if isinstance(head, dict) else {}).get("sha") or pr.head_sha),
-            base_sha=str((base if isinstance(base, dict) else {}).get("sha") or pr.base_sha),
+            head_sha=str(head_d.get("sha") or pr.head_sha),
+            base_sha=str(base_d.get("sha") or pr.base_sha),
             title=str(body.get("title") or pr.title),
+            # 审计行重建的重跑/回放路径行内缺 author/target（存量行尤甚），响应现成字段补齐，
+            # IM 通知的作者行/分支行才有着落
+            author=str(((body.get("user") or {}) or {}).get("login") or pr.author),
+            target_branch=str(base_d.get("ref") or pr.target_branch),
         )
 
     async def list_pulls(

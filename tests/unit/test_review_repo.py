@@ -131,6 +131,22 @@ async def test_ensure_task_terminal_returns_existing_id_for_retry(engine):
     assert again == tid  # 终态返回原 id 供重试
 
 
+async def test_ensure_task_persists_target_branch_and_author(engine):
+    """mr 轨审计行落 target_branch/author——任务列表重跑重建 PR 与 IM 通知作者/分支行的数据源。"""
+    repo = ReviewRepository(engine)
+    tid = await repo.ensure_task(
+        provider="gitlab", repo_id="9", pr_number=42, event_type="mr",
+        branch="feat", head_sha="h-tb", pr_author="alice", target_branch="main",
+    )
+    async with session_factory(engine)() as s:
+        row = (await s.execute(
+            select(ReviewTask).where(ReviewTask.id == tid)
+        )).scalars().first()
+    assert row is not None
+    assert row.target_branch == "main"
+    assert row.pr_author == "alice"
+
+
 # ── 启动回放（崩溃恢复）──────────────────────────────────────────────────
 
 

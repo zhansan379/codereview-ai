@@ -134,7 +134,8 @@ def _pr_from_task(row: ReviewTask) -> PullRequest:
         pr_number=row.pr_number or 0,
         title=row.pr_title,
         source_branch=row.branch,
-        target_branch="",  # 审计行不落 target；fetch_pull_request 会补 diff_refs，target 仅展示用
+        target_branch=row.target_branch or "",
+        author=row.pr_author or "",
         head_sha=row.head_sha,
         base_sha=row.base_sha,
     )

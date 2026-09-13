@@ -278,12 +278,17 @@ def test_fetch_files_exhausts_retries_returns_empty(monkeypatch):
 def test_fetch_pull_request_populates_authoritative_shas():
     def handler(r: httpx.Request) -> httpx.Response:
         assert "/pulls/99" in str(r.url)
-        return httpx.Response(200, json={"head": {"sha": "HEAD1"}, "base": {"sha": "BASE1"}, "title": "t2"})  # noqa: E501
+        return httpx.Response(200, json={  # noqa: E501
+            "head": {"sha": "HEAD1"}, "base": {"sha": "BASE1", "ref": "main"},
+            "title": "t2", "user": {"login": "alice"},
+        })
 
     pr = asyncio.run(_forge(handler).fetch_pull_request(_pr()))
     assert pr.head_sha == "HEAD1"
     assert pr.base_sha == "BASE1"
     assert pr.title == "t2"
+    assert pr.author == "alice"        # 审计行重建路径行内缺 author/target，fetch 顺手补
+    assert pr.target_branch == "main"
     assert pr.pr_number == 99  # 其余字段不变
 
 

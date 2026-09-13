@@ -91,6 +91,8 @@ class ReviewTask(Base):
     pr_number: Mapped[int | None] = mapped_column(Integer, nullable=True)  # push 轨为 NULL
     event_type: Mapped[str] = mapped_column(String(16), default="mr")
     branch: Mapped[str] = mapped_column(String(255), default="")
+    # mr 轨目标分支（IM 通知分支行/展示用；push 轨无分支对留空）
+    target_branch: Mapped[str] = mapped_column(String(255), default="")
     head_sha: Mapped[str] = mapped_column(String(64))
     base_sha: Mapped[str] = mapped_column(String(64), default="")
     # PR/MR 标题（展示用；push 轨留空）

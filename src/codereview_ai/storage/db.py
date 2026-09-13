@@ -197,12 +197,14 @@ async def init_db(engine: AsyncEngine) -> None:
         await _ensure_columns(conn)
 
 
-#: 存量表增量补列登记：(表名, 列名, DDL 片段)。create_all 只建新表不加列，
-#: 存量库升级依赖此处幂等补齐；DDL 片段仅 SQLite 用（PG 按列名 IF NOT EXISTS 补）。
-_COLUMN_FALLBACKS: tuple[tuple[str, str, str], ...] = (
-    ("review_task", "pr_created_at", "DATETIME"),
-    ("review_task", "diff_additions", "INTEGER"),
-    ("review_task", "diff_deletions", "INTEGER"),
+#: 存量表增量补列登记：(表名, 列名, SQLite DDL 片段, PG DDL 片段)。create_all 只建新表
+#: 不加列，存量库升级依赖此处幂等补齐；类型随列各异（时间戳/整数/字符串），不再按表统一。
+_COLUMN_FALLBACKS: tuple[tuple[str, str, str, str], ...] = (
+    ("review_task", "pr_created_at", "DATETIME", "TIMESTAMPTZ NULL"),
+    ("review_task", "diff_additions", "INTEGER", "INTEGER NULL"),
+    ("review_task", "diff_deletions", "INTEGER", "INTEGER NULL"),
+    ("review_task", "target_branch", "VARCHAR(255) NOT NULL DEFAULT ''",
+     "VARCHAR(255) NOT NULL DEFAULT ''"),
 )
 
 
@@ -211,11 +213,11 @@ async def _ensure_columns(conn: object) -> None:
     from sqlalchemy import text
 
     is_pg = (getattr(conn, "dialect", None) is not None and conn.dialect.name == "postgresql")  # type: ignore[attr-defined]
-    for table, name, ddl in _COLUMN_FALLBACKS:
+    for table, name, ddl, pg_ddl in _COLUMN_FALLBACKS:
         try:
             if is_pg:
                 await conn.execute(  # type: ignore[attr-defined]
-                    text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} TIMESTAMPTZ NULL")
+                    text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {pg_ddl}")
                 )
             else:
                 cols = {

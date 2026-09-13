@@ -412,7 +412,8 @@ def _pr_from_task_row(row: Any) -> PullRequest:
         pr_number=row.pr_number or 0,
         title=row.pr_title,
         source_branch=row.branch,
-        target_branch="",  # 审计行不落 target；fetch_pull_request 会补 diff_refs
+        target_branch=row.target_branch or "",
+        author=row.pr_author or "",
         head_sha=row.head_sha,
         base_sha=row.base_sha,
     )
@@ -461,7 +462,8 @@ async def scribble_queued_task(
     task_id = await review_repo.ensure_task(
         provider=pr.provider, repo_id=pr.repo_id, pr_number=pr.pr_number,
         event_type="mr", branch=pr.source_branch, head_sha=pr.head_sha,
-        base_sha=pr.base_sha, pr_title=pr.title, pr_author=pr.author, web_url=pr.web_url,
+        base_sha=pr.base_sha, pr_title=pr.title, pr_author=pr.author,
+        target_branch=pr.target_branch, web_url=pr.web_url,
         payload=raw.decode("utf-8", "replace"),
     )
     if hold and task_id is not None:
@@ -567,7 +569,8 @@ async def _do_review_pull_request(
         task_id = await review_repo.ensure_task(
             provider=pr.provider, repo_id=pr.repo_id, pr_number=pr.pr_number,
             event_type="mr", branch=pr.source_branch, head_sha=pr.head_sha,
-            base_sha=pr.base_sha, pr_title=pr.title, pr_author=pr.author, web_url=pr.web_url,
+            base_sha=pr.base_sha, pr_title=pr.title, pr_author=pr.author,
+            target_branch=pr.target_branch, web_url=pr.web_url,
             payload=raw_payload, trace_id=TRACE_ID.get(),
         )
         if task_id is None:

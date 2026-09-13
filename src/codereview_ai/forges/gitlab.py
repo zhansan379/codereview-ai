@@ -151,24 +151,33 @@ class GitLabForge(ForgeAdapter):
 
     # ── REST 拉取 ──────────────────────────────────────────────────────
     async def fetch_pull_request(self, pr: PullRequest) -> PullRequest:
-        """GET /merge_requests/{iid} 补齐 diff_refs（回写评论 position 必填）。"""
+        """GET /merge_requests/{iid} 补齐 diff_refs（回写评论 position 必填）。
+
+        顺带补 target_branch/author：审计行重建的重跑路径行内无此二字段（存量行尤甚）；
+        且 GitLab webhook 的 author 是事件触发人而非 MR 作者，以 API 的 author.username
+        为准一并纠正。
+        """
         resp = await self._http.get(
             f"{self._base}/api/v4/projects/{pr.repo_id}/merge_requests/{pr.pr_number}",
             headers=self._auth_headers(),
         )
         resp.raise_for_status()
         body = resp.json()
-        refs = body.get("diff_refs") if isinstance(body, dict) else None
+        if not isinstance(body, dict):
+            return pr
+        refs = body.get("diff_refs")
+        updates: dict[str, object] = {
+            # webhook author 可能是事件触发人；API 值恒为 MR 作者
+            "author": str(((body.get("author") or {}) or {}).get("username") or pr.author),
+            "target_branch": str(body.get("target_branch") or pr.target_branch),
+        }
         if isinstance(refs, dict):
-            return replace(
-                pr,
-                diff_refs={
-                    "base_sha": refs.get("base_sha") or "",
-                    "head_sha": refs.get("head_sha") or "",
-                    "start_sha": refs.get("start_sha") or "",
-                },
-            )
-        return pr
+            updates["diff_refs"] = {
+                "base_sha": refs.get("base_sha") or "",
+                "head_sha": refs.get("head_sha") or "",
+                "start_sha": refs.get("start_sha") or "",
+            }
+        return replace(pr, **updates)
 
     async def list_pulls(
         self, repo_id: str, *, include_closed: bool = False

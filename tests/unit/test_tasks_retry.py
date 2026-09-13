@@ -84,7 +84,7 @@ def _request(enqueuer) -> SimpleNamespace:
 
 async def test_mr_retry_without_payload_rebuilds_pr(engine, admin):
     # 补拉入队的 MR 任务 payload 为空 → 重试重建 PR 走 enqueue_pr（补拉 fetch 路径）
-    task_id, _prov, _repo = await _seed(engine)
+    task_id, _prov, _repo = await _seed(engine, pr_author="alice", target_branch="main")
     enq = _FakeEnqueuer()
     session = session_factory(engine)
     async with session() as s:
@@ -102,6 +102,9 @@ async def test_mr_retry_without_payload_rebuilds_pr(engine, admin):
     assert pr.repo_id == "7"
     assert pr.pr_number == 9
     assert pr.head_sha == "a" * 40
+    assert pr.author == "alice"          # 行内 pr_author/target 随重建带上（IM 通知用）
+    assert pr.target_branch == "main"
+    assert pr.source_branch == "feature"
     assert pr.repo_full_name == "o/r"    # 从 web_url 推导
     assert pr.web_url.endswith("/merge_requests/9")
 
