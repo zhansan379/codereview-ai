@@ -200,6 +200,7 @@ uv run pytest tests --cov=codereview_ai --cov-fail-under=70
 
 **优先做**
 
+- [ ] **AI 助手反馈闭环（MCP）** — 让提交者的 AI 编程助手（Claude Code / Cursor / Codex CLI）在 push 后自动取审查结果并修复，形成「push → 等审查 → 取 findings → 修 critical/high → 再 push」的闭环。分四步走：项目级 API token 鉴权（现有 API 全是 admin UI 的 JWT 会话，外部工具用不了）→ `wait_for_review` / `get_findings` 查询接口（审查是异步的，wait 语义是关键）→ 挂成 streamable HTTP MCP Server → 设置页一键生成 AGENTS.md 片段让助手知道主动用；另附 CLI 薄壳（`cra check --pr <url>`）给不支持 MCP 的场景与 git hook / CI 用。`ReviewFinding` 已是结构化数据（file / line / severity / suggestion / fingerprint），缺的只是对外的 token 化通道。
 - [ ] **项目级规则引擎** — 按 `path` / glob 注入追加规则、首个匹配者胜，让审查策略能逐目录逐文件配置。数据层已就位（`ProjectRule` 表带 `path_glob` / `priority` / `system_merge`），但全树尚无引用：缺仓储层、管理接口，以及审查时的规则匹配与 prompt 注入。
 - [ ] **平台原生 suggestion 建议块** — 把已经拿到的 `suggestion_code` 渲染成 GitHub 的 `suggestion` 代码围栏（多行用 `start_line`），让建议能在 diff 上一键 Apply，而不是只能读。
 - [ ] **四种审查风格** — 专业 / 毒舌 / 绅士 / 幽默，只影响措辞不影响评分。配置入口与字段都在，缺各风格的 prompt 预设。
@@ -210,6 +211,7 @@ uv run pytest tests --cov=codereview_ai --cov-fail-under=70
 - [ ] 更多平台 — Gitea 适配器（Gitee 已支持：webhook + 定时补拉，见[Gitee 教程](docs/how_use_gitee.md)）；webhook IP 白名单作为验签之外的第二道防线
 - [ ] 更深的上下文 — 仓库知识库（检索团队规范与历史结论注入 prompt）、无 diff 的整文件审计、开发者 `@bot` 追问
 - [ ] 更多出口 — 通用 webhook 与邮件通知、周报 / 月报、HTML 报告导出（现为 xlsx）
+- [ ] **全自动修复闭环** — 审查完成后系统直接拉起 headless agent（`claude -p` / `codex exec`）喂入 findings，修完只开 PR 不直推并自动触发重审；项目级开关默认关、仅自动修 critical/high。依赖 MCP 闭环先落地、观察效果后再做。
 - [ ] 后台体验 — 独立任务看板、深色模式、中英 i18n
 
 ## 许可证
