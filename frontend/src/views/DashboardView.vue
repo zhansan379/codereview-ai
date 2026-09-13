@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="kpi-grid">
+    <div class="kpi-grid" data-tour="kpi">
       <el-card>
         <div class="stat-label">{{ $t('dashboard.kpiTasks') }}</div>
         <div class="stat-value">{{ stats.total_tasks }}</div>
@@ -26,7 +26,7 @@
     </div>
 
     <!-- 分布概览：4 个数字分布等宽排一行，瓦片撑满卡片，避免短列表留白 -->
-    <el-row :gutter="20" class="charts-row band-row">
+    <el-row :gutter="20" class="charts-row band-row" data-tour="bands">
       <el-col :xs="12" :md="6">
         <el-card class="band-card">
           <template #header>{{ $t('dashboard.bandSeverity') }}</template>
@@ -55,7 +55,7 @@
 
     <el-row :gutter="20" class="charts-row">
       <el-col :span="12" :xs="24" :md="12">
-        <el-card>
+        <el-card data-tour="trend">
           <template #header>{{ $t('dashboard.chartTrend') }}</template>
           <div ref="trendRef" class="chart"></div>
         </el-card>
@@ -113,7 +113,7 @@
       </el-col>
     </el-row>
 
-    <el-card class="table-card">
+    <el-card class="table-card" data-tour="recent">
       <template #header>{{ $t('dashboard.recent') }}</template>
       <ReviewsTable :items="recent" :loading="loading" time-field="finished_at" @detail="goDetail" />
     </el-card>

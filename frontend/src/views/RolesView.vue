@@ -1,10 +1,10 @@
 <template>
   <div>
     <el-card>
-      <div class="toolbar">
+      <div class="toolbar" data-tour="roles-toolbar">
         <el-button type="primary" @click="openCreate">{{ $t('roles.createTitle') }}</el-button>
       </div>
-      <el-table :data="items" v-loading="loading" stripe>
+      <el-table :data="items" v-loading="loading" stripe data-tour="roles-table">
         <el-table-column prop="name" :label="$t('common.name')" min-width="110" />
         <el-table-column prop="description" :label="$t('roles.description')" min-width="150" show-overflow-tooltip />
         <el-table-column :label="$t('roles.type')" width="90">

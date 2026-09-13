@@ -1,7 +1,7 @@
 <template>
   <div>
     <!-- 按 MR 聚合并行视图：筛选 + 完整分页（服务端分页，条件持久化到 URL） -->
-    <el-card class="filter-card">
+    <el-card class="filter-card" data-tour="reviews-mr-filter">
       <template #header>
         <div class="card-head">
           <span class="card-title">{{ $t('reviewPrs.title') }}</span>
@@ -63,7 +63,7 @@
       </el-form>
     </el-card>
 
-    <div v-loading="loading" class="pr-list">
+    <div v-loading="loading" class="pr-list" data-tour="reviews-mr-list">
       <div v-if="!items.length && !loading" class="empty-tip">{{ $t('reviewPrs.empty') }}</div>
 
       <el-card v-for="pr in items" :key="pr.key" class="pr-card" shadow="never">

@@ -1,7 +1,7 @@
 <template>
   <div>
     <!-- 服务端过滤：筛选项 + 头部操作按钮 -->
-    <el-card class="filter-card">
+    <el-card class="filter-card" data-tour="reviews-detail-filter">
       <template #header>
         <div class="card-head">
           <span class="card-title">{{ $t('reviews.filterTitle') }}</span>
@@ -149,7 +149,7 @@
       </template>
     </el-dialog>
 
-    <el-card>
+    <el-card data-tour="reviews-detail-table">
       <ReviewsTable
         :items="items"
         :loading="loading"

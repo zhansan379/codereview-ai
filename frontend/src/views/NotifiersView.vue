@@ -1,11 +1,11 @@
 <template>
   <div>
     <el-card>
-      <div class="toolbar">
+      <div class="toolbar" data-tour="notifiers-toolbar">
         <el-button type="primary" @click="openCreate">{{ $t('notifiers.createBtn') }}</el-button>
         <el-button @click="openMemberManager">{{ $t('notifiers.memberManagerBtn') }}</el-button>
       </div>
-      <el-table :data="items" v-loading="loading" stripe>
+      <el-table :data="items" v-loading="loading" stripe data-tour="notifiers-table">
         <el-table-column prop="id" :label="$t('common.id')" width="70" />
         <el-table-column :label="$t('notifiers.columns.channel')" width="120">
           <template #default="{ row }">

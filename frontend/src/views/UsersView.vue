@@ -1,10 +1,10 @@
 <template>
   <div>
     <el-card>
-      <div class="toolbar">
+      <div class="toolbar" data-tour="users-toolbar">
         <el-button type="primary" @click="openCreate">{{ $t('users.createTitle') }}</el-button>
       </div>
-      <el-table :data="items" v-loading="loading" stripe>
+      <el-table :data="items" v-loading="loading" stripe data-tour="users-table">
         <el-table-column prop="id" :label="$t('common.id')" width="70" />
         <el-table-column prop="username" :label="$t('users.username')" min-width="120" />
         <el-table-column prop="display_name" :label="$t('users.displayName')" min-width="110" />

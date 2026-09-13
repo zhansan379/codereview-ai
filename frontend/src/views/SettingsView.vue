@@ -1,6 +1,6 @@
 <template>
   <div>
-    <el-card>
+    <el-card data-tour="settings-forge">
       <template #header>{{ $t('settings.forgeTitle') }}</template>
       <p class="intro">
         <i18n-t keypath="settings.forgeIntro" scope="global">

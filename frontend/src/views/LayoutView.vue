@@ -69,6 +69,16 @@
           </el-breadcrumb-item>
         </el-breadcrumb>
         <div class="header-right">
+          <el-tooltip :content="$t('tour.help')" placement="bottom">
+            <span
+              class="help-chip"
+              data-tour="help"
+              :aria-label="$t('tour.help')"
+              @click="tourRef?.start()"
+            >
+              <el-icon :size="14"><QuestionFilled /></el-icon>
+            </span>
+          </el-tooltip>
           <el-switch
             v-model="isDark"
             class="dark-switch"
@@ -78,7 +88,7 @@
           />
           <!-- 语言切换：@element-plus/icons-vue 里没有地球/语言类图标，用文字标识 -->
           <el-dropdown trigger="click" @command="setLocale">
-            <span class="lang-chip" :title="$t('menu.language')">
+            <span class="lang-chip" data-tour="lang" :title="$t('menu.language')">
               {{ locale === 'en' ? 'EN' : '中' }}
             </span>
             <template #dropdown>
@@ -89,7 +99,7 @@
             </template>
           </el-dropdown>
           <el-dropdown>
-            <span class="user-chip">
+            <span class="user-chip" data-tour="user">
               {{ auth.user?.display_name || auth.user?.username || $t('menu.user') }}
               <span class="role-tag">{{ auth.role }}</span>
             </span>
@@ -105,6 +115,7 @@
         <router-view />
       </el-main>
     </el-container>
+    <AppTour ref="tourRef" />
   </el-container>
 </template>
 
@@ -128,11 +139,13 @@ import {
   Key,
   Moon,
   Sunny,
+  QuestionFilled,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 import { useDark } from '../composables/useDark'
 import { useLocale } from '../composables/useLocale'
 import AppLogo from '../components/AppLogo.vue'
+import AppTour from '../components/AppTour.vue'
 import { listNotifications, acknowledgeNotification, acknowledgeAllNotifications, NotificationItem } from '../api'
 
 const route = useRoute()
@@ -141,6 +154,8 @@ const auth = useAuthStore()
 const { isDark } = useDark()
 const { locale, setLocale } = useLocale()
 const { t } = useI18n()
+// 漫游引导：顶栏「?」可随时重开（首次登录自动弹出，逻辑在 AppTour 内）
+const tourRef = ref<InstanceType<typeof AppTour>>()
 
 // ===== 系统消息提醒（SSE 实时推送）=====
 const notifications = ref<NotificationItem[]>([])
@@ -358,8 +373,9 @@ function onLogout() {
   cursor: pointer;
   color: var(--el-text-color-primary);
 }
-/* 语言标识：与暗色开关同高的小方块，宽度固定，中/EN 切换时顶栏不抖 */
-.lang-chip {
+/* 语言/帮助共用的小方块：宽度固定，中/EN 切换时顶栏不抖 */
+.lang-chip,
+.help-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -374,7 +390,8 @@ function onLogout() {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 4px;
 }
-.lang-chip:hover {
+.lang-chip:hover,
+.help-chip:hover {
   color: var(--el-color-primary);
   border-color: var(--el-color-primary);
 }

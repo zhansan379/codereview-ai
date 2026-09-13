@@ -1,14 +1,14 @@
 <template>
   <div>
     <el-card>
-      <div class="toolbar">
+      <div class="toolbar" data-tour="schedules-toolbar">
         <el-button type="primary" @click="openCreate">{{ $t('schedules.create') }}</el-button>
         <el-button @click="load">{{ $t('common.refresh') }}</el-button>
         <span v-if="!workerActive" class="hint">
           {{ $t('schedules.workerInactive') }}
         </span>
       </div>
-      <el-table :data="items" v-loading="loading" stripe>
+      <el-table :data="items" v-loading="loading" stripe data-tour="schedules-table">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="name" :label="$t('schedules.jobName')" min-width="140" />
         <el-table-column :label="$t('schedules.jobType')" width="120">

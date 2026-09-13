@@ -1,6 +1,6 @@
 <template>
   <div>
-    <el-card class="policy-card">
+    <el-card class="policy-card" data-tour="caches-policy">
       <template #header>
         <div class="policy-header">
           <span>{{ $t('caches.policyTitle') }}</span>
@@ -29,7 +29,7 @@
     </el-card>
 
     <el-card>
-      <div class="toolbar">
+      <div class="toolbar" data-tour="caches-list">
         <span class="toolbar-title">{{ $t('caches.listTitle') }}</span>
         <el-button :loading="scanning" @click="onRebuild">{{ $t('caches.scanExisting') }}</el-button>
         <el-button @click="load">{{ $t('common.refresh') }}</el-button>

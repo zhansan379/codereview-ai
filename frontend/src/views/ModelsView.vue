@@ -1,10 +1,10 @@
 <template>
   <div>
     <el-card>
-      <div class="toolbar">
+      <div class="toolbar" data-tour="models-toolbar">
         <el-button type="primary" @click="openCreate">{{ $t('models.create') }}</el-button>
       </div>
-      <el-table :data="items" v-loading="loading" stripe>
+      <el-table :data="items" v-loading="loading" stripe data-tour="models-table">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="name" :label="$t('models.colName')" min-width="120" />
         <el-table-column prop="provider" :label="$t('models.colProvider')" width="110" />

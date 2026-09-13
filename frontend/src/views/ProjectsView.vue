@@ -1,7 +1,7 @@
 <template>
   <div>
     <el-card>
-      <div class="toolbar">
+      <div class="toolbar" data-tour="projects-toolbar">
         <el-button v-if="auth.hasPerm('projects:manage')" type="primary" @click="openCreate">{{ $t('projects.createBtn') }}</el-button>
         <el-button v-if="auth.hasPerm('pulls:manage')" :loading="pollBusy" @click="onPoll">
           {{ pollBusy ? $t('projects.pollBtnBusy') : $t('projects.pollBtn') }}
@@ -21,7 +21,7 @@
         <template v-else>{{ $t('projects.pollRunning') }}</template>
         {{ $t('projects.pollHint') }}
       </div>
-      <el-table :data="items" v-loading="loading" stripe>
+      <el-table :data="items" v-loading="loading" stripe data-tour="projects-table">
         <el-table-column prop="id" :label="$t('common.id')" width="70" />
         <el-table-column prop="repo_full_name" :label="$t('projects.columns.repo')" min-width="180" />
         <el-table-column prop="provider" :label="$t('projects.columns.provider')" width="100" />

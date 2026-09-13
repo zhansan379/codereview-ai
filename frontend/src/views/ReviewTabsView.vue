@@ -1,7 +1,7 @@
 <template>
   <div>
     <!-- MR 汇总 / 明细：一个领域一个入口，用分段切换避免两个平级菜单项打架 -->
-    <el-card class="tab-card" shadow="never">
+    <el-card class="tab-card" shadow="never" data-tour="reviews-tabs">
       <el-segmented
         v-model="tab"
         :options="[
