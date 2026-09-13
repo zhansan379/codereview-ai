@@ -161,6 +161,33 @@ async def test_analyze_degrades_on_bad_json(tmp_path):
     assert await analyzer.analyze([_py_diff("x")]) == []
 
 
+async def test_ruff_drops_codeless_syntax_diagnostics(tmp_path):
+    """无规则码的诊断（语法解析错误）在归一化时丢弃。
+
+    patch 重建/语法坏文件会让 ruff 错误恢复雪崩出 "Expected a statement" 一类诊断
+    （#62 报告 80+ 假 finding 全是这类，且无 code 字段）；带规则码的照常保留。
+    """
+    reports = [
+        {"code": None, "message": "Expected a statement",
+         "filename": "a.py", "location": {"row": 265, "column": 1}},
+        {"code": None, "message": "Got unexpected token `",
+         "filename": "a.py", "location": {"row": 477, "column": 1}},
+        {"code": "F401", "message": "'os' imported but unused",
+         "filename": "a.py", "location": {"row": 3, "column": 5}},
+    ]
+
+    class _SynErrRunner:
+        async def run(self, tool: str, args: list[str], cwd) -> RunResult:
+            if tool == "ruff":
+                return RunResult(json.dumps(reports), 1)
+            return RunResult(json.dumps({"results": [], "errors": []}), 0)
+
+    analyzer = StaticAnalyzer(runner=_SynErrRunner(), workspace=tmp_path)
+    findings = await analyzer.analyze([_py_diff("import os\n")])
+    ruff = [f for f in findings if f.source == "static:ruff"]
+    assert len(ruff) == 1 and ruff[0].line == 3 and ruff[0].content == "'os' imported but unused"
+
+
 # ── semgrep：registry-first + 本地兜底 + 运行失败降级 ─────────────────────
 
 

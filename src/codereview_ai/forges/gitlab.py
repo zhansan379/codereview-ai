@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import urllib.parse
 from dataclasses import replace
 from typing import Any
@@ -248,6 +249,27 @@ class GitLabForge(ForgeAdapter):
                 await asyncio.sleep(delay)  # 协程等待，不阻塞事件循环
                 delay *= 2
         return []
+
+    async def fetch_file_content(self, repo_id: str, path: str, ref: str) -> str:
+        """GET /repository/files/{path}?ref={sha} 取真实全文（base64），静态分析富化用。
+
+        路径需整体 URL 编码（GitLab 的文件接口按段转义，含 `/` 也要转）；失败抛
+        HTTPStatusError，由 `enrich_new_file_contents` 按单文件降级留用 patch 重建。
+        """
+        if not repo_id or not path or not ref:
+            return ""
+        quoted = urllib.parse.quote(path, safe="")
+        resp = await self._http.get(
+            f"{self._base}/api/v4/projects/{repo_id}/repository/files/{quoted}",
+            params={"ref": ref},
+            headers=self._auth_headers(),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        content = body.get("content") if isinstance(body, dict) else None
+        if not content:
+            return ""
+        return base64.b64decode(content).decode("utf-8", errors="replace")
 
     # ── 回写评论 ───────────────────────────────────────────────────────
     async def post_summary(self, pr: PullRequest, body: str) -> None:

@@ -6,13 +6,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
 import urllib.parse
 from abc import ABC, abstractmethod
+from dataclasses import replace
 from typing import Any
 
 from codereview_ai.domain.models import ChangeType, FileDiff, PullRequest, PushEvent
 from codereview_ai.forges.signatures import GITEA, GITEE, GITHUB, GITLAB
+
+logger = logging.getLogger("codereview_ai.forges.base")
 
 #: 触发审查的事件动作白名单（open/update 语义，跨平台归一）。
 REVIEW_ACTIONS = frozenset({"open", "opened", "reopen", "reopened", "update", "synchronize"})
@@ -33,8 +38,12 @@ def new_file_content_from_patch(patch: str, change: ChangeType) -> str:
     每个文件的 patch 是从头到尾的完整 diff：每一行要么在某个 `@@ ... @@` hunk 内、
     要么是 `--- / +++` 元头或 `\\ No newline` 标记。按 hunk 头携带的**新侧起始行号**，
     把 `+`（新增）与 ` `（上下文）行铺回对应行号、`-`（删除）行剔除，即得该文件在新
-    head 的完整正文。对 NEW_FILE 退化为「剥 `+` 前缀」。供覆盖集、未变更复用、静态分析、
-    行号定位等需要新文件全文的场景使用。GitHub/GitLab 的 patch 同构，两平台共用一套。
+    head 的完整正文。对 NEW_FILE 退化为「剥 `+` 前缀」。
+
+    注意「完整」仅指 patch 自身：unified diff 只带变更点附近几行上下文，未被 hunk
+    覆盖的行在这里被填成**空行**。故产物适合变更区周边的场景（覆盖集、未变更复用、
+    行号定位），不适合整体解析——静态分析跑 ruff 前必须先 `enrich_new_file_contents`
+    换成平台真实全文（#62 报告 80+ 假 finding 的教训），本函数结果仅作富化失败时的兜底。
     """
     if change is ChangeType.DELETED_FILE:
         return ""
@@ -61,6 +70,64 @@ def new_file_content_from_patch(patch: str, change: ChangeType) -> str:
     if not modelines:
         return ""
     return "\n".join(modelines.get(i, "") for i in range(1, max_line + 1))
+
+
+async def enrich_new_file_contents(
+    forge: ForgeAdapter,
+    diffs: list[FileDiff],
+    repo_id: str,
+    ref: str,
+    *,
+    concurrency: int = 6,
+) -> list[FileDiff]:
+    """把 `FileDiff.new_file_content` 从 patch 重建升级为平台真实全文（静态分析前置）。
+
+    patch 重建对未被 hunk 覆盖的行一律填空行（unified diff 只带变更点附近几行上下文），
+    拿它跑 ruff 会把断掉的字符串/注释当语法错误雪崩误报（报告 #62 一次性 80+ 条假
+    finding 的根因）。这里按文件**并发**调 `forge.fetch_file_content` 拉真实全文覆盖；
+    单文件失败/不支持（返回空）/拉空 → 保留 patch 重建内容（行号定位、未变更复用等
+    仍可用其变更区）。删除文件无新侧，跳过；`ref` 缺失原样返回。绝不抛异常：富化只是
+    增强，失败只能降级，绝不阻断审查主链。
+    """
+    if not ref:
+        return diffs
+    targets = [
+        d for d in diffs
+        if d.change_type is not ChangeType.DELETED_FILE
+        and d.new_path and d.new_path != "/dev/null"
+    ]
+    paths = sorted({d.new_path for d in targets})
+    if not paths:
+        return diffs
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _one(path: str) -> tuple[str, str]:
+        async with sem:
+            return path, await forge.fetch_file_content(repo_id, path, ref)
+
+    results = await asyncio.gather(*(_one(p) for p in paths), return_exceptions=True)
+    by_path: dict[str, str] = {}
+    failures = 0
+    for r in results:
+        if isinstance(r, BaseException):
+            failures += 1  # 限流/权限/路径异常 → 该文件留用 patch 重建
+            logger.debug("真文拉取失败：%r", r)
+            continue
+        path, content = r
+        if content:
+            by_path[path] = content
+    if failures:
+        logger.warning("真文拉取 %d/%d 个文件失败，这些文件留用 patch 重建内容",
+                       failures, len(paths))
+    if not by_path:
+        return diffs
+    out = [
+        replace(d, new_file_content=by_path[d.new_path]) if d.new_path in by_path else d
+        for d in diffs
+    ]
+    logger.info("真文富化：%d/%d 个文件已用平台 API 全文覆盖 patch 重建",
+                len(by_path), len(paths))
+    return out
 
 
 #: 公开托管站 → 平台（新增项目从 URL 免选平台的识别依据）。
@@ -190,6 +257,15 @@ class ForgeAdapter(ABC):
     @abstractmethod
     async def fetch_files(self, pr: PullRequest) -> list[FileDiff]:
         """拉取 PR 涉及文件的 diff（含 full new_file_content 则更好）。"""
+
+    async def fetch_file_content(self, repo_id: str, path: str, ref: str) -> str:
+        """拉取 `ref` 上某文件的**真实全文**（`enrich_new_file_contents` 的单文件原语）。
+
+        非抽象默认返回空串：未实现此能力的平台/极简测试桩 → 富化自动跳过，各文件
+        留用 patch 重建内容（与 list_comments 的降级语义一致）。拉不到也返回空串；
+        抛异常同样可以，上层按单文件失败吞掉降级。
+        """
+        return ""
 
     @abstractmethod
     async def post_summary(self, pr: PullRequest, body: str) -> None:

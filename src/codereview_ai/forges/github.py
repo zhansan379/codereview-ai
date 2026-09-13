@@ -279,6 +279,23 @@ class GitHubForge(ForgeAdapter):
                 delay *= 2
         return []
 
+    async def fetch_file_content(self, repo_id: str, path: str, ref: str) -> str:
+        """GET /contents/{path}?ref={sha}（Accept raw）取真实全文，静态分析富化用。
+
+        raw 媒体类型直出文件字节，≤100MB 均可；>100MB/路径异常等失败抛
+        HTTPStatusError，由 `enrich_new_file_contents` 按单文件降级留用 patch 重建。
+        """
+        owner, repo = _owner_repo(repo_id)
+        if not owner or not repo or not path or not ref:
+            return ""
+        resp = await self._http.get(
+            f"{self._base}/repos/{owner}/{repo}/contents/{path}",
+            params={"ref": ref},
+            headers={**self._auth_headers(), "Accept": "application/vnd.github.raw"},
+        )
+        resp.raise_for_status()
+        return resp.text
+
     # ── 回写评论 ───────────────────────────────────────────────────────
     async def post_summary(self, pr: PullRequest, body: str) -> None:
         """整体总结：POST /issues/{n}/comments，字段名 body。"""

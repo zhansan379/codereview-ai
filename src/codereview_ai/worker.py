@@ -24,7 +24,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from codereview_ai.domain.models import FileDiff, Finding, PullRequest, PushEvent, ReviewResult
-from codereview_ai.forges.base import ForgeAdapter, repo_path_from_url
+from codereview_ai.forges.base import ForgeAdapter, enrich_new_file_contents, repo_path_from_url
 from codereview_ai.logging import TRACE_ID
 from codereview_ai.notifiers.dispatch import NotifierDispatcher
 from codereview_ai.queue.base import TaskMeta, TaskQueue
@@ -93,7 +93,7 @@ def apply_extension_filter(diffs: list[FileDiff], extensions: str) -> list[FileD
         return diffs
 
     def _ext(d: FileDiff) -> str:
-        path = d.new_path or d.old_path
+        path = d.new_path or d.old_path or ""
         return os.path.splitext(path)[1].lstrip(".").lower()
 
     return [d for d in diffs if _ext(d) in exts]
@@ -288,17 +288,48 @@ async def _run_static(
         return []
 
 
+async def _enrich_real_contents(
+    forge: ForgeAdapter | None, diffs: list[FileDiff], *, repo_id: str, ref: str
+) -> list[FileDiff]:
+    """静态分析前置：把 new_file_content 从 patch 重建升级为平台 API 真实全文。
+
+    patch 重建对未被 hunk 覆盖的行填空行（unified diff 只带变更点附近几行上下文），
+    拿它跑 ruff 会把断掉的字符串/注释当语法错误雪崩误报（报告 #62 一次 80+ 假 finding
+    的根因）。按文件并发拉真文覆盖（frozen FileDiff 经 replace 重建），富化后的列表
+    同时惠及后续 agent 沙箱物化与行号定位；失败单文件留用重建内容（ruff 无规则码诊断
+    已在归一化层丢弃，兜底内容不会再刷屏）。绝不抛异常，绝不阻断审查主链。
+    """
+    if forge is None or not ref:
+        return diffs
+    try:
+        return await enrich_new_file_contents(forge, diffs, repo_id, ref)
+    except Exception:  # noqa: BLE001 —— 富化失败只降级
+        logger.warning("真文拉取整体失败，静态分析按 patch 重建内容继续", exc_info=True)
+        return diffs
+
+
 async def _static_findings_gated(
-    analyzer: StaticAnalyzer | None, diffs: list[FileDiff], engine: AsyncEngine | None
-) -> list[Finding]:
+    analyzer: StaticAnalyzer | None,
+    diffs: list[FileDiff],
+    engine: AsyncEngine | None,
+    *,
+    forge: ForgeAdapter | None = None,
+    repo_id: str = "",
+    ref: str = "",
+) -> tuple[list[Finding], list[FileDiff]]:
     """静态分析总开关热读后的执行入口：app_setting 落库行优先，缺行跟随 env 默认。
 
     配置页「静态分析」开关落 `app_setting["static_analysis_enabled"]`，改完即生效
-    无需重启；DB 关闭 → 直接返回空（连 ruff/semgrep 子进程都不起）。无 engine
-    （离线/测试）时读不到 DB，沿用 analyzer 自身的 enabled（构造时取 env 值）。
+    无需重启；DB 关闭 → 直接返回空（连 ruff/semgrep 子进程和真文拉取都不起）。无
+    engine（离线/测试）时读不到 DB，沿用 analyzer 自身的 enabled（构造时取 env 值）。
+
+    开关放行后先把 new_file_content 从 patch 重建富化为平台真实全文（patch 重建对未
+    变更区是空行洞，直接跑 ruff 会雪崩误报，见 `_enrich_real_contents`）；富化后的
+    diffs 随返回值交还调用方继续用（agent 沙箱物化、行号定位跟着受益）。返回
+    (findings, diffs)，调用方以返回的 diffs 为准。
     """
     if analyzer is None or not diffs:
-        return []
+        return [], diffs
     if engine is not None:
         try:
             db_val = await SettingRepository(engine).get_bool_optional(
@@ -307,8 +338,9 @@ async def _static_findings_gated(
             logger.warning("静态分析开关读取失败，按 env 默认继续", exc_info=True)
             db_val = None
         if db_val is False:
-            return []
-    return await _run_static(analyzer, diffs)
+            return [], diffs
+    diffs = await _enrich_real_contents(forge, diffs, repo_id=repo_id, ref=ref)
+    return await _run_static(analyzer, diffs), diffs
 
 
 class EventStore:
@@ -667,8 +699,12 @@ async def _do_review_pull_request(
         # 项目级 review_strategy 覆盖全局默认：页面/每个项目选的 agentic/diff 真正生效
         if cfg and cfg.review_strategy:
             review_strategy = cfg.review_strategy
-        # 静态分析先跑（DESIGN §11）：失败降级为空，不影响主链
-        static_findings = await _static_findings_gated(static_analyzer, diffs, engine)
+        # 静态分析先跑（DESIGN §11）：失败降级为空，不影响主链。
+        # gate 放行后内部会把 new_file_content 富化为平台真实全文（patch 重建有洞会
+        # 引发 ruff 雪崩误报），富化后的 diffs 供后续 agent 沙箱/行号定位继续用
+        static_findings, diffs = await _static_findings_gated(
+            static_analyzer, diffs, engine,
+            forge=forge, repo_id=pr.repo_id, ref=refreshed.head_sha)
         # 审查的 LLM 调用经 contextvar 采集进 review_conversation（adapter 读到 recorder 即采）
         async with conversation_capture(recorder):
             # diff 模式不走对话采集 → 通道 gateway 回调落 ModelUsage，看板 Token/成本能按模式拆分
@@ -987,7 +1023,10 @@ async def _review_push_event(
                                              summary_md="_扩展名过滤或无待审变更_", score_total=0)
             return
         pr = _push_as_pr(ev)
-        static_findings = await _static_findings_gated(static_analyzer, diffs, engine)
+        # 同 mr 轨：gate 放行后先富化真实全文再跑静态分析（patch 重建有洞，ruff 会雪崩误报）
+        static_findings, diffs = await _static_findings_gated(
+            static_analyzer, diffs, engine,
+            forge=forge, repo_id=ev.repo_id, ref=ev.after)
         usage_sink = diff_usage_sink(engine, audit_id) \
             if engine is not None and audit_id else None
         result, exec_mode = await _review_agent_or_diff(

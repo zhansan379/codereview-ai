@@ -14,6 +14,7 @@ X-Gitee-Token + X-Gitee-Timestamp 的 HMAC-SHA256），本模块只做事件解�
 from __future__ import annotations
 
 import asyncio
+import base64
 import re
 from dataclasses import replace
 from typing import Any
@@ -243,6 +244,26 @@ class GiteeForge(ForgeAdapter):
                 await asyncio.sleep(delay)
                 delay *= 2
         return []
+
+    async def fetch_file_content(self, repo_id: str, path: str, ref: str) -> str:
+        """GET /contents/{path}?ref={ref} 取真实全文（base64 JSON），静态分析富化用。
+
+        Gitee contents API 与 GitHub 同构但走 JSON+base64；失败抛 HTTPStatusError，
+        由 `enrich_new_file_contents` 按单文件降级留用 patch 重建。
+        """
+        owner, repo = _owner_repo(repo_id)
+        if not owner or not repo or not path or not ref:
+            return ""
+        resp = await self._http.get(
+            f"{self._base}/repos/{owner}/{repo}/contents/{path}",
+            params=self._params(ref=ref),
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        content = body.get("content") if isinstance(body, dict) else None
+        if not content:
+            return ""
+        return base64.b64decode(content).decode("utf-8", errors="replace")
 
     # ── 回写评论 ───────────────────────────────────────────────────────
     async def post_summary(self, pr: PullRequest, body: str) -> None:

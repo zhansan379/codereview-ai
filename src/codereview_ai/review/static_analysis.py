@@ -1,7 +1,10 @@
 """静态分析融合（DESIGN §11）：ruff + semgrep → 归一化 Finding(source='static:*')。
 
 - 只对**变更涉及的文件**跑（design 决定：全仓跑太慢），用 `FileDiff.new_file_content`
-  物化一个临时工作区即可，无需 checkout。
+  物化一个临时工作区即可，无需 checkout。该字段上游（worker 静态分析前）已尽量用
+  平台 API 真实全文富化（`forges.base.enrich_new_file_contents`），patch 重建只是
+  富化失败时的兜底——重建内容对未变更区是空行洞，直接解析会雪崩误报；即便兜底内容
+  混进来，ruff 无规则码的语法解析诊断也会在归一化时丢弃。
 - 按扩展名分发：`.py` → `ruff check --output-format json`；`js/ts` → eslint
   （未装则 warning 降级）；全部语言 → `semgrep --json`。
 - semgrep 规则源分两档：
@@ -155,10 +158,17 @@ def _parse_ruff(stdout: str) -> list[Finding]:
     if not isinstance(payload, list):
         return []
     out: list[Finding] = []
+    dropped = 0
     for it in payload:
         if not isinstance(it, dict):
             continue
         code = str(it.get("code") or "")
+        if not code:
+            # 无规则码 = 语法解析诊断（"Expected a statement" 一类）：ruff 对解析坏文件
+            # 的错误恢复会雪崩出几十条（#62 报告 80+ 假 finding 全是这类），一律丢弃。
+            # 正常规则 finding 必带规则码；真语法坏的 PR 由 LLM 审查兜底，不靠这些噪音。
+            dropped += 1
+            continue
         loc = it.get("location") or {}
         row = int(loc.get("row") or it.get("line") or 0)
         if row <= 0:
@@ -174,6 +184,8 @@ def _parse_ruff(stdout: str) -> list[Finding]:
             side="RIGHT",
             source="static:ruff",
         ))
+    if dropped:
+        logger.info("静态分析 ruff：丢弃 %d 条语法解析诊断（解析坏文件时的雪崩误报）", dropped)
     return out
 
 
