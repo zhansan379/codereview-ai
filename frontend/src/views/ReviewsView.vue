@@ -6,7 +6,7 @@
         <div class="card-head">
           <span class="card-title">{{ $t('reviews.filterTitle') }}</span>
           <span class="card-actions">
-            <el-button @click="onFilterChange">{{ $t('common.refresh') }}</el-button>
+            <el-button @click="onRefresh">{{ $t('common.refresh') }}</el-button>
             <el-button type="success" :icon="Download" @click="openExport">
               {{ $t('reviews.exportExcel') }}
             </el-button>
@@ -293,8 +293,10 @@ const statusOptions = computed(() =>
     label: t(`enum.findingStatus.${v}`),
   })),
 )
+// 状态选项须覆盖 DB 写入的状态全集（queued/running/completed/failed/skipped），
+// 含瞬时态 running：配合批量停止等操作，用户需要筛出正在执行的任务
 const stateOptions = computed(() =>
-  (['queued', 'completed', 'skipped', 'failed'] as const).map((v) => ({
+  (['queued', 'running', 'completed', 'skipped', 'failed'] as const).map((v) => ({
     value: v,
     label: t(`enum.state.${v}`),
   })),
@@ -331,8 +333,21 @@ function filterFields(): Omit<ReviewFilter, 'limit' | 'offset'> {
 }
 
 // 把当前筛选写入 URL query（保留 tab 等宿主参数），供进入详情返回后恢复。
+// 本页管理的键先删再写：值清空/回到默认时要从 URL 摘掉，否则残留旧值，硬刷新会按旧值过滤/翻页。
 function syncUrl() {
+  const managed = [
+    'state',
+    'provider',
+    'event_type',
+    'score_min',
+    'score_max',
+    'finished_from',
+    'finished_to',
+    'limit',
+    'offset',
+  ]
   const q: Record<string, string | number> = { ...route.query }
+  for (const k of managed) delete q[k]
   if (query.state) q.state = query.state
   if (query.provider) q.provider = query.provider
   if (query.event_type) q.event_type = query.event_type
@@ -405,6 +420,10 @@ async function load() {
 function onFilterChange() {
   query.offset = 0
   syncUrl()
+  load()
+}
+// 刷新仅重拉当前页数据：筛选与页码都不动
+function onRefresh() {
   load()
 }
 function onPageChange(p: number) {

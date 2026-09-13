@@ -276,8 +276,11 @@ function onSizeChange(s: number) {
 }
 
 // 把当前筛选/分页写入 URL query（保留 host 页的 tab 等参数），供返回/刷新后恢复。
+// 本页管理的键先删再写：值清空/回到默认时要从 URL 摘掉，否则残留旧值，硬刷新会按旧值过滤/翻页。
 function syncUrl() {
+  const managed = ['provider', 'pr_number', 'q', 'finished_from', 'finished_to', 'limit', 'offset']
   const q: Record<string, string | number> = { ...route.query }
+  for (const k of managed) delete q[k]
   if (query.provider) q.provider = query.provider
   if (query.pr_number != null) q.pr_number = query.pr_number
   if (query.q) q.q = query.q
