@@ -113,10 +113,11 @@ async def _project_cfg(
     return cfg
 
 
-def _compile_push_globs(globs: str) -> Callable[[str], bool] | None:
-    """把逗号分隔 fnmatch 分支 glob 编译成 `branch -> bool`；空则 None（启用时全放行）。
+def _compile_branch_globs(globs: str) -> Callable[[str], bool] | None:
+    """把逗号分隔 fnmatch 分支 glob 编译成 `branch -> bool`；空则 None（全放行）。
 
-    与 `main._branch_glob_match` 语义一致，供项目级 push 分支规则覆盖用（DESIGN §7.7）。
+    push 轨（push_branch_globs）与 MR 轨（branch_rule，按 target_branch 过滤）共用；
+    与 `main._branch_glob_match` 语义一致（DESIGN §7.7）。
     """
     patterns = [p.strip() for p in globs.split(",") if p.strip()]
     if not patterns:
@@ -646,6 +647,9 @@ async def _do_review_pull_request(
     try:
         # 项目配置提前取：MR 门控与扩展名过滤共用一次查询（配置改动实时生效）
         cfg = await _project_cfg(project_config_factory, pr.provider, pr.repo_id)
+        # 目标分支规则（branch_rule）：与 push 分支 glob 同语义，非空则只审命中的 PR/MR
+        branch_match = _compile_branch_globs(cfg.branch_rule) \
+            if cfg is not None and cfg.branch_rule else None
         # —— MR 轨自动审查门控（与 push 对称：全局默认 → 项目覆盖；手动补审 force_rerun 绕过）——
         # mr_default_enabled 在 main 生产总传 settings.mr_review_enabled（默认关）；未接线
         # （None，存量调用/测试）不门控，保持原自动审语义。
@@ -664,13 +668,21 @@ async def _do_review_pull_request(
                 if force:
                     await review_repo.clear_force_rerun(task_id)
             if force:
-                enabled = True
+                enabled, branch_match = True, None
             if not enabled:
                 # 未开启：审计行标 skipped，带原因；门控/配置类跳过可由前端「重试」补审
                 if review_repo is not None and task_id is not None:
                     await review_repo.mark_state(
                         task_id, state="skipped", skip_reason="mr_disabled",
                         error="MR 自动审查未开启（默认关闭），仅记录未审查",
+                    )
+                return "skipped"
+            if branch_match is not None and not branch_match(pr.target_branch):
+                # 分支规则未命中：审计行标 skipped，带原因；改配置后可由前端「重试」补审
+                if review_repo is not None and task_id is not None:
+                    await review_repo.mark_state(
+                        task_id, state="skipped", skip_reason="branch_mismatch",
+                        error=f"目标分支 {pr.target_branch} 未命中分支规则，仅记录未审查",
                     )
                 return "skipped"
         refreshed = await forge.fetch_pull_request(pr)  # 补 diff_refs（行级评论 position 必填）
@@ -988,7 +1000,7 @@ async def _review_push_event(
         if cfg is not None and cfg.push_enabled is not None:
             enabled = cfg.push_enabled
         if cfg is not None and cfg.push_branch_globs:
-            branch_match = _compile_push_globs(cfg.push_branch_globs)
+            branch_match = _compile_branch_globs(cfg.push_branch_globs)
         if force:
             # 手动补审：用户显式要审这条，无视门控直接走 LLM
             enabled, branch_match = True, None

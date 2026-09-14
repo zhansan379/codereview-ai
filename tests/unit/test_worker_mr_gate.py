@@ -186,6 +186,84 @@ async def test_mr_project_override_enables_when_global_off(tmp_path):
     await engine.dispose()
 
 
+# ── 目标分支规则（branch_rule）：命中 target_branch 才审，force 绕过 ────
+
+
+async def test_mr_branch_rule_mismatch_skips(tmp_path):
+    """branch_rule 不含 PR 目标分支 → skipped(branch_mismatch)，真审 0 次。"""
+    engine = create_engine(f"sqlite:///{tmp_path}/t.db")
+    await init_db(engine)
+    forge = _FakeForge()
+    reviewer = _FakeReviewer()
+
+    async def cfg(p, r):
+        return ProjectConfig(branch_rule="main,release/*")
+
+    await process_raw_event(forge, reviewer, _mr_payload(), engine=engine,
+                            review_repo=ReviewRepository(engine), mr_default_enabled=True,
+                            project_config_factory=cfg)
+    assert reviewer.calls == 0 and forge.summaries == []
+    async with session_factory(engine)() as s:
+        task = (await s.execute(sa.select(ReviewTask).where(ReviewTask.event_type == "mr"))
+                ).scalar_one()
+        assert task.state == "skipped" and task.skip_reason == "branch_mismatch"
+        assert task.error == "目标分支 t 未命中分支规则，仅记录未审查"
+    await engine.dispose()
+
+
+async def test_mr_branch_rule_hit_reviews(tmp_path):
+    """branch_rule 命中目标分支（精确 + glob 混排）→ 正常审查。"""
+    engine = create_engine(f"sqlite:///{tmp_path}/t.db")
+    await init_db(engine)
+    forge = _FakeForge()
+    reviewer = _FakeReviewer()
+
+    async def cfg(p, r):
+        return ProjectConfig(branch_rule="main,t,feature/*")
+
+    await process_raw_event(forge, reviewer, _mr_payload(), engine=engine,
+                            review_repo=ReviewRepository(engine), mr_default_enabled=True,
+                            project_config_factory=cfg)
+    assert reviewer.calls == 1 and len(forge.summaries) == 1
+    await engine.dispose()
+
+
+async def test_mr_force_rerun_bypasses_branch_rule(tmp_path):
+    """同 head 已 skipped(branch_mismatch)，置 force_rerun → 绕过分支规则强审、清标记。"""
+    engine = create_engine(f"sqlite:///{tmp_path}/t.db")
+    await init_db(engine)
+    review_repo = ReviewRepository(engine)
+    payload = _mr_payload()
+
+    async def cfg(p, r):
+        return ProjectConfig(branch_rule="main")
+
+    # 第一遍：目标分支 t 不命中 → skipped
+    await process_raw_event(_FakeForge(), _FakeReviewer(), payload, engine=engine,
+                            review_repo=review_repo, mr_default_enabled=True,
+                            project_config_factory=cfg)
+    async with session_factory(engine)() as s:
+        task = (await s.execute(sa.select(ReviewTask).where(ReviewTask.event_type == "mr"))
+                ).scalar_one()
+        assert task.state == "skipped" and task.skip_reason == "branch_mismatch"
+        task.state = "queued"
+        task.force_rerun = True
+        await s.commit()
+
+    # 第二遍：force 强制重跑达 completed、清标记
+    forge = _FakeForge()
+    reviewer = _FakeReviewer()
+    await process_raw_event(forge, reviewer, payload, engine=engine,
+                            review_repo=review_repo, mr_default_enabled=True,
+                            project_config_factory=cfg)
+    assert reviewer.calls == 1 and len(forge.summaries) == 1
+    async with session_factory(engine)() as s:
+        task = (await s.execute(sa.select(ReviewTask).where(ReviewTask.event_type == "mr"))
+                ).scalar_one()
+        assert task.state == "completed" and task.force_rerun is False
+    await engine.dispose()
+
+
 # ── 手动补审：force_rerun 绕过门控 ─────────────────────────────────────
 
 
