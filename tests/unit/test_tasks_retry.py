@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.orm import selectinload
 
 from codereview_ai.api.admin.tasks import (
     TaskRedelivered,
@@ -21,7 +22,14 @@ from codereview_ai.api.admin.tasks import (
 )
 from codereview_ai.domain.models import PullRequest
 from codereview_ai.storage.db import create_engine, init_db, session_factory
-from codereview_ai.storage.models import ReviewTask, SystemNotification, User
+from codereview_ai.storage.models import (
+    Permission,
+    ReviewTask,
+    Role,
+    RolePermission,
+    SystemNotification,
+    User,
+)
 from codereview_ai.storage.seed import seed_rbac
 
 
@@ -152,7 +160,7 @@ async def _seed_completed_writeback_failed(engine: AsyncEngine, *, writeback_fai
                         summary_md="已持久化总结"))[0]
 
 
-async def test_redeliver_409_when_not_writeback_failed(engine):
+async def test_redeliver_409_when_not_writeback_failed(engine, admin):
     """writeback_failed 未置位 → 409（该任务无需重发），不触发重发。"""
     task_id = await _seed_completed_writeback_failed(engine, writeback_failed=False)
     session = session_factory(engine)
@@ -160,11 +168,11 @@ async def test_redeliver_409_when_not_writeback_failed(engine):
         row = (await s.execute(select(ReviewTask)
                                .where(ReviewTask.id == task_id))).scalars().first()
         with pytest.raises(Exception) as exc:
-            await redeliver_task(row.id, _request_with_forge(object()), s)
+            await redeliver_task(row.id, _request_with_forge(object()), user=admin, session=s)
         assert exc.value.status_code == 409  # type: ignore[attr-defined]
 
 
-async def test_redeliver_409_when_forge_missing(engine):
+async def test_redeliver_409_when_forge_missing(engine, admin):
     """writeback_failed=True 但平台适配器缺失 → 409，且不落后台任务。"""
     task_id = await _seed_completed_writeback_failed(engine)
     session = session_factory(engine)
@@ -172,11 +180,59 @@ async def test_redeliver_409_when_forge_missing(engine):
         row = (await s.execute(select(ReviewTask)
                                .where(ReviewTask.id == task_id))).scalars().first()
         with pytest.raises(Exception) as exc:
-            await redeliver_task(row.id, _request_with_forge(None), s)
+            await redeliver_task(row.id, _request_with_forge(None), user=admin, session=s)
         assert exc.value.status_code == 409  # type: ignore[attr-defined]
 
 
-async def test_redeliver_success_initiates(engine, monkeypatch):
+async def _user_with_role(engine: AsyncEngine, *, all_projects: bool, codes: list[str]) -> User:
+    """造一个自定义角色用户（eager load role.permissions，供 user_can 直读）。"""
+    async with session_factory(engine)() as s:
+        perms = (await s.execute(
+            select(Permission).where(Permission.code.in_(codes)))).scalars().all()
+        role = Role(name="t", description="", is_super=False,
+                    is_system=False, all_projects=all_projects)
+        s.add(role)
+        await s.flush()
+        for p in perms:
+            s.add(RolePermission(role_id=role.id, permission_id=p.id))
+        u = User(username="u1", password_hash="x", enabled=True, role_id=role.id)
+        s.add(u)
+        await s.commit()
+        uid = u.id
+    async with session_factory(engine)() as s:
+        return (await s.execute(
+            select(User).where(User.id == uid)
+            .options(selectinload(User.role).selectinload(Role.permissions))
+        )).scalar_one()
+
+
+async def test_redeliver_404_out_of_review_scope(engine):
+    """可见范围外（reviews:view 但无成员关系、非全项目角色）→ 404，不暴露任务存在。"""
+    task_id = await _seed_completed_writeback_failed(engine)
+    user = await _user_with_role(engine, all_projects=False, codes=["reviews:view"])
+    session = session_factory(engine)
+    async with session() as s:
+        row = (await s.execute(select(ReviewTask)
+                               .where(ReviewTask.id == task_id))).scalars().first()
+        with pytest.raises(Exception) as exc:
+            await redeliver_task(row.id, _request_with_forge(object()), user=user, session=s)
+        assert exc.value.status_code == 404  # type: ignore[attr-defined]
+
+
+async def test_redeliver_403_without_reviews_manage(engine):
+    """可见但角色缺 reviews:manage → 403（重发与 retry/stop 同门槛）。"""
+    task_id = await _seed_completed_writeback_failed(engine)
+    user = await _user_with_role(engine, all_projects=True, codes=["reviews:view"])
+    session = session_factory(engine)
+    async with session() as s:
+        row = (await s.execute(select(ReviewTask)
+                               .where(ReviewTask.id == task_id))).scalars().first()
+        with pytest.raises(Exception) as exc:
+            await redeliver_task(row.id, _request_with_forge(object()), user=user, session=s)
+        assert exc.value.status_code == 403  # type: ignore[attr-defined]
+
+
+async def test_redeliver_success_initiates(engine, admin, monkeypatch):
     """writeback_failed=True + forge 就绪 → 返回「已发起」，后台重发成功翻 writeback_failed=False。
     """
     task_id = await _seed_completed_writeback_failed(engine)
@@ -214,7 +270,8 @@ async def test_redeliver_success_initiates(engine, monkeypatch):
             return t
 
         monkeypatch.setattr("codereview_ai.api.admin.tasks.asyncio.create_task", _capture)
-        out = await redeliver_task(row.id, _request_with_forge(_FakeForge(), engine), s)
+        out = await redeliver_task(
+            row.id, _request_with_forge(_FakeForge(), engine), user=admin, session=s)
         assert isinstance(out, TaskRedelivered)
         assert out.status == "redelivering"
         assert row.writeback_failed is True  # 未同步翻转（后台异步完成）

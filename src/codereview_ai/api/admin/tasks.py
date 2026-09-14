@@ -7,6 +7,8 @@
   残留项被 worker 认领后经 `ensure_task` 的未开始不可抢占语义自动 no-op，无需动队列。
 - `POST /tasks/batch-execute` / `batch-stop`：审查记录页多选批量执行/停止，逐行复用
   单条逻辑，逐行返回状态（executed/ignored/denied），部分失败不中断其余。
+- `POST /tasks/{id}/redeliver`：回写失败的任务重发已落库的评论（不重算）；retry/stop
+  同款权限（可见范围 + `reviews:manage`）。
 """
 
 from __future__ import annotations
@@ -434,6 +436,7 @@ async def _background_redeliver(
 async def redeliver_task(
     task_id: int,
     request: Request,
+    user: CurrentUser,
     session: AsyncSession = Depends(get_db),
 ) -> TaskRedelivered:
     """重发已持久化的审查成果（不重算、无 LLM）。仅 `writeback_failed=True` 的任务可重发。
@@ -441,8 +444,14 @@ async def redeliver_task(
     首次回写失败后成果已在 DB（先落库方案）；这里从 DB 取 findings + summary_md，
     后台 fire-and-forget 走与正常回写同一套 `redeliver`（含指纹幂等）。立即返回
     「已发起」，成功与否在后台完成后翻转 `writeback_failed`，前端刷新可见。
+    权限与 retry/stop 同款：先可见范围（越权按 404 不暴露行存在），再 `reviews:manage`。
     """
     row = await _get_or_404(session, task_id)
+    if not await review_task_allowed(session, user, row):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "任务不存在")
+    pid = await review_task_project_id(session, row)
+    if not await user_can(session, user, "reviews:manage", project_id=pid):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "无权限重发该任务")
     if not row.writeback_failed:
         raise HTTPException(status.HTTP_409_CONFLICT, "该任务无需重发（writeback_failed 未置位）")
     if row.event_type != "mr" or row.pr_number is None:

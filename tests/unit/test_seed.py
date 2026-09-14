@@ -25,6 +25,7 @@ from codereview_ai.storage.seed import (
     PERMISSION_CATALOG,
     prune_obsolete_permissions,
     seed_rbac,
+    sync_default_role_permissions,
     sync_permission_catalog,
 )
 
@@ -181,3 +182,53 @@ async def test_sync_catalog_materializes_missing_permission_rows(engine):
     # 幂等：再跑是 no-op
     async with session_factory(engine)() as s:
         assert await sync_permission_catalog(s) == 0
+
+
+async def _role_perm_codes(engine, role_id: int) -> set[str]:
+    async with session_factory(engine)() as s:
+        return set((await s.execute(
+            select(Permission.code)
+            .join(RolePermission, RolePermission.permission_id == Permission.id)
+            .where(RolePermission.role_id == role_id)
+        )).scalars())
+
+
+async def test_sync_default_role_permissions_restores_drift(engine):
+    """存量库内置角色缺 DEFAULT_ROLES 码时，sync 补回（只增不删、自定义角色不动、幂等）。"""
+    async with session_factory(engine)() as s:
+        await seed_rbac(s, "hunter2")
+        # 模拟升级库漂移：tech_lead 缺 caches:manage 关联（目录后加的码）；管理员又手工
+        # 给它加过 users:manage（非默认码，须保留）；再造一个自定义角色带 1 个权限
+        tl = (await s.execute(
+            select(Role).where(Role.builtin_code == "tech_lead"))).scalar_one()
+        caches = (await s.execute(
+            select(Permission).where(Permission.code == "caches:manage"))).scalar_one()
+        await s.execute(delete(RolePermission).where(
+            RolePermission.role_id == tl.id, RolePermission.permission_id == caches.id))
+        users_perm = (await s.execute(
+            select(Permission).where(Permission.code == "users:manage"))).scalar_one()
+        s.add(RolePermission(role_id=tl.id, permission_id=users_perm.id))
+        custom = Role(name="QA", description="", is_super=False,
+                      is_system=False, all_projects=False)
+        s.add(custom)
+        await s.flush()
+        pv = (await s.execute(
+            select(Permission).where(Permission.code == "projects:view"))).scalar_one()
+        s.add(RolePermission(role_id=custom.id, permission_id=pv.id))
+        await s.commit()
+
+    async with session_factory(engine)() as s:
+        assert await sync_default_role_permissions(s) == 1  # 只补 tech_lead 的 caches:manage
+
+    async with session_factory(engine)() as s:
+        tl = (await s.execute(
+            select(Role).where(Role.builtin_code == "tech_lead"))).scalar_one()
+        codes = await _role_perm_codes(engine, tl.id)
+        assert "caches:manage" in codes            # 漂移补回
+        assert "users:manage" in codes             # 手工加权保留（只增不删）
+        custom = (await s.execute(select(Role).where(Role.name == "QA"))).scalar_one()
+        assert await _role_perm_codes(engine, custom.id) == {"projects:view"}  # 自定义角色不动
+
+    # 幂等：再跑是 no-op
+    async with session_factory(engine)() as s:
+        assert await sync_default_role_permissions(s) == 0

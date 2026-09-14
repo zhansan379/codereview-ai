@@ -64,6 +64,7 @@ from codereview_ai.storage.review_repo import ReviewRepository
 from codereview_ai.storage.seed import (
     prune_obsolete_permissions,
     seed_rbac,
+    sync_default_role_permissions,
     sync_permission_catalog,
 )
 from codereview_ai.worker import (
@@ -106,6 +107,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         async with session_factory(engine)() as s:
             # 对账权限目录↔permission 表：新增码补行、删掉码清残留（均为幂等 no-op 兜底）
             await sync_permission_catalog(s)
+            # 内置角色权限对账（须在目录补行后）：存量库的内置角色跟上 DEFAULT_ROLES 新码
+            await sync_default_role_permissions(s)
             await prune_obsolete_permissions(s)
             await seed_rbac(s, settings.admin_password)
 

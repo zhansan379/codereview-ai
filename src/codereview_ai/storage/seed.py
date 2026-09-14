@@ -45,7 +45,7 @@ DEFAULT_ROLES: dict[str, tuple[str, bool, bool, list[str]]] = {
         "pulls:manage", "caches:manage", "stats:view",
     ]),
     "developer": ("开发", False, False, [
-        "projects:view", "reviews:view",
+        "projects:view", "reviews:view", "stats:view",
     ]),
     "viewer": ("观察者", False, False, [
         "projects:view", "reviews:view", "stats:view",
@@ -114,6 +114,39 @@ async def seed_rbac(session: AsyncSession, admin_password: str) -> list[str]:
     await session.commit()
     logger.info("RBAC 种子完成，新建角色：%s", created or ["（复用内置）"])
     return created
+
+
+async def sync_default_role_permissions(session: AsyncSession) -> int:
+    """对账内置角色权限与 DEFAULT_ROLES（幂等，每次启动调用）。
+
+    `seed_rbac` 只在空库播种；存量库随版本演进给内置角色加新权限码（如 developer 的
+    stats:view、tech_lead 的 caches:manage）时，role_permission 关联不会自动跟上，表现为
+    「升级部署的内置角色缺新权限，得去角色页手动勾」。这里按 DEFAULT_ROLES 给每个内置
+    角色补缺的关联行——**只增不删**：管理员在角色页给内置角色的手工加权保留，手工收回的
+    默认权限会在下次启动补回（内置角色以目录为准的语义）。自定义角色（无 builtin_code）
+    不受影响。须在 `sync_permission_catalog` 之后调用（先有 Permission 行）。返回补加条数。
+    """
+    added = 0
+    for code, (*_meta, perm_codes) in DEFAULT_ROLES.items():
+        role = (await session.execute(
+            select(Role).where(Role.builtin_code == code)
+        )).scalar_one_or_none()
+        if role is None:
+            continue
+        perm_ids = set((await session.execute(
+            select(Permission.id).where(Permission.code.in_(perm_codes))
+        )).scalars())
+        existing = set((await session.execute(
+            select(RolePermission.permission_id)
+            .where(RolePermission.role_id == role.id)
+        )).scalars())
+        for pid in perm_ids - existing:
+            session.add(RolePermission(role_id=role.id, permission_id=pid))
+            added += 1
+    if added:
+        await session.commit()
+        logger.info("内置角色权限对账补加 %d 条", added)
+    return added
 
 
 async def prune_obsolete_permissions(session: AsyncSession) -> int:
