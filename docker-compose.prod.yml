@@ -79,9 +79,14 @@ services:
       - log_min_duration_statement=1000
     volumes:
       - pgdata:/var/lib/postgresql/data
+    ports:
+      # 对外提供数据库直达（用 Navicat/DBeaver 等客户端连）。
+      # 安全提醒：5432 是全网扫描重灾区，安全组务必把**源地址限定到自己的出口 IP**，
+      # 不要留 0.0.0.0/0。不需要公网直连时删掉这两行，改用 SSH 隧道：
+      #   ssh -L 5432:127.0.0.1:5432 root@<服务器IP>   然后本地连 127.0.0.1:5432
+      - "5432:5432"
     # 并行查询等工作进程走共享内存，默认 64M 偏小
     shm_size: 128m
-    # 不对宿主机暴露 5432：运维走 docker compose exec，少一个公网入口
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${CR_DB_USER:?} -d codereview"]
       interval: 5s

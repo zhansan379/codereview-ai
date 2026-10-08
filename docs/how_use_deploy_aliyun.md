@@ -48,7 +48,7 @@ chmod 600 /opt/codereview-ai/.env
 
 模型与平台凭据（LLM 模型、GitLab/GitHub token、通知器等）**不必写进 .env**：在后台对应页面配置即可，配置落 DB 并在保存后热生效（env 同名变量永远优先于 DB）。若确实要用 env，把 `CR_LLM_MODEL` / `CR_LLM_API_KEY` / `CR_LLM_BASE_URL` / `CR_GITLAB_TOKEN` 等追加进同一 `.env`。
 
-安全组放行入方向 `5001/TCP`（控制台 → 实例 → 安全组 → 入方向规则）。同机若 80/8080 已被占用，本服务固定用 5001。
+安全组放行入方向 `5001/TCP`（控制台 → 实例 → 安全组 → 入方向规则）。同机若 80/8080 已被占用，本服务固定用 5001。若还要用客户端从公网直连 PG，另加 `5432/TCP`——**源地址请限定到自己的出口 IP**，或干脆走 SSH 隧道不加这条规则。
 
 ### 2. 配置 GitHub Secrets
 
@@ -90,7 +90,16 @@ gh run watch <run-id>
 
 生产用 PG，不用 SQLite。两个理由：SQLite 是单文件单写者，容器里跑的是长驻服务 + 定时任务 + 补拉轮询多路并发写，遇到「database is locked」只能靠重试；而 PG 让后续换机/扩容/接 RDS 只是换个连接串。SQLite 仍是**本地与桌面版**的默认档（README 的「单容器开箱即用」卖点不变），本项目源码按 URL 方言自动适配，两条路都走得通。
 
-构成：`codereview-ai` 与 `postgres` 两个容器，PG 只在 compose 网络内、**不对宿主暴露 5432**（运维一律走 `docker compose exec`）。建表由 app 启动时的 `init_db` 自动完成，无需手写 DDL；`postgres` 容器在**空卷首启**时按 `POSTGRES_DB/USER/PASSWORD` 建库建账号。
+构成：`codereview-ai` 与 `postgres` 两个容器。PG 的 5432 已发布到宿主（`ports: 5432:5432`），可直接用 Navicat / DBeaver / psql 连：主机 `<服务器IP>`、端口 `5432`、库 `codereview`、用户与密码取 `.env` 里的 `CR_DB_USER` / `CR_DB_PASSWORD`。建表由 app 启动时的 `init_db` 自动完成，无需手写 DDL；`postgres` 容器在**空卷首启**时按 `POSTGRES_DB/USER/PASSWORD` 建库建账号。
+
+> **安全组放行 5432 时务必把源地址限定到自己的出口 IP**，不要留 `0.0.0.0/0`——5432 是全网扫描与爆破的重灾区。不需要公网直连时，把 compose 里那两行 `ports` 删掉，改用 SSH 隧道（公网零暴露）：
+>
+> ```bash
+> ssh -i ~/.ssh/codereview-ai-deploy -L 5432:127.0.0.1:5432 root@<服务器IP>   # 窗口保持开着
+> # 本地客户端连 127.0.0.1:5432，流量走隧道进 compose 网络
+> ```
+>
+> 同机若还留着历史实验用的 pgvector/postgres 容器，它是停止状态、当前不冲突；哪天要启动它得先让出 5432，或把本服务的映射改成别的宿主端口（如 `15432:5432`）。
 
 小内存机的调参（都在 `docker-compose.prod.yml` 的 `command` 里）：
 
@@ -176,6 +185,7 @@ cd /opt/codereview-ai && docker compose -f docker-compose.prod.yml up -d
 | 拉取很慢 | 服务器与 ACR 不同地域时退回公网域名；把 ACR 实例与 ECS 放同地域可走 VPC 内网 |
 | `denied: unknown manifest class for application/vnd.oci.empty.v1+json` | buildx 默认的 provenance/sbom attestation 被 ACR 个人版拒收；工作流已置 `provenance/sbom: false` |
 | 外部访问不通、服务器上 `curl localhost:5001/health` 正常 | 安全组没放行 5001/TCP |
+| 外部连 PG 超时、服务器上 `pg_isready` 正常 | 安全组没放行 5432/TCP，或规则的源地址没包含你的出口 IP |
 
 ## 与其它流水线的关系
 
