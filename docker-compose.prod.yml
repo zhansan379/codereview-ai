@@ -2,14 +2,19 @@
 # 服务器只做 docker pull + up 的取像与重启，机上不编译
 # （ECS 为 2C2G、swap 常满，机上跑 uv sync + semgrep 安装必 OOM）。
 #
+# 存储用 PostgreSQL（standard 档）：app + postgres 两个容器，PG 只在内网，
+# 不对宿主暴露端口。建表由 app 启动时的 init_db 自动完成。
+#
 # 使用（服务器上）：
 #   cd /opt/codereview-ai
 #   docker compose -f docker-compose.prod.yml up -d        # 需同目录 .env
 #   docker compose -f docker-compose.prod.yml logs -f      # 看日志
+#   docker compose -f docker-compose.prod.yml ps           # 两服务都应 healthy
 #
-# 前置：同目录 .env 至少含 4 枚必配密钥（CR_SECRET_KEY / CR_WEBHOOK_SECRET /
-# CR_ENCRYPTION_KEY / CR_ADMIN_PASSWORD），缺失时容器启动即 fail-fast 退出。
-# 密钥只在服务器上，不入库；模型与平台凭据可在后台「模型/平台」页配置（落 DB）。
+# 前置：同目录 .env 至少含下列变量（缺失时插值即报错，容器不会半启动）：
+#   CR_SECRET_KEY / CR_WEBHOOK_SECRET / CR_ENCRYPTION_KEY / CR_ADMIN_PASSWORD  —— 应用必配密钥
+#   CR_DB_USER / CR_DB_PASSWORD / CR_DATABASE_URL                              —— PG 账密与连接串
+# 全部只在服务器上，不入库；模型与平台凭据可在后台「模型/平台」页配置（落 DB）。
 
 services:
   codereview-ai:
@@ -18,13 +23,18 @@ services:
     image: codereview-ai:latest
     container_name: codereview-ai
     restart: unless-stopped
+    depends_on:
+      # 等 PG 真的能收连接再起 app：app 启动即 init_db，连不上会直接退出并重启循环
+      postgres:
+        condition: service_healthy
     env_file:
       - .env
     ports:
       # 同机 80 已被 nginx、8080 已被另一业务容器占用，本服务用 5001（需在安全组放行）
       - "5001:5001"
     volumes:
-      # SQLite 落在命名卷，重建容器不丢数据（切 PG 见 docs/how_use_postgres.md）
+      # 切 PG 后 CR_DATABASE_URL 指 PG，此卷只剩兜底作用：万一连接串被抹掉，
+      # app 回退 SQLite 时数据仍落在卷里（不随容器重建丢失）。
       - appdb:/app/data
     logging:
       # 默认 json-file 无上限，审查日志量大时会把 40G 盘写满；限 3×10MB 轮转
@@ -35,9 +45,61 @@ services:
     deploy:
       resources:
         limits:
-          # 同机还有 MySQL/Redis/nginx 与另一个业务容器，给本容器设上限防它吃光 2G 内存。
-          # 本服务常态约 200~300M；开静态分析（semgrep）时子进程会额外占用数百 M。
-          memory: 1G
+          # 同机还有 MySQL(283M)/Redis/nginx/宝塔面板与另一业务容器，总内存仅 2G，
+          # 本服务常态约 110M；限 768M 与 PG 的 512M 相加仍留有余量，且防它吃光内存。
+          # 开静态分析（semgrep）时子进程会额外占用数百 M，届时再看水位调。
+          memory: 768M
+
+  postgres:
+    image: postgres:16
+    container_name: codereview-postgres
+    restart: unless-stopped
+    environment:
+      # 只在 pgdata 空卷首次初始化时生效一次（写进数据目录）；此后改 .env 不改库内账密，
+      # 改了反而连不上——要换账密得 drop 卷重建（数据一并清空）。
+      POSTGRES_DB: codereview
+      POSTGRES_USER: "${CR_DB_USER:?请在 .env 设置 CR_DB_USER}"
+      POSTGRES_PASSWORD: "${CR_DB_PASSWORD:?请在 .env 设置 CR_DB_PASSWORD}"
+    # 小内存机调参：默认值按更宽松的机器给（shared_buffers 128M、max_connections 100），
+    # 本机 PG 只服务单实例单用户应用，压小连接数与工作内存，把预算让给同机其它服务。
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - max_connections=50
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=48MB
+      - -c
+      - effective_cache_size=512MB
+      # 慢于 1s 的语句进日志，便于在 2G 机上定位拖慢整体水位的查询
+      - -c
+      - log_min_duration_statement=1000
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # 并行查询等工作进程走共享内存，默认 64M 偏小
+    shm_size: 128m
+    # 不对宿主机暴露 5432：运维走 docker compose exec，少一个公网入口
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CR_DB_USER:?} -d codereview"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
 volumes:
+  pgdata:
+  # SQLite 档的历史数据卷：切 PG 后不再写入，保留以备回退与查旧数据
+  # （确认不需要可 docker volume rm codereview-ai_appdb 清理）
   appdb:

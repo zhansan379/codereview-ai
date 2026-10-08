@@ -129,9 +129,10 @@ jobs:
                 "$SSH_USER@$SSH_HOST" "$@"
           }
 
-          # 服务器缺 .env 时 compose 直接报错，提前给出可执行的修复说明
-          if ! run_ssh "test -f $REMOTE_DIR/.env"; then
-            echo "缺少 $REMOTE_DIR/.env（4 枚必配密钥）——见 docs/how_use_deploy_aliyun.md" >&2
+          # 缺 .env 或缺关键变量时 compose 只会抛一句插值错误，这里提前点名列缺哪个变量
+          MISSING=$(run_ssh "for k in CR_SECRET_KEY CR_WEBHOOK_SECRET CR_ENCRYPTION_KEY CR_ADMIN_PASSWORD CR_DB_USER CR_DB_PASSWORD CR_DATABASE_URL; do grep -q \"^\$k=\" $REMOTE_DIR/.env 2>/dev/null || echo \$k; done")
+          if [ -n "$MISSING" ]; then
+            echo "$REMOTE_DIR/.env 缺少变量：$(echo $MISSING | tr '\n' ' ')——见 docs/how_use_deploy_aliyun.md" >&2
             exit 1
           fi
 
@@ -156,10 +157,10 @@ jobs:
             cd $REMOTE_DIR && docker compose -f docker-compose.prod.yml up -d --remove-orphans
           "
 
-          # 双探：/health 探进程存活，/admin 探前端产物是否随镜像送达
-          # （单容器托管静态资源，只探 API 测不出前端缺失）
+          # 三探：/health 探进程存活、/ready 探数据库连通（PG 没起来会 503）、
+          # /admin 探前端产物是否随镜像送达（单容器托管静态资源，只探 API 测不出前端缺失）
           for i in $(seq 1 60); do
-            if run_ssh "curl -fsS http://localhost:$APP_PORT/health >/dev/null && curl -fsS http://localhost:$APP_PORT/admin >/dev/null"; then
+            if run_ssh "curl -fsS http://localhost:$APP_PORT/health >/dev/null && curl -fsS http://localhost:$APP_PORT/ready >/dev/null && curl -fsS http://localhost:$APP_PORT/admin >/dev/null"; then
               echo "部署成功：http://$SSH_HOST:$APP_PORT/admin"
               exit 0
             fi

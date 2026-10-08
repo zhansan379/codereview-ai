@@ -24,21 +24,27 @@ ssh root@<服务器IP>
 mkdir -p /opt/codereview-ai && cd /opt/codereview-ai
 ```
 
-同目录建 `.env`，至少含 4 枚必配密钥（缺失时容器启动即 fail-fast 退出，日志里会打印对应生成命令）：
+同目录建 `.env`：4 枚应用必配密钥（缺失时容器启动即 fail-fast 退出，日志里会打印对应生成命令）+ 3 条 PostgreSQL 变量（compose 插值就要用，缺了 `up` 直接报错）。
 
 ```bash
+PGPASS=$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')
 cat > /opt/codereview-ai/.env <<EOF
 CR_SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_urlsafe(48))')
 CR_WEBHOOK_SECRET=$(python3 -c 'import secrets;print(secrets.token_urlsafe(48))')
 CR_ADMIN_PASSWORD=$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')
 CR_ENCRYPTION_KEY=$(python3 -c 'import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())')
+CR_DB_USER=codereview
+CR_DB_PASSWORD=$PGPASS
+CR_DATABASE_URL=postgresql+asyncpg://codereview:$PGPASS@postgres:5432/codereview
 EOF
 chmod 600 /opt/codereview-ai/.env
 ```
 
+密码用 `token_urlsafe` 生成是为了**连接串安全**：它的字符集（`A-Za-z0-9-_`）不含 `@ : / ? #`，可以直接拼进 URL，不必再做 percent-encoding——自己换密码时请留意这点。
+
 `CR_ENCRYPTION_KEY` 必须恰是 Fernet 密钥（32 字节 urlsafe-base64，44 字符）——`token_urlsafe(48)` 生成的串不是合法 Fernet 格式，启动校验会明确拦下；上面这行的写法等价于 `Fernet.generate_key()`，且不依赖 cryptography 库。
 
-`CR_ADMIN_PASSWORD` 就是后台（`/admin`）的登录口令，用户名固定 `admin`。注意它**只在空库首次启动时生效**（`seed_rbac` 在用户表非空时整体跳过），容器重启、改 `.env` 都不会改已存的密码；要换口令走后台用户页的「重置密码」（`POST /api/users/{id}/reset-password`），或删掉 `appdb` 卷从零重建（数据一并清空）。
+`CR_ADMIN_PASSWORD` 就是后台（`/admin`）的登录口令，用户名固定 `admin`。注意它**只在空库首次启动时生效**（`seed_rbac` 在用户表非空时整体跳过），容器重启、改 `.env` 都不会改已存的密码；要换口令走后台用户页的「重置密码」（`POST /api/users/{id}/reset-password`），或删掉数据库从零重建（数据一并清空）。
 
 模型与平台凭据（LLM 模型、GitLab/GitHub token、通知器等）**不必写进 .env**：在后台对应页面配置即可，配置落 DB 并在保存后热生效（env 同名变量永远优先于 DB）。若确实要用 env，把 `CR_LLM_MODEL` / `CR_LLM_API_KEY` / `CR_LLM_BASE_URL` / `CR_GITLAB_TOKEN` 等追加进同一 `.env`。
 
@@ -80,17 +86,61 @@ gh run watch <run-id>
 
 成功标志：run 末尾打印 `部署成功：http://<IP>:5001/admin`。浏览器打开 `/admin`，用 `admin` + `.env` 里的 `CR_ADMIN_PASSWORD` 登录。
 
+## 数据存储（PostgreSQL）
+
+生产用 PG，不用 SQLite。两个理由：SQLite 是单文件单写者，容器里跑的是长驻服务 + 定时任务 + 补拉轮询多路并发写，遇到「database is locked」只能靠重试；而 PG 让后续换机/扩容/接 RDS 只是换个连接串。SQLite 仍是**本地与桌面版**的默认档（README 的「单容器开箱即用」卖点不变），本项目源码按 URL 方言自动适配，两条路都走得通。
+
+构成：`codereview-ai` 与 `postgres` 两个容器，PG 只在 compose 网络内、**不对宿主暴露 5432**（运维一律走 `docker compose exec`）。建表由 app 启动时的 `init_db` 自动完成，无需手写 DDL；`postgres` 容器在**空卷首启**时按 `POSTGRES_DB/USER/PASSWORD` 建库建账号。
+
+小内存机的调参（都在 `docker-compose.prod.yml` 的 `command` 里）：
+
+| 参数 | 值 | 为什么 |
+|------|-----|--------|
+| `shared_buffers` | 128MB | 默认值也是 128MB，但这台 2G 机上还跑着 MySQL/Redis/nginx 与另一个业务容器，不再往上加 |
+| `max_connections` | 50 | 默认 100，PG 每连接有固定内存开销；本机只有单实例单用户应用 |
+| `work_mem` / `maintenance_work_mem` | 4MB / 48MB | 排序与维护作业的每操作上限，压小防止大查询把整机内存吃光 |
+| `effective_cache_size` | 512MB | 给规划器的「可缓存」估算，不是实际分配 |
+| 容器内存上限 | 512M（app 768M） | 两容器合计仍给同机既有业务留余量 |
+
+验证：
+
+```bash
+docker compose -f docker-compose.prod.yml ps                      # 两个服务都 healthy
+docker compose -f docker-compose.prod.yml exec postgres pg_isready -U codereview
+docker compose -f docker-compose.prod.yml exec postgres psql -U codereview -d codereview -c '\dt'   # init_db 建的表
+curl -s http://localhost:5001/ready                               # {"status":"ok","checks":{"db":"ok"}}
+```
+
+备份与恢复（数据在命名卷 `pgdata`，`down` 不删）：
+
+```bash
+# 备份（自定义格式，支持选择性恢复；可加进 crontab）
+docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U codereview -Fc codereview > ~/backup-$(date +%F).dump
+# 恢复（先停 app 免写入竞争）
+docker compose -f docker-compose.prod.yml stop codereview-ai
+docker compose -f docker-compose.prod.yml exec -T postgres pg_restore -U codereview -d codereview --clean --if-exists < ~/backup-2026-10-08.dump
+docker compose -f docker-compose.prod.yml start codereview-ai
+```
+
+两个「只在空卷首启生效」的坑，改之前先想清楚：
+
+1. `CR_DB_USER` / `CR_DB_PASSWORD` 只在 `pgdata` **首次初始化**时写进数据库。之后改 `.env` 与库内账密就不再一致，app 会以「password authentication failed」连不上——要换账密得 `docker compose ... down -v` 删卷重建（**数据清空**），或进 `psql` 用 `ALTER USER` 改库、同时改 `.env` 里的连接串。
+2. `CR_ADMIN_PASSWORD` 同理只在首次播种时生效（见上文）。
+
+回退到 SQLite（本机临时排障用）：从 `.env` 里注释掉 `CR_DATABASE_URL`，`up -d` 后 app 会用挂载在 `/app/data` 的 `appdb` 卷——那是切 PG 之前的数据，仍在。
+
 ## 日常运维
 
 ```bash
 cd /opt/codereview-ai
-docker compose -f docker-compose.prod.yml ps            # 状态（含 healthy）
-docker compose -f docker-compose.prod.yml logs -f       # 日志
+docker compose -f docker-compose.prod.yml ps            # 状态（app 与 postgres 都应 healthy）
+docker compose -f docker-compose.prod.yml logs -f       # 全部日志
+docker compose -f docker-compose.prod.yml logs -f postgres   # 只看数据库
 docker compose -f docker-compose.prod.yml up -d         # 手动重启
-docker compose -f docker-compose.prod.yml down          # 停止（appdb 卷保留）
+docker compose -f docker-compose.prod.yml down          # 停止（pgdata/appdb 卷保留）
 ```
 
-数据在命名卷 `appdb`（SQLite 落 `/app/data/app.db`），`down` 不删卷；`up -d --remove-orphans` 由 CI 执行，重建容器不丢数据。切 PostgreSQL 见 [how_use_postgres.md](how_use_postgres.md)。
+`up -d --remove-orphans` 由 CI 每次部署执行，重建容器不丢数据（PG 数据在 `pgdata` 卷）。SQLite 档的通用说明见 [how_use_postgres.md](how_use_postgres.md)。
 
 ### 回滚
 
@@ -106,8 +156,10 @@ cd /opt/codereview-ai && docker compose -f docker-compose.prod.yml up -d
 
 | 现象 | 原因 |
 |------|------|
-| run 里 `缺少 /opt/codereview-ai/.env` | 服务器 `.env` 未建（见步骤 1） |
+| run 里 `.env 缺少变量：...` | 服务器 `.env` 未建或缺变量（见步骤 1）；名单由工作流预检打印 |
 | 启动即退出、日志有 `CR_*` 缺失提示 | `.env` 少了必配密钥，或 `CR_ENCRYPTION_KEY` 不是合法 Fernet 密钥 |
+| app 反复重启、日志 `password authentication failed` | `CR_DB_PASSWORD` 与 `pgdata` 首次初始化时写入的账密不一致（见「数据存储」两个坑） |
+| `/ready` 返回 503 且 `db:unreachable` | PG 没起来或连接串写错；`logs postgres` 看库侧，`ps` 看是否 healthy |
 | 健康检查超时 | 看 CI 打印的容器日志；多半是 `.env` 配置问题而非网络 |
 | 容器 `unhealthy`、日志停在 `Building codereview-ai @ file:///app` 与成串 `Downloading` | 容器启动时 `uv run` 又同步了一次环境并从 PyPI 拉包（含 dev 依赖，跨境极慢）。镜像 CMD 已用 `uv run --no-sync`（构建期已 sync 完备）；自建镜像不要去掉这个参数 |
 | 拉取很慢 | 服务器与 ACR 不同地域时退回公网域名；把 ACR 实例与 ECS 放同地域可走 VPC 内网 |
