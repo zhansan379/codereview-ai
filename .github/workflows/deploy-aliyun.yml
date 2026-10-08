@@ -97,6 +97,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # buildx 默认附带 provenance/sbom attestation，其空清单（OCI empty manifest class）
+          # 会被 ACR 个人版拒收：denied: unknown manifest class for application/vnd.oci.empty.v1+json
+          provenance: false
+          sbom: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
