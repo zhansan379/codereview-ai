@@ -158,12 +158,12 @@ jobs:
 
           # 双探：/health 探进程存活，/admin 探前端产物是否随镜像送达
           # （单容器托管静态资源，只探 API 测不出前端缺失）
-          for i in $(seq 1 45); do
+          for i in $(seq 1 60); do
             if run_ssh "curl -fsS http://localhost:$APP_PORT/health >/dev/null && curl -fsS http://localhost:$APP_PORT/admin >/dev/null"; then
               echo "部署成功：http://$SSH_HOST:$APP_PORT/admin"
               exit 0
             fi
-            sleep 2
+            sleep 3
           done
           echo "健康检查超时（$APP_PORT 未就绪），服务器日志如下：" >&2
           run_ssh "cd $REMOTE_DIR && docker compose -f docker-compose.prod.yml logs --tail=80" || true

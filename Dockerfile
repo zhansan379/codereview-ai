@@ -43,5 +43,8 @@ EXPOSE 5001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5001/health').status==200 else 1)"
 
-# uvicorn 走 __getattr__ 惰性构建 app；缺密钥时 Settings fail-fast 退出并提示生成命令
-CMD ["uv", "run", "uvicorn", "codereview_ai.main:app", "--host", "0.0.0.0", "--port", "5001"]
+# uvicorn 走 __getattr__ 惰性构建 app；缺密钥时 Settings fail-fast 退出并提示生成命令。
+# --no-sync：构建期已 uv sync --frozen --no-dev，运行期 uv run 默认还会再同步一次环境
+# （且默认带 dev 依赖，实测启动时重下 mypy 14M + ruff 10M）——国内服务器跨境拉 PyPI 慢，
+# 会把启动拖到十分钟以上、健康检查直接判死。镜像里环境已备好，运行期不该再联网装包。
+CMD ["uv", "run", "--no-sync", "uvicorn", "codereview_ai.main:app", "--host", "0.0.0.0", "--port", "5001"]

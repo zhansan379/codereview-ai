@@ -109,6 +109,7 @@ cd /opt/codereview-ai && docker compose -f docker-compose.prod.yml up -d
 | run 里 `缺少 /opt/codereview-ai/.env` | 服务器 `.env` 未建（见步骤 1） |
 | 启动即退出、日志有 `CR_*` 缺失提示 | `.env` 少了必配密钥，或 `CR_ENCRYPTION_KEY` 不是合法 Fernet 密钥 |
 | 健康检查超时 | 看 CI 打印的容器日志；多半是 `.env` 配置问题而非网络 |
+| 容器 `unhealthy`、日志停在 `Building codereview-ai @ file:///app` 与成串 `Downloading` | 容器启动时 `uv run` 又同步了一次环境并从 PyPI 拉包（含 dev 依赖，跨境极慢）。镜像 CMD 已用 `uv run --no-sync`（构建期已 sync 完备）；自建镜像不要去掉这个参数 |
 | 拉取很慢 | 服务器与 ACR 不同地域时退回公网域名；把 ACR 实例与 ECS 放同地域可走 VPC 内网 |
 | `denied: unknown manifest class for application/vnd.oci.empty.v1+json` | buildx 默认的 provenance/sbom attestation 被 ACR 个人版拒收；工作流已置 `provenance/sbom: false` |
 | 外部访问不通、服务器上 `curl localhost:5001/health` 正常 | 安全组没放行 5001/TCP |
