@@ -129,6 +129,17 @@ docker compose -f docker-compose.prod.yml start codereview-ai
 
 回退到 SQLite（本机临时排障用）：从 `.env` 里注释掉 `CR_DATABASE_URL`，`up -d` 后 app 会用挂载在 `/app/data` 的 `appdb` 卷——那是切 PG 之前的数据，仍在。
 
+## 同机资源预算与长期运维
+
+小内存云主机（2C2G 一档）上跑本服务的经验值，避免把宿主拖垮：
+
+- **内存上限**：本文件里 app 768M + PG 512M 是按「同机还有别的业务」留的余量。要再开静态分析（semgrep 子进程数百 MB）或上调 PG，优先换机型或把 PG 换到 RDS，而不是抬这两个上限。
+- **swap 不等于内存**：swap 满不代表在颠簸——真要看的是 `vmstat 1` 的 `si/so` 是否长期非 0、`dmesg` 有没有 OOM 记录。但 swap 满意味着**没有余量**，下一次尖峰就会被 OOM killer 处理（往往先杀 MySQL 这种大进程）。建议 swap ≥ 2GB；云盘 swap 慢，只当保险用。
+- **长 uptime 的进程内存会漂移**：实测一台 96 天 uptime 的机器上，MySQL 空闲却从 ~400M 涨到 1.16G（其中 890M 被换出到 swap），重启一次即回收（干净 shutdown，几秒）。定期维护窗口重启大内存服务是划算的。
+- **journald 默认无上限**：同一台机器上 journal 曾涨到 3.9G。设 `SystemMaxUse=100M`（`/etc/systemd/journald.conf`）后重启 `systemd-journald` 即生效。
+- **容器日志**：本 compose 已限 3×10MB 轮转；没写 `logging` 的容器其 json 日志会一直涨，容器停了日志也还在盘上。
+- **镜像堆积**：每次 `docker pull` 重推的 tag 都会留下无标签旧副本，工作流已在部署后执行 `docker image prune -f`（只删无标签且无容器引用的，带 tag 的本地镜像与 `app-<sha>` 回滚 tag 不受影响）。注意**已停止容器引用的镜像不会被 prune 回收**，那类要靠 `docker rm <容器>` 后再清理。
+
 ## 日常运维
 
 ```bash

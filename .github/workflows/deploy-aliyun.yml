@@ -155,6 +155,9 @@ jobs:
             docker pull $REMOTE_IMAGE
             docker tag  $REMOTE_IMAGE $LOCAL_IMAGE
             cd $REMOTE_DIR && docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            # 每次部署都重推 :app，服务器上旧副本随即变成无标签镜像，长期堆积（实测 23 个、
+            # 数百 MB）。只删无标签且无容器引用的：本地名与 app-<sha> 回滚 tag 不受影响。
+            docker image prune -f
           "
 
           # 三探：/health 探进程存活、/ready 探数据库连通（PG 没起来会 503）、
