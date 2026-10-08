@@ -38,7 +38,7 @@ chmod 600 /opt/codereview-ai/.env
 
 `CR_ENCRYPTION_KEY` 必须恰是 Fernet 密钥（32 字节 urlsafe-base64，44 字符）——`token_urlsafe(48)` 生成的串不是合法 Fernet 格式，启动校验会明确拦下；上面这行的写法等价于 `Fernet.generate_key()`，且不依赖 cryptography 库。
 
-`CR_ADMIN_PASSWORD` 就是后台（`/admin`）的登录口令，用户名固定 `admin`。
+`CR_ADMIN_PASSWORD` 就是后台（`/admin`）的登录口令，用户名固定 `admin`。注意它**只在空库首次启动时生效**（`seed_rbac` 在用户表非空时整体跳过），容器重启、改 `.env` 都不会改已存的密码；要换口令走后台用户页的「重置密码」（`POST /api/users/{id}/reset-password`），或删掉 `appdb` 卷从零重建（数据一并清空）。
 
 模型与平台凭据（LLM 模型、GitLab/GitHub token、通知器等）**不必写进 .env**：在后台对应页面配置即可，配置落 DB 并在保存后热生效（env 同名变量永远优先于 DB）。若确实要用 env，把 `CR_LLM_MODEL` / `CR_LLM_API_KEY` / `CR_LLM_BASE_URL` / `CR_GITLAB_TOKEN` 等追加进同一 `.env`。
 
