@@ -14,6 +14,10 @@ frontend/package.json
 frontend/package-lock.json
 frontend/tsconfig.json
 frontend/vite.config.ts
+# PyInstaller 产物（桌面单机版），镜像用不到；必须带 / 锚定根目录——
+# 不带斜杠的 dist 会连 Dockerfile 要 COPY 的 frontend/dist 一起排除
+/build
+/dist
 docs
 .claude
 tests

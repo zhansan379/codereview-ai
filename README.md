@@ -159,6 +159,7 @@ python -c 'import secrets;print(secrets.token_urlsafe(24))'                     
 - [GitHub 接入教程](docs/how_use_github.md)
 - [Gitee 接入教程](docs/how_use_gitee.md)
 - [主动补拉（轮询轨）](docs/how_use_poll.md)
+- [部署到阿里云 ECS（GitHub Actions 自动部署）](docs/how_use_deploy_aliyun.md)
 - [使用 PostgreSQL 存储（standard 档）](docs/how_use_postgres.md)
 
 IM 通道配置参考：

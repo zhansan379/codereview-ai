@@ -1,0 +1,166 @@
+name: Deploy (Aliyun ECS)
+
+# 阿里云 ECS 自动部署：push 到 main（或手动触发）→ GitHub Runner 构建镜像 →
+# 推送阿里云 ACR → SSH 让服务器从 ACR 同地域 VPC 内网地址拉取并重启容器。
+#
+# 为什么不直传产物：GitHub 海外 Runner 到国内 ECS 的 SSH 单流实测约 40KB/s，
+# 40MB 级产物要十几分钟；ACR 走并行分块上传且服务器内网拉取（免流量、秒级）。
+# 为什么不机上构建：ECS 为 2C2G 且 swap 常满，uv sync + semgrep 装机必 OOM。
+#
+# 需要的 Secrets（8 个，缺失时 guard 步骤跳过部署，流水线保持绿色）：
+#   SSH_HOST / SSH_USER / SSH_PORT / SSH_PRIVATE_KEY
+#   ACR_REGISTRY / ACR_NAMESPACE / ACR_DOCKER_USERNAME / ACR_DOCKER_PASSWORD
+# 配置步骤见 docs/how_use_deploy_aliyun.md。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  # 服务器部署目录（.env 与 docker-compose.prod.yml 同在此）
+  REMOTE_DIR: /opt/codereview-ai
+  # 镜像全名：<registry>/<namespace>/codereview-ai
+  ACR_IMAGE: ${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/codereview-ai
+  # 服务器上把拉下来的镜像 tag 成本地名供 compose 引用（compose 不感知 registry）
+  LOCAL_IMAGE: codereview-ai:latest
+  APP_PORT: '5001'
+
+jobs:
+  build-and-deploy:
+    name: 构建 → ACR → ECS
+    runs-on: ubuntu-latest
+    concurrency:
+      # 连续 push 排队串行，避免两个 run 并发写服务器
+      group: deploy-aliyun
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 检查部署 Secrets 是否配齐
+        id: guard
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
+        run: |
+          if [ -z "$SSH_HOST" ] || [ -z "$ACR_NAMESPACE" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "未配置 SSH_*/ACR_* Secrets，本次跳过部署（配置后 push 即自动部署）"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 准备 Node（前端构建）
+        if: steps.guard.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 构建前端 dist
+        # frontend/dist 不入库（.gitignore），而镜像 COPY 需要它，故构建须在 docker build 之前
+        if: steps.guard.outputs.skip != 'true'
+        working-directory: frontend
+        run: |
+          npm ci --no-fund --no-audit
+          npm run build
+
+      - if: steps.guard.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 ACR
+        if: steps.guard.outputs.skip != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_DOCKER_USERNAME }}
+          password: ${{ secrets.ACR_DOCKER_PASSWORD }}
+
+      - name: 生成镜像 tag
+        id: meta
+        if: steps.guard.outputs.skip != 'true'
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ACR_IMAGE }}
+          # app = 最新语义；app-<短 sha> = 回滚用（第二 tag 复用已上传层，推送成本极低）
+          tags: |
+            type=raw,value=app
+            type=sha,prefix=app-,format=short
+
+      - name: 构建并推送镜像
+        if: steps.guard.outputs.skip != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 写入部署私钥
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          # 经 env 传入而非 ${{ }} 直插命令行：后者会把私钥展开进脚本正文（仅打码兜底）
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: 服务器拉取镜像并部署
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT || 22 }}
+          ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+          ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
+        run: |
+          run_ssh() {
+            ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o BatchMode=yes \
+                -o StrictHostKeyChecking=accept-new \
+                "$SSH_USER@$SSH_HOST" "$@"
+          }
+
+          # 服务器缺 .env 时 compose 直接报错，提前给出可执行的修复说明
+          if ! run_ssh "test -f $REMOTE_DIR/.env"; then
+            echo "缺少 $REMOTE_DIR/.env（4 枚必配密钥）——见 docs/how_use_deploy_aliyun.md" >&2
+            exit 1
+          fi
+
+          # ECS 与 ACR 同地域时换 VPC 内网域名拉取（免流量、秒级），跨地域则用公网域名
+          REGION=$(run_ssh "curl -s -m 3 http://100.100.100.200/latest/meta-data/region-id || echo unknown")
+          PULL_REG="$ACR_REGISTRY"
+          case "$ACR_REGISTRY" in
+            *".$REGION.personal.cr.aliyuncs.com")
+              PULL_REG="${ACR_REGISTRY/.$REGION.personal.cr/-vpc.$REGION.personal.cr}" ;;
+          esac
+          REMOTE_IMAGE="$PULL_REG/$ACR_NAMESPACE/codereview-ai:app"
+          echo "拉取域名: $PULL_REG（ECS 地域: $REGION）"
+
+          # compose 定义随仓库同步：只换镜像不同步它，服务定义会停在首次部署的版本
+          run_ssh "mkdir -p $REMOTE_DIR"
+          cat docker-compose.prod.yml | run_ssh "cat > $REMOTE_DIR/docker-compose.prod.yml"
+
+          run_ssh "
+            set -e
+            docker pull $REMOTE_IMAGE
+            docker tag  $REMOTE_IMAGE $LOCAL_IMAGE
+            cd $REMOTE_DIR && docker compose -f docker-compose.prod.yml up -d --remove-orphans
+          "
+
+          # 双探：/health 探进程存活，/admin 探前端产物是否随镜像送达
+          # （单容器托管静态资源，只探 API 测不出前端缺失）
+          for i in $(seq 1 45); do
+            if run_ssh "curl -fsS http://localhost:$APP_PORT/health >/dev/null && curl -fsS http://localhost:$APP_PORT/admin >/dev/null"; then
+              echo "部署成功：http://$SSH_HOST:$APP_PORT/admin"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "健康检查超时（$APP_PORT 未就绪），服务器日志如下：" >&2
+          run_ssh "cd $REMOTE_DIR && docker compose -f docker-compose.prod.yml logs --tail=80" || true
+          exit 1

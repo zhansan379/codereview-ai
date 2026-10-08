@@ -159,6 +159,7 @@ Docs:
 - [GitHub onboarding guide](docs/how_use_github.md)
 - [Gitee onboarding guide](docs/how_use_gitee.md)
 - [Scheduled pull (backfill)](docs/how_use_poll.md)
+- [Deploy to your own Aliyun ECS (GitHub Actions CI/CD)](docs/how_use_deploy_aliyun.md)
 - [Use PostgreSQL storage (standard tier)](docs/how_use_postgres.md)
 
 IM robot setup (Chinese):
