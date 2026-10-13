@@ -262,8 +262,9 @@ class SemanticGrouper:
 
         # 解析结果按 OCR 规约归组（重复/未知路径丢弃、未覆盖文件各成一组）。
         # **LLM 若判定各文件互不相关（等于 per-file）也照用**——这正是 OCR 的行为；
-        # 旧实现会把 per-file 结果判为「不值得当 LLM 结果」并改写成装箱，导致
-        # 多文件共享同一份会话预算、召回明显下降（见 docs/benchmark_aacr_bench.md）。
+        # 旧实现会把 per-file 结果判为「不值得当 LLM 结果」并改写成装箱，导致多文件
+        # 共享同一份会话预算、召回明显下降：某 34 文件样本上只对 8 个文件产出评论，
+        # 照用 per-file 结果后覆盖 8→18、语义命中 6→11（同配置重复实验的均值）。
         grouped = _group_diffs_by_paths(diffs, groups) or group_by_files(diffs)
         grouped = _split_oversized(grouped, self._max_files)
         return _enforce_group_token_budget(grouped, self._group_token_budget)
