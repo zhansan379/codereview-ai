@@ -1,14 +1,3 @@
-<div align="center">
-<img alt="license: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-black">
-<img alt="python: 3.11+" src="https://img.shields.io/badge/python-3.11+-black">
-<img alt="stack: FastAPI + Vue 3" src="https://img.shields.io/badge/stack-FastAPI%20%2B%20Vue%203-black">
-
-</div>
-
-<p align="center">
-🇺🇸 <a href="./README.en.md">English</a> | 🇨🇳 <a href="./README.md">简体中文</a>
-</p>
-
 ## 这是什么
 
 一个部署在你自己机器上的代码审查服务。在 GitHub / GitLab / Gitee 挂一个 webhook，之后每一个打开或更新的 PR / MR 都会被自动审查，意见以行级 inline 评论写回改动所在的那一行，同时推送到钉钉 / 飞书 / 企微。webhook 万一漏了事件，或者项目刚接入时已经有一批 PR 开着，后台可以主动补拉一轮把它们捞回来。配置、模型、项目、权限、统计都在自带的 Vue 管理后台里。
