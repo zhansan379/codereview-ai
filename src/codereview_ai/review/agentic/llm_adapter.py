@@ -21,7 +21,7 @@ from codereview_ai.config.repository import ResolvedLLM
 from codereview_ai.review.agentic.capture import ACTIVE_PHASE, ACTIVE_RECORDER
 from codereview_ai.review.agentic.llmloop import AgentTurn, ToolCall
 from codereview_ai.review.agentic.prompts import MEMORY_COMPRESSION_SYSTEM
-from codereview_ai.review.llm_gateway import LLMError
+from codereview_ai.review.llm_gateway import LLMError, extra_headers_from_env
 
 logger = logging.getLogger("codereview_ai.agentic.adapter")
 
@@ -60,6 +60,10 @@ def _litellm_tool_backend(
             import litellm
         except ImportError as exc:  # 未安装 litellm 却无注入 → 明确报错
             raise LLMError("litellm not installed but no backend injected") from exc
+        # 异常时 litellm 会往 stdout 打 Provider List/Give Feedback 横幅，污染机器消费的
+        # stdout JSON 契约（bench 无头模式首当其冲）；引擎对 plan 等阶段失败属设计内重试，
+        # 不应在 stdout 留痕。
+        litellm.suppress_debug_info = True
         kwargs: dict[str, Any] = {"model": model, "messages": messages}
         if tools:
             kwargs["tools"] = tools
@@ -73,6 +77,9 @@ def _litellm_tool_backend(
             kwargs["max_tokens"] = max_tokens
         if temperature is not None:
             kwargs["temperature"] = temperature
+        headers = extra_headers_from_env()  # 网关/代理自定义头（如会话头）
+        if headers:
+            kwargs["extra_headers"] = headers
         return await litellm.acompletion(**kwargs)
 
     return backend

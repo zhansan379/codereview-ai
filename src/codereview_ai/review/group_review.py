@@ -1,6 +1,7 @@
-"""语义分组接入主链（DESIGN §7.2 / §7.5，M4.6）：大变更分组并发审查 + 确定性合并。
+"""分组审查接入主链（DESIGN §7.2 / §7.5，M4.6）：分组并发审查 + 确定性合并。
 
-- 大变更（`files ≥ GROUPING_MIN_FILES`）先 `SemanticGrouper.group()` 分组，否则一个整组。
+- 分组走 `grouping.group_diffs`（与 agentic 轨同一套 OCR 语义）：小改动整包一组、
+  ≥4 文件调 LLM 语义分组、LLM 不可用退 per-file。
 - 每组一个独立 `Reviewer.review()`（组间 `asyncio.gather` 并发）。
 - 合并（**确定性**）：findings union → 内容指纹去重 → 各维评分取最坏值，summary 拼接。
 """
@@ -14,12 +15,9 @@ from typing import Any
 
 from codereview_ai.domain.models import FileDiff, Finding, PullRequest, ReviewResult
 from codereview_ai.review.agentic.capture import set_group
-from codereview_ai.review.grouping import SemanticGrouper
+from codereview_ai.review.grouping import SemanticGrouper, group_diffs
 from codereview_ai.review.reviewer import Reviewer
 from codereview_ai.review.static_analysis import render_static_findings
-
-#: 触发分组审查的文件数阈值；小于此数走整组一次审查（DESIGN §7.5「files≥4」）
-GROUPING_MIN_FILES = 4
 
 
 def _finding_fingerprint(file: str, content: str) -> str:
@@ -86,15 +84,8 @@ async def review_in_groups(
     static = static_findings or []
     # fake reviewer 未必收 usage_sink → 仅在显式给定时才转发
     sink_kwargs = {"usage_sink": usage_sink} if usage_sink is not None else {}
-    if grouper is None or len(diffs) < GROUPING_MIN_FILES:
-        static_text = render_static_findings(static, {d.new_path for d in diffs})
-        result = await _review_one(
-            reviewer, pr, commits_text, diffs,
-            _static_kwargs(static_text), sink_kwargs,
-        )
-        return _attach_static(result, static)
-
-    groups = await grouper.group(diffs)
+    # 分组与 agentic 轨共用同一套 OCR 语义（短路 → LLM 语义分组 → per-file 降级）
+    groups = await group_diffs(diffs, grouper)
     results = await asyncio.gather(*(
         _review_one(
             reviewer, pr, commits_text, g,

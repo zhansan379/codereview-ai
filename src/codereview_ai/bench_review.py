@@ -13,7 +13,8 @@
 
 结果以 JSON 打到 stdout（机器消费，成功即 `status:"ok"`）：
 
-    {"findings":[{"file","content","line","old_line","side","category","severity","source"}],
+    {"findings":[{"file","content","line","start_line","end_line","old_line","side",
+     "category","severity","source"}],
      "token_usage":{"input_tokens":N,"output_tokens":N}, "status":"ok", "error":""}
 
 `--offline` 为不联网自测：合成一条 Finding 走同一序列化路径，验证装配正确。
@@ -52,6 +53,7 @@ from codereview_ai.review.agentic.llmloop import AgentConfig
 from codereview_ai.review.agentic.sandbox import run_agentic_review
 from codereview_ai.review.agentic.syncer import RepoCloner, slugify_key
 from codereview_ai.review.agentic.tools import RepoContext
+from codereview_ai.review.file_scope import filter_review_scope
 
 logger = logging.getLogger("codereview_ai.bench_review")
 
@@ -204,12 +206,19 @@ def _clean_path(p: str) -> str:
 
 
 def build_file_diffs(repo_dir: Path, base: str, head: str) -> list[FileDiff]:
-    """由本地 bare/普通仓库的 `base..head` diff 构建 `list[FileDiff]`。
+    """由本地仓库的 `merge-base(base, head)..head` diff 构建 `list[FileDiff]`。
+
+    范围语义 = 三点 `A...B`（git 内部按 merge-base 解析），与 OCR `diff/git.go`
+    ModeRange（`base = merge-base(from,to)`）及 forge compare API（GitHub/GitLab
+    的 PR diff 同样是 merge-base 口径）一致。两点 `A B` 会把分叉点之后的所有历史
+    变更都算进来——cline 实例实测：两点 276 文件 vs 三点 4 文件（base 不是 head
+    祖先时差量爆炸，整次审查被拖死）。
 
     复用产品 `forges.base` 的 `count_diff_stats` / `new_file_content_from_patch` /
     `change_type_from_flags`（与 GitHub/GitLab 适配器同构的内部还原）。
     """
-    raw = _git(repo_dir, ["-c", "diff.renames=true", "diff", "--no-color", "-M", base, head, "--"])
+    raw = _git(repo_dir, ["-c", "diff.renames=true", "diff", "--no-color", "-M",
+                          f"{base}...{head}", "--"])
     if not raw:
         return []
     # split 结果：blocks[0]=头部前文本，之后每组 (old, new, body) 交替。
@@ -251,15 +260,23 @@ def build_file_diffs(repo_dir: Path, base: str, head: str) -> list[FileDiff]:
 
 
 def _finding_to_dict(f: Finding) -> dict[str, Any]:
-    """`Finding` -> aacr 结果 finding。side 转小写；line 取新侧（旧侧 LEFT 用 old_line）。"""
+    """`Finding` -> aacr 结果 finding。
+
+    side 转小写；line/end_line 取与锚定同侧的行号区间（RIGHT 用新侧、LEFT 用旧侧）：
+    命中块区间用于定位评测（对齐 OCR 的 start_line/end_line 区间语义）；未锚定
+    （end_line 缺省）时退化为 `line` 单点。
+    """
     side = (f.side or "RIGHT").upper()
     line = f.line if side == "RIGHT" else f.old_line
+    end_line = f.end_line if f.end_line is not None else line
     cat = getattr(f.category, "value", None)
     sev = getattr(f.severity, "value", None)
     return {
         "file": f.file,
         "content": f.content,
         "line": line,
+        "start_line": line,
+        "end_line": end_line,
         "old_line": f.old_line,
         "side": side.lower(),
         "category": str(cat) if cat else "",
@@ -268,13 +285,20 @@ def _finding_to_dict(f: Finding) -> dict[str, Any]:
     }
 
 
-def findings_envelope(findings: list[Finding], token_usage: dict[str, int]) -> dict[str, Any]:
+def findings_envelope(
+    findings: list[Finding],
+    token_usage: dict[str, int],
+    warnings: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    # `warnings` 只做可观测性：工具层参数被修复/整批或条目被丢时留痕，让「这条样本
+    # 为什么只有 N 条评论」在结果里可查（外层适配器只读 findings/token_usage，多这个键无影响）。
     return {
         "findings": [_finding_to_dict(f) for f in findings],
         "token_usage": {
             "input_tokens": int(token_usage.get("input_tokens", 0)),
             "output_tokens": int(token_usage.get("output_tokens", 0)),
         },
+        "warnings": warnings or [],
     }
 
 
@@ -338,6 +362,10 @@ async def _cmd_review(args: argparse.Namespace, repo_path: str) -> int:
             ref=args.head,
         )
         diffs = await asyncio.to_thread(build_file_diffs, repo_dir, args.base, args.head)
+        # 默认审查范围对齐 OCR（扩展名白名单 + 测试/生成物排除）：基准口径 = 生产口径
+        diffs, scope_skipped = filter_review_scope(diffs)
+        if scope_skipped:
+            logger.info("默认审查范围跳过 %d 个文件：%s", len(scope_skipped), scope_skipped)
     except Exception as exc:  # noqa: BLE001  —— 整理成可读 JSON 报错
         return _print({}, ok=False, error=f"仓库同步/取 diff 失败：{exc}")
 
@@ -353,20 +381,70 @@ async def _cmd_review(args: argparse.Namespace, repo_path: str) -> int:
     try:
         counter = _TokenCounter()
         runtime = _LocalRuntime(repo_dir, args.head)
+        # 分组与生产一致（bootstrap.py 同样构造）：用 CR_LLM_* 建真实 LLM 语义分组
+        # （OCR 同构：files≥4 走 LLM 分组，<4 文件按 churn 决定整包/per-file；
+        #  LLM 不可用降级 per-file）。见 review/grouping.py 的 OCR 决策链。
+        from codereview_ai.review.group_gateway import (
+            DEFAULT_GROUPING_MAX_TOKENS,
+            LLMGroupAdapter,
+        )
+        from codereview_ai.review.grouping import SemanticGrouper
+        from codereview_ai.review.llm_gateway import LLMGateway
+
+        grouper = SemanticGrouper(LLMGroupAdapter(LLMGateway(
+            model=resolved.model,
+            api_key=resolved.api_key,
+            base_url=resolved.base_url,
+            max_tokens=resolved.max_tokens or DEFAULT_GROUPING_MAX_TOKENS,
+            temperature=resolved.temperature,
+        )))
+
+        _timeout = max(60.0, float(args.timeout_minutes) * 60.0)
+        # 单组上限 = 整次预算（组内还会被全局剩余预算二次收紧）：大 PR 到点即停、
+        # 保留已得结果（否则会被外层进程超时强杀、零产出——cline 3.9 万 churn 实测）。
+        _cfg: dict[str, Any] = {
+            "max_time_seconds": _timeout,
+            "run_budget_seconds": _timeout,
+        }
+        # 会话预算（轮数 / 提示 token / 组并发 / plan 阈值 / 阶段开关）此前只落到
+        # AgentConfig 的 dataclass 默认（20 轮 / 80k / plan 300-600），而生产路径
+        # bootstrap.py 是读 CR_AGENT_* 的——同一份代码在基准与生产跑出不同深度，
+        # 基准侧调 CR_AGENT_* 也不生效。这里接上同名环境变量；不设时保持原默认值。
+        for _field, _env, _cast in (
+            ("max_iterations", "CR_AGENT_MAX_ITERATIONS", int),
+            ("max_prompt_tokens", "CR_AGENT_MAX_PROMPT_TOKENS", int),
+            ("group_concurrency", "CR_AGENT_GROUP_CONCURRENCY", int),
+            ("plan_line_threshold", "CR_AGENT_PLAN_LINE_THRESHOLD", int),
+            ("plan_group_line_threshold", "CR_AGENT_PLAN_GROUP_LINE_THRESHOLD", int),
+            ("plan_enabled", "CR_AGENT_PLAN_ENABLED", lambda v: v.lower() in ("1", "true", "yes")),
+            ("relocation_enabled", "CR_AGENT_RELOCATION_ENABLED",
+             lambda v: v.lower() in ("1", "true", "yes")),
+            ("scoring_enabled", "CR_AGENT_SCORING_ENABLED", lambda v: v.lower() in ("1", "true", "yes")),
+        ):
+            _raw = os.environ.get(_env)
+            if _raw:
+                _cfg[_field] = _cast(_raw)
+        # CR_BENCH_NO_FILTER=1 关闭 review_filter 事实核查阶段：默认它只删「diff 铁证反驳
+        # 的错评」，但这可能导致 agent 对「轻微但真值要报」的问题更保守。关闭用于验证
+        # 漏报是否由 review_filter 造成（其余 AgentConfig 保持默认）。
+        if os.environ.get("CR_BENCH_NO_FILTER") == "1":
+            _cfg["review_filter_enabled"] = False
         result = await run_agentic_review(
             runtime,
             _counting_factory(resolved, counter),
             diffs,
             pr,
-            grouper=None,
-            cfg=AgentConfig(max_time_seconds=max(60.0, float(args.timeout_minutes) * 60.0)),
+            grouper=grouper,
+            cfg=AgentConfig(**_cfg),
         )
     except Exception as exc:  # noqa: BLE001  —— 引擎任一步骤失败 → status:error（不中断进程）
         return _print({}, ok=False, error=f"agentic 审查失败：{exc}")
 
     return _print(
         findings_envelope(
-            result.findings, {"input_tokens": counter.prompt, "output_tokens": counter.completion}
+            result.findings,
+            {"input_tokens": counter.prompt, "output_tokens": counter.completion},
+            result.warnings,
         ),
         ok=True,
     )

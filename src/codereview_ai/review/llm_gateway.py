@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -21,6 +22,60 @@ from codereview_ai.domain.models import Category, Finding, ReviewResult, ReviewS
 
 class LLMError(RuntimeError):
     """所有 LLM/接入层失败统一抛这个异常，由 pipeline 捕获决定降级/失败。"""
+
+
+#: 附加请求头环境变量：`key=value` 逗号分隔（值可双引号包裹以含逗号）。网关/代理要求
+#: 自定义头（会话/租户/审计）时透传给 LiteLLM `extra_headers`；格式与 OCR 的
+#: `OCR_LLM_EXTRA_HEADERS` 一致，同一套网关配置可在两个工具间原样复制。
+EXTRA_HEADERS_ENV = "CR_LLM_EXTRA_HEADERS"
+
+
+def _split_header_pairs(raw: str) -> list[str]:
+    """按逗号切分，但双引号内的逗号不算分隔（`X-Fwd-For="1.2.3.4,5.6.7.8"`）。
+
+    引号本身不保留在片段中：值两侧的引号仅用于保护分隔符，不是值的一部分。
+    """
+    pairs: list[str] = []
+    buf: list[str] = []
+    in_quotes = False
+    for ch in raw:
+        if ch == '"':
+            in_quotes = not in_quotes
+            continue
+        if ch == "," and not in_quotes:
+            pairs.append("".join(buf))
+            buf = []
+            continue
+        buf.append(ch)
+    pairs.append("".join(buf))
+    return pairs
+
+
+def parse_extra_headers(raw: str) -> dict[str, str]:
+    """解析 `k=v[,k2=v2...]` 为请求头字典；空串返回空 dict。
+
+    缺 `=` 或键名为空的项直接抛 `ValueError`——头配错属配置错误，静默丢弃会让
+    网关侧以「缺头」表现为难排查的鉴权失败。
+    """
+    headers: dict[str, str] = {}
+    for pair in _split_header_pairs(raw or ""):
+        pair = pair.strip()
+        if not pair:
+            continue
+        key, sep, value = pair.partition("=")
+        key = key.strip()
+        if not sep or not key:
+            raise ValueError(f"非法 {EXTRA_HEADERS_ENV} 项 {pair!r}：期望 key=value")
+        headers[key] = value.strip()
+    return headers
+
+
+def extra_headers_from_env() -> dict[str, str]:
+    """读取 `CR_LLM_EXTRA_HEADERS`（未设置/空 → 空 dict）。
+
+    每次调用现读 env：bench 外壳/CI 在进程启动前注入即可生效，无需改配置。
+    """
+    return parse_extra_headers(os.environ.get(EXTRA_HEADERS_ENV, ""))
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +159,9 @@ class LLMGateway:
             kwargs["max_tokens"] = self.max_tokens
         if self.temperature is not None:
             kwargs["temperature"] = self.temperature
+        headers = extra_headers_from_env()  # 网关/代理自定义头（如会话头）
+        if headers:
+            kwargs["extra_headers"] = headers
         resp = await litellm.acompletion(**kwargs)
         if usage_holder is not None and getattr(resp, "usage", None) is not None:
             u = resp.usage

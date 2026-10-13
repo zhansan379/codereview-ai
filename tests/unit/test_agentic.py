@@ -26,7 +26,13 @@ from codereview_ai.domain.models import (
     Severity,
 )
 from codereview_ai.review.agentic.budget import BudgetGate, estimate_tokens
-from codereview_ai.review.agentic.llmloop import AgentConfig, AgentTurn, ToolCall, run_agent_session
+from codereview_ai.review.agentic.llmloop import (
+    AgentConfig,
+    AgentResult,
+    AgentTurn,
+    ToolCall,
+    run_agent_session,
+)
 from codereview_ai.review.agentic.sandbox import (
     FakeRuntime,
     SandboxDisabled,
@@ -201,22 +207,28 @@ def test_code_comment_normalizes_bad_category(tmp_path):
     assert f.severity == Severity.LOW
 
 
-def test_code_comment_line_anchor_parsed(tmp_path):
-    # code_comment 带 line → Finding.line 填充（agent 读 clone 全仓的行号 = diff 新侧行号）
+def test_code_comment_ignores_model_line_keeps_existing_code(tmp_path):
+    # OCR 契约：schema 不暴露 line——模型即便自报 line/old_line 也一律忽略，
+    # 行号由会话后 re_location 阶梯从 existing_code 锚出（模型猜的行号会跳过重锚）。
     ctx = _new_ctx(tmp_path)
     state = ToolState()
     runner = ToolRunner(ctx, state)
     runner.run_one("code_comment", {"comments": [
-        {"path": "b.py", "content": "x", "line": 42, "old_line": 3}]})
+        {"path": "b.py", "content": "x", "existing_code": "foo()",
+         "line": 42, "old_line": 3}]})
     f = state.comments[0]
-    assert f.line == 42
-    assert f.old_line == 3
-    # 非法/缺省 line → None（回落总结），不抛
-    st2 = ToolState()
-    ToolRunner(ctx, st2).run_one("code_comment", {"comments": [
-        {"path": "b.py", "content": "y", "line": "abc"},
-        {"path": "b.py", "content": "z"}]})
-    assert all(f.line is None for f in st2.comments)
+    assert f.line is None
+    assert f.old_line is None
+    assert f.existing_code == "foo()"
+
+
+def test_code_comment_schema_requires_existing_code_no_line():
+    # 契约对齐 OCR：existing_code 必填、无 line/old_line 字段（行号不由模型上报）。
+    schemas = {t["function"]["name"]: t["function"] for t in tool_schemas()}
+    props = schemas["code_comment"]["parameters"]["properties"]["comments"]["items"]["properties"]
+    assert "line" not in props
+    assert "old_line" not in props
+    assert props["existing_code"]["type"] == "string"
 
 
 def test_task_done_flags(tmp_path):
@@ -233,9 +245,8 @@ def test_tool_schemas_grace_only_two(tmp_path):
 
 
 def test_code_comment_schema_is_nested_array_of_objects():
-    # 修法回归：code_comment 的 comments 必须是标准 `array → items(object)` 嵌套结构——
-    # 带类型、必填、category/severity 枚举。之前是 type:"string"，模型拿不到结构只能
-    # 蒙，把正文塞进 content 外的键导致 _t_code_comment 整条丢弃（0 findings 根因）。
+    # 回归：code_comment 的 comments 必须是标准 `array → items(object)` 嵌套结构——
+    # 带类型、必填、枚举（OCR tools.json 对齐：existing_code 必填、不暴露 line）。
     schemas = {t["function"]["name"]: t["function"] for t in tool_schemas()}
     cc = schemas["code_comment"]
     comments = cc["parameters"]["properties"]["comments"]
@@ -245,8 +256,8 @@ def test_code_comment_schema_is_nested_array_of_objects():
     props = items["properties"]
     assert props["path"]["type"] == "string"
     assert props["content"]["type"] == "string"
-    assert props["line"]["type"] == "integer"
-    assert set(items["required"]) == {"path", "content"}
+    assert props["existing_code"]["type"] == "string"
+    assert set(items["required"]) == {"content", "existing_code", "category", "severity", "path"}
     assert "bug" in props["category"]["enum"]
     assert props["severity"]["enum"] == ["critical", "high", "medium", "low"]
 
@@ -452,7 +463,8 @@ async def test_run_agentic_review_source_agent(tmp_path):
 
 
 async def test_run_agentic_review_line_goes_inline(tmp_path):
-    # agent 报 line（=clone 全仓读到的新侧行号）→ finding.line 填充 → partition 分发到行级 inline
+    # 模型按 OCR 契约只报 existing_code（不报行号）→ 会话后 re_location 从片段锚出
+    # 新侧行号（added = 新侧第 2 行）→ partition 分发到行级 inline
     raw = "--- a/a.py\n+++ b/a.py\n@@ -1 +1,2 @@\n ctx\n+added\n"
     diffs = [FileDiff("a.py", "a.py", raw, 1, 0, ChangeType.MODIFIED, "ctx\nadded\n")]
     runtime = FakeRuntime()
@@ -461,7 +473,7 @@ async def test_run_agentic_review_line_goes_inline(tmp_path):
         return _FakeLLM([
             AgentTurn(tool_calls=[ToolCall("code_comment", {"comments": [
                 {"path": "a.py", "content": "问题", "category": "bug",
-                 "severity": "high", "line": 2}]})]),
+                 "severity": "high", "existing_code": "added"}]})]),
             AgentTurn(tool_calls=[ToolCall("task_done", {"state": "DONE"})]),
         ])
 
@@ -473,6 +485,32 @@ async def test_run_agentic_review_line_goes_inline(tmp_path):
     inline, textual = partition_findings(result.findings, diffs)
     assert len(inline) == 1  # 新增行 2 在可评论集合内 → 逐行 inline，而非总结
     assert textual == []
+
+
+async def test_run_agentic_review_global_budget_skips_groups(tmp_path, monkeypatch):
+    # 全局预算（run_budget_seconds）耗尽 → 不再开新组：已得结果保留、未跑组记 skipped_files
+    from codereview_ai.review.agentic import sandbox as sandbox_mod
+
+    diffs = [FileDiff(f"f{i}.py", f"f{i}.py", "+ x\n", 1, 0, ChangeType.MODIFIED, "x\n")
+             for i in range(4)]
+
+    seen: list = []
+
+    async def _slow_session(llm, runner, intro, cfg=None):  # noqa: ANN001
+        seen.append(cfg)
+        await asyncio.sleep(0.1)
+        return AgentResult(done=True)
+
+    monkeypatch.setattr(sandbox_mod, "run_agent_session", _slow_session)
+    monkeypatch.setattr(sandbox_mod, "_MIN_GROUP_BUDGET_SECONDS", 0.0)
+
+    result = await run_agentic_review(
+        FakeRuntime(), lambda: _FakeLLM([]), diffs,
+        cfg=AgentConfig(group_concurrency=1, run_budget_seconds=0.05),
+    )
+    assert len(seen) == 1  # 只有第一组真正开跑
+    assert result.skipped_files == ["f1.py", "f2.py", "f3.py"]
+    assert result.findings == []
 
 
 async def test_run_agentic_review_llm_failure_raises(tmp_path):
@@ -579,13 +617,6 @@ def _tracker_factory(tracker: _ConcurrencyTracker):
     return lambda: _TrackedLLM(tracker)
 
 
-class _FakeGrouper:
-    """每个文件单独成组，方便造出 N 组并发。"""
-
-    async def group(self, diffs):  # noqa: ANN001
-        return [[d] for d in diffs]
-
-
 async def _run_concurrent(tmp_path, concurrency: int) -> _ConcurrencyTracker:
     diffs = [FileDiff(f"{p}.py", f"{p}.py", "+ x = 1\n", 1, 0, ChangeType.MODIFIED,
                       "x = 1\n") for p in ("a", "b", "c", "d")]
@@ -595,7 +626,6 @@ async def _run_concurrent(tmp_path, concurrency: int) -> _ConcurrencyTracker:
     tracker = _ConcurrencyTracker()
     result = await run_agentic_review(
         runtime, _tracker_factory(tracker), diffs, cfg=AgentConfig(group_concurrency=concurrency),
-        grouper=_FakeGrouper(),
     )
     assert result.summary.startswith("agentic 共报告")
     return tracker
@@ -613,6 +643,38 @@ async def test_group_concurrency_serial_when_one(tmp_path):
     assert tracker.max_active == 1
 
 # ── llm_adapter.summarize：OCR memory_compression 五维契约 ─────────────
+def test_agent_litellm_backend_forwards_extra_headers(monkeypatch):
+    """CR_LLM_EXTRA_HEADERS 同时作用于 agent 工具调用链（网关自定义头）。"""
+    import asyncio
+
+    from codereview_ai.review.agentic.llm_adapter import _litellm_tool_backend
+    from codereview_ai.review.llm_gateway import EXTRA_HEADERS_ENV
+
+    captured: dict = {}
+
+    class _M:
+        content = "ok"
+        tool_calls = None
+
+    class _C:
+        message = _M()
+
+    class _R:
+        choices = [_C()]
+
+    async def fake_acompletion(**kwargs):
+        captured.update(kwargs)
+        return _R()
+
+    monkeypatch.setattr("litellm.acompletion", fake_acompletion)
+    monkeypatch.setenv(EXTRA_HEADERS_ENV, "x-opencode-session=sess-2")
+
+    backend = _litellm_tool_backend(model="openai/deepseek-v4.1-flash")
+    asyncio.run(backend([{"role": "user", "content": "x"}], []))
+
+    assert captured["extra_headers"] == {"x-opencode-session": "sess-2"}
+
+
 def test_summarize_uses_memory_compression_template():
     """压缩用 OCR 五维契约（保留 file+severity）取代原中文一句话，上下文仍是压缩对象。"""
     import asyncio

@@ -16,7 +16,8 @@ from codereview_ai.domain.models import (  # noqa: E501
     ReviewScores,
     Severity,
 )
-from codereview_ai.review.group_review import GROUPING_MIN_FILES, merge_results, review_in_groups
+from codereview_ai.review.group_review import merge_results, review_in_groups
+from codereview_ai.review.grouping import SMALL_FILE_THRESHOLD
 from codereview_ai.review.grouping import SemanticGrouper
 
 
@@ -104,7 +105,7 @@ async def test_review_in_groups_large_change_groups_and_merges():
     reviewer = FakeReviewer()
     grouper = SemanticGrouper(FakeGroupLLM())
     diffs = _big_diffs()
-    assert len(diffs) >= GROUPING_MIN_FILES
+    assert len(diffs) >= SMALL_FILE_THRESHOLD  # 文件数达到 OCR GroupingMinFiles 才走 LLM 分组
     result = await review_in_groups(reviewer, grouper, _pr(), "t", diffs)
     # 分组：[messages_en,messages_zh]，main，utils，cli → 4 次独立审查
     assert len(reviewer.calls) == 4

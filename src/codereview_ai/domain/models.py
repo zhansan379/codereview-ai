@@ -129,6 +129,7 @@ class Finding:
     # ── 由工程锚定/校验填充，LLM 不产出 ──
     line: int | None = None  # 新侧行号（锚定解析结果）
     old_line: int | None = None  # 旧侧行号（仅新增行类锚定到旧侧时）
+    end_line: int | None = None  # 锚定命中块结束行（与 line/old_line 同侧；单点锚定时 == 起点）
     side: str = "RIGHT"  # "RIGHT"(新侧) | "LEFT"(旧侧/删除)，回写 position 用
     source: str = "llm"  # "llm" | "static:<tool>"
 
@@ -153,3 +154,6 @@ class ReviewResult:
     findings: list[Finding] = field(default_factory=list)
     skipped_files: list[str] = field(default_factory=list)
     raw_llm_json: dict[str, object] = field(default_factory=dict)
+    #: 工具层异常留痕（code_comment 参数被修复/整批或条目被丢）。
+    #: 只为可观测性：findings 变少时能回答「是模型没报，还是报了没落库」。
+    warnings: list[dict[str, object]] = field(default_factory=list)

@@ -438,11 +438,12 @@ async def test_process_filters_diffs_by_project_extensions():
     assert reviewer.received == [["a.py", "b.ts"]]  # .md 被过滤
 
 
-async def test_process_factory_none_keeps_all():
+async def test_process_factory_none_applies_default_scope():
     forge = _MultiForge([("a.py", "a.py"), ("a.md", "a.md")])
     reviewer = _RecordingReviewer()
     await process_raw_event(forge, reviewer, _mr_payload())  # type: ignore[arg-type]
-    assert reviewer.received == [["a.py", "a.md"]]  # 未注入 → 不过滤
+    # 未注入项目配置 → 应用 OCR 同款默认审查范围（扩展名白名单）：.md 非白名单 → 跳过
+    assert reviewer.received == [["a.py"]]
 
 
 async def test_process_all_filtered_skips_llm():

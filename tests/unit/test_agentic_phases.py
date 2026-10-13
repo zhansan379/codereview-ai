@@ -109,6 +109,25 @@ def test_relocation_deterministic_match_fills_line():
     diff_map = {"a.py": _fd(content="x = 1\ny = 2\n")}
     comments = asyncio_run(resolve_leaked_lines([f], diff_map, _PlanLLM(""), AgentConfig()))
     assert comments[0].line == 1
+    assert comments[0].end_line == 1  # 单点锚定：区间退化起点=终点
+    assert comments[0].side == "RIGHT"
+
+
+def test_relocation_hunk_match_records_span():
+    # hunk 内多行片段 → 记 [start, end] 命中区间（对齐 OCR StartLine/EndLine）
+    diff = (
+        "@@ -1,3 +1,5 @@\n"
+        " ctx1\n"
+        "+ new1\n"
+        "+ new2\n"
+        " ctx2\n"
+        " ctx3\n"
+    )
+    d = FileDiff("a.py", "a.py", diff, 2, 0, ChangeType.MODIFIED,
+                 "ctx1\nnew1\nnew2\nctx2\nctx3\n")
+    f = _finding(existing_code="new1\nnew2")
+    comments = asyncio_run(resolve_leaked_lines([f], {"a.py": d}, _PlanLLM(""), AgentConfig()))
+    assert (comments[0].line, comments[0].end_line) == (2, 3)
     assert comments[0].side == "RIGHT"
 
 
@@ -122,6 +141,7 @@ def test_relocation_across_files_unique_anchor():
     comments = asyncio_run(resolve_leaked_lines([f], diff_map, _PlanLLM(""), AgentConfig()))
     assert comments[0].file == "b.py"
     assert comments[0].line == 2
+    assert comments[0].end_line == 2
 
 
 def test_relocation_ambiguous_across_files_rejected():

@@ -31,6 +31,7 @@ def _make_finding() -> Finding:
         file="src/main.py",
         line=4,
         old_line=3,
+        end_line=6,
         side="RIGHT",
         source="agent",
     )
@@ -41,18 +42,27 @@ def test_finding_to_dict_normalizes_side_line() -> None:
     assert d["file"] == "src/main.py"
     assert d["side"] == "right"  # 大写 → 小写
     assert d["line"] == 4  # RIGHT 用新侧行号
+    assert d["start_line"] == 4 and d["end_line"] == 6  # 锚定区间（对齐 OCR start/end）
     assert d["category"] == "bug"
     assert d["severity"] == "medium"
     assert d["source"] == "agent"
 
 
+def test_finding_to_dict_end_line_falls_back_to_line() -> None:
+    f = _make_finding()
+    f.end_line = None  # 未锚出区间 → 单点兜底
+    d = _finding_to_dict(f)
+    assert d["start_line"] == d["end_line"] == 4
+
+
 def test_finding_to_dict_left_uses_old_line() -> None:
     f = _make_finding()
     f.side = "LEFT"
-    f.line, f.old_line = 5, 2
+    f.line, f.old_line, f.end_line = 5, 2, 2
     d = _finding_to_dict(f)
     assert d["side"] == "left"
     assert d["line"] == 2  # LEFT 用旧侧行号
+    assert d["end_line"] == 2
 
 
 def test_findings_envelope_shape() -> None:

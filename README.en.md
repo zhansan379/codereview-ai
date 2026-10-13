@@ -47,6 +47,8 @@ Webhook events are HMAC-verified, written to an async queue, and answered `202` 
 
 The result is written back through the forge API as inline comments and persisted for the admin dashboards and the daily report. Nothing external takes part in scheduling.
 
+The full control-flow map — every skip and degradation exit, the agent session loop, and the failure semantics of each in-group phase — lives in [Agent workflow diagram](docs/agentic_workflow.md) (Chinese). Its nodes carry source line references and are kept in sync with the code.
+
 ## Two review modes
 
 Both paths share the same queue, the same write-back and the same stats. The only difference is **how much the model gets to see**. Each project picks its own, `diff` by default; `agentic` additionally needs `CR_AGENT_REVIEW_ENABLED` on globally.

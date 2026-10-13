@@ -146,6 +146,9 @@ class ToolState:
     comments: list[Finding] = field(default_factory=list)
     done: bool = False
     failed: bool = False
+    #: 工具层异常留痕（参数被修复/整批被丢/条目被丢）。不参与判定，只为了让
+    #: 「这组为什么 0 条评论」在结果里可查——否则调用方只能看到 findings 变少。
+    warnings: list[dict[str, Any]] = field(default_factory=list)
 
 
 class AgentTool(Protocol):
@@ -308,21 +311,51 @@ def finding_matches(a: Finding, b: Finding) -> bool:
     return bool(set(a_fps) & set(b_fps))
 
 
-def _as_int(v: Any) -> int | None:
-    """把上报的 line 归一成 int；缺省/非法返回 None（回落总结评论）。"""
-    if v is None or v == "":
-        return None
-    try:
-        return int(v)
-    except (TypeError, ValueError):
-        return None
+def _coerce_comment_items(args: dict[str, Any]) -> tuple[list[Any], str]:
+    """把模型给的参数规整成 `comments` 数组（OCR comment_args_repair 的等价最小版）。
+
+    实测模型有三种走形，旧实现一律丢弃整批 → 该组一条评论都不产出（lvgl 样本 4 组里 2 组
+    正是这样，白跑一整组）：
+      1. 把单条 finding 的字段平铺在顶层（args 里有 path/content，comments 却是 []）；
+      2. 把数组序列化成 JSON 字符串（引号转义层数不对时直接 json.loads 会失败）；
+      3. 只给一个对象而不是数组。
+    返回 (items, note)；note 非空表示做过修复或无法修复，供结果里留痕。
+    """
+    raw = args.get("comments")
+    note = ""
+    if isinstance(raw, str) and raw.strip():
+        try:
+            raw = json.loads(raw)
+            note = "comments 是字符串，已按 JSON 解析"
+        except (json.JSONDecodeError, ValueError):
+            raw = None
+            note = "comments 字符串无法解析"
+    if isinstance(raw, dict):
+        return [raw], note or "comments 是单个对象，已包装成数组"
+    if isinstance(raw, list) and raw:
+        return raw, note
+    # 顶层平铺：模型把 finding 字段直接放在了 args 上
+    if any(k in args for k in ("path", "content", "existing_code")):
+        return [args], note or "finding 字段平铺在顶层，已包装成单条"
+    return [], note
 
 
 def _t_code_comment(ctx: RepoContext, state: ToolState, args: dict[str, Any]) -> str:
-    items = args.get("comments") or []
-    if not isinstance(items, list) or not items:
+    items, repair_note = _coerce_comment_items(args)
+    if repair_note:
+        state.warnings.append(
+            {"tool": "code_comment", "kind": "repaired_args", "note": repair_note,
+             "args_keys": sorted(args.keys())}
+        )
+        logger.warning("code_comment 参数修复：%s（args keys=%s）", repair_note, sorted(args.keys()))
+    if not items:
+        state.warnings.append(
+            {"tool": "code_comment", "kind": "dropped_batch",
+             "note": repair_note or "comments 缺失或为空", "args_keys": sorted(args.keys())}
+        )
         logger.warning("code_comment: comments 非数组（%s→%r），args keys=%s",
-                       type(items).__name__, type(items), list(args.keys()))
+                       type(args.get("comments")).__name__, args.get("comments"),
+                       list(args.keys()))
         return json.dumps({"ok": False, "error": "缺少 comments 数组"}, ensure_ascii=False)
     dropped = 0
     accepted = 0
@@ -353,11 +386,10 @@ def _t_code_comment(ctx: RepoContext, state: ToolState, args: dict[str, Any]) ->
             continue
         cat = _CATEGORIES.get(str(it.get("category")), Category.OTHER)
         sev = _SEVERITIES.get(str(it.get("severity")), Severity.LOW)
-        line = _as_int(it.get("line"))
-        old_line = _as_int(it.get("old_line"))
-        # agent 在 clone 全仓（reset 到 head）里读到的行号 = MR head 侧行号 = diff 新侧行号，
-        # 天然对齐；line 落在 diff hunk 可评论范围内时由 ResultWriter 发行级 inline，
-        # 越界/缺省则回落总结评论（result_writer.partition_findings）。
+        # 行号不由模型提供（OCR 契约：schema 不暴露 line，解析器也不读）——模型只引用
+        # `existing_code` 片段，行号统一由会话后 re_location 阶梯从片段精确锚出
+        # （`relocation.resolve_leaked_lines`：本文件确定性 → 跨文件唯一串搜 → LLM 重定位）。
+        # 模型自报的行号概不采信：猜错的行号会跳过重锚、直接污染行级定位。
         state.comments.append(Finding(
             content=content,
             category=cat,
@@ -366,8 +398,8 @@ def _t_code_comment(ctx: RepoContext, state: ToolState, args: dict[str, Any]) ->
             side="RIGHT",
             existing_code=str(it.get("existing_code") or ""),
             suggestion_code=str(it.get("suggestion_code")) or None,
-            line=line,
-            old_line=old_line,
+            line=None,
+            old_line=None,
             source="agent",
         ))
         accepted += 1
@@ -375,6 +407,10 @@ def _t_code_comment(ctx: RepoContext, state: ToolState, args: dict[str, Any]) ->
         logger.warning(
             "code_comment: 本条 %d 条中丢弃 %d（缺 path/content %s）、accept %d",
             len(items), dropped, dict(dropped_keys), accepted,
+        )
+        state.warnings.append(
+            {"tool": "code_comment", "kind": "dropped_items", "total": len(items),
+             "dropped": dropped, "accepted": accepted, "missing_fields": dict(dropped_keys)}
         )
     return "Successfully commented."
 
@@ -392,38 +428,52 @@ def _t_task_done(ctx: RepoContext, state: ToolState, args: dict[str, Any]) -> st
 # ── 注册表 ──────────────────────────────────────────────────────────────
 
 
-# code_comment 的 comments 元素：给 LLM 的标准嵌套 object schema。此前把它建模成
-# 一行散文字符串（type:"string"），模型拿不到真正的字段类型/必填/枚举，只能靠蒙，
-# 导致正文偶尔塞进 content 外的键、数组塞成字符串时被 _t_code_comment 整条丢弃。
-# 改为标准 `array → items(object)` 后，模型照说明书填，丢弃率显著下降。
+# code_comment 的 comments 元素：给 LLM 的标准嵌套 object schema（OCR tools.json
+# 逐字对齐）。两条契约关键：
+#   1. `existing_code` **必填**——模型只引用 diff 里逐字存在的新增代码片段；
+#   2. **schema 不暴露 line**——行号不由模型上报（模型猜行号是行号指标失真的根因：
+#      猜出的行号掠过 re_location 重锚），统一由会话后 re_location 阶梯从片段锚出。
 _COMMENT_ITEM = {
     "type": "object",
-    "additionalProperties": False,
     "properties": {
-        "path": {"type": "string",
-                 "description": "相对仓库根的文件路径，如 src/main.py（必填）"},
-        "content": {"type": "string",
-                    "description": "批注正文：点明问题与建议（必填）"},
-        "existing_code": {"type": "string",
-                          "description": "定位锚点：问题处的现有代码片段，无 line 时用"},
-        "suggestion_code": {"type": "string",
-                            "description": "可选：建议替换成的新代码"},
+        "content": {
+            "type": "string",
+            "description": ("Comment content, typically a brief description of code issues "
+                            "and corresponding suggestions."),
+        },
+        "existing_code": {
+            "type": "string",
+            "description": ("Code snippet used to locate comment position. Only return newly "
+                            "added code lines, should not include deleted code or unchanged "
+                            "code lines. Maintain consistent style with diff code for IDE "
+                            "recognition and mounting in current file."),
+        },
+        "suggestion_code": {
+            "type": "string",
+            "description": ("Corresponding suggested code snippet, maintaining consistent "
+                            "code style."),
+        },
         "category": {"type": "string", "enum": _CATEGORY_ENUM,
-                     "description": "问题类别，取枚举之一"},
+                     "description": "The category the issue belongs to."},
         "severity": {"type": "string", "enum": _SEVERITY_ENUM,
-                     "description": "严重度，取枚举之一"},
-        "line": {"type": "integer",
-                 "description": "问题所在文件的新侧行号（参考 read_file 结果）"},
-        "old_line": {"type": "integer"},
+                     "description": "The severity of the issue."},
+        "path": {"type": "string",
+                 "description": "The relative file path this comment applies to."},
     },
-    "required": ["path", "content"],
+    "required": ["content", "existing_code", "category", "severity", "path"],
 }
 
 _TOOLS: dict[str, tuple[str, dict[str, Any], Any]] = {
     "code_comment": (
-        "上报审查意见；LLM 产出结论的唯一通道。一次传一条或多条，每条是带 path/content "
-        "的对象。line 为该问题在文件中的新侧行号（可从 read_file 的结果得知；填了且落在 "
-        "diff 范围内会定位到具体代码行，不填则并入总结评论）",
+        "When you discover that a code change could introduce code issue, please use this tool "
+        "to report the issue. The tool will pinpoint your feedback to the precise code line (or "
+        "block) in the current file by inserting a code comment.\n\n"
+        "**Core Mechanism:**\n"
+        "This tool uses a dynamic sliding window algorithm to match corresponding consecutive "
+        "lines in diff text based on your provided 'existing_code' parameter. Therefore, you must "
+        "ensure the provided 'existing_code' actually exists in the diff text with exactly "
+        "matching format. It should contain one or several consecutive lines of code most "
+        "relevant to your comment.",
         {"comments": {"type": "array", "items": _COMMENT_ITEM,
                       "description": "本次要上报的意见列表"}},
         _t_code_comment,

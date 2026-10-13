@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
@@ -22,7 +23,15 @@ def render_diffs(diffs: Sequence[FileDiff]) -> str:
 
 
 def current_time_line() -> str:
-    """`{{current_system_date_time}}`：人类可读的 UTC 时刻（OCR 亦注入当前时间）。"""
+    """`{{current_system_date_time}}`：人类可读的 UTC 时刻（OCR 亦注入当前时间）。
+
+    `CR_BENCH_FREEZE_TIME` 有值时返回该固定时刻：基准需要可复现。时间注入让每次运行的
+    prompt 都不同（精度到分钟），实测同配置两次跑出的评论**没有一条正文相同**、位置重合
+    只有 35~51%，任何「改动前后」对比都会被这层噪声淹没。生产不设此变量，行为不变。
+    """
+    frozen = (os.environ.get("CR_BENCH_FREEZE_TIME") or "").strip()
+    if frozen:
+        return frozen
     return datetime.now(UTC).isoformat(timespec="minutes").replace("+00:00", "")
 
 

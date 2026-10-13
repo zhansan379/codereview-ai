@@ -18,8 +18,10 @@ from codereview_ai.review.grouping import (
 MOD = ChangeType.MODIFIED
 
 
-def _d(path: str, add: int = 10, dele: int = 5, ct: ChangeType = MOD) -> FileDiff:
-    return FileDiff(old_path=path, new_path=path, diff="", additions=add, deletions=dele, change_type=ct)  # noqa: E501
+def _d(path: str, add: int = 10, dele: int = 5, ct: ChangeType = MOD,
+       diff: str = "") -> FileDiff:
+    return FileDiff(old_path=path, new_path=path, diff=diff, additions=add,
+                    deletions=dele, change_type=ct)
 
 
 class _FakeGroupLLM:
@@ -103,12 +105,43 @@ def test_semantic_llm_exception_falls_back_per_file():
     assert out == [[d] for d in diffs]
 
 
-def test_semantic_llm_per_fileish_result_ignored():
-    # LLM 返回每组才一个文件（不实际并组）→ 视作 per-file，等价即可
+def test_semantic_llm_per_file_result_kept():
+    # OCR 行为：LLM 判定各文件互不相关（每组一个文件）时**照用**，不改写成装箱。
+    # 旧实现用 _looks_like_per_file 把这种结果判为「不值得当 LLM 结果」并重新装箱，
+    # 会让多个文件共享同一份会话预算（轮数/prompt），召回明显下降——已按 OCR 移除。
     llm = _FakeGroupLLM(result=[["a.py"], ["b.py"], ["c.py"], ["d.py"]])
     g = SemanticGrouper(llm)
     out = asyncio.run(g.group([_d("a.py"), _d("b.py"), _d("c.py"), _d("d.py")]))
     assert len(out) == 4
+
+
+def test_semantic_llm_failure_falls_back_to_per_file():
+    # OCR grouping.go:98：分组 LLM 失败/空响应 → **per-file**（不做任何装箱）
+    llm = _FakeGroupLLM(exc=RuntimeError("LLM returned empty content"))
+    diffs = [_d(f"f{n}.py", 30, 0) for n in range(25)]
+    out = asyncio.run(SemanticGrouper(llm).group(diffs))
+    assert len(out) == len(diffs)
+    assert all(len(grp) == 1 for grp in out)
+    assert {d.new_path for grp in out for d in grp} == {f"f{n}.py" for n in range(25)}
+
+
+def test_semantic_llm_failure_retries_once_then_succeeds():
+    # 首次空响应/异常 → 重试一次；成功则走 LLM 分组结果（不再降级）
+    class _Flaky:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def group_metadata(self, entries, max_files):  # noqa: ANN001
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("LLM returned empty content")
+            return [["a.py", "b.py"], ["c.py"], ["d.py"]]
+
+    llm = _Flaky()
+    diffs = [_d("a.py", 5, 0), _d("b.py", 5, 0), _d("c.py", 5, 0), _d("d.py", 5, 0)]
+    out = asyncio.run(SemanticGrouper(llm).group(diffs))
+    assert llm.calls == 2
+    assert [d.new_path for d in out[0]] == ["a.py", "b.py"]
 
 
 def test_oversized_group_split_by_max_files():
@@ -119,16 +152,16 @@ def test_oversized_group_split_by_max_files():
     assert all(len(grp) <= 1 for grp in out)
 
 
-def test_budget_overrun_splits_to_single_groups():
-    # 超大 churn 文件混入 → 预算拆分，单文件各自成组
-    big = _d("big.py", add=3000, dele=0)
-    diffs = [big, _d("a.py", 5, 0), _d("b.py", 5, 0)]
-    g = SemanticGrouper(_FakeGroupLLM(result=None), group_churn_budget=100)
-    out = asyncio.run(g.group(diffs))
-    flat = [d.new_path for grp in out for d in grp]
-    assert set(flat) == {"big.py", "a.py", "b.py"}
-    # big 独立成组；小文件各自成组
-    assert all(d.additions + d.deletions <= 100 or len(grp) == 1 for grp in out for d in grp)
+def test_group_token_budget_splits_to_single_groups():
+    # OCR enforceGroupTokenBudget：组内 diff 累计 token 超预算 → 整组拆成 per-file。
+    # 预算按 diff 文本估（chars//4，与 llmloop.estimate_tokens 同口径）。
+    big = _d("big.py", 3000, 0, diff="x" * 4000)     # ~1000 token
+    small = _d("a.py", 5, 0, diff="x" * 40)
+    llm = _FakeGroupLLM(result=[["big.py", "a.py"]])  # 故意把两者并成一组
+    g = SemanticGrouper(llm, group_token_budget=500)
+    out = asyncio.run(g.group([big, small]))
+    assert sorted(len(grp) for grp in out) == [1, 1]
+    assert {d.new_path for grp in out for d in grp} == {"big.py", "a.py"}
 
 
 def test_semantic_not_triggered_for_small_change():

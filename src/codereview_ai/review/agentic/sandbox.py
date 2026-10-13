@@ -17,9 +17,11 @@ import asyncio
 import logging
 import shutil
 import tempfile
+import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from codereview_ai.domain.models import FileDiff, Finding, PullRequest, ReviewResult
 from codereview_ai.review.agentic.capture import set_phase
@@ -45,8 +47,11 @@ from codereview_ai.review.agentic.tools import (
     ToolState,
     finding_matches,
 )
-from codereview_ai.review.group_review import GROUPING_MIN_FILES
-from codereview_ai.review.grouping import SemanticGrouper
+from codereview_ai.review.grouping import (
+    GROUP_TOKEN_BUDGET_RATIO,
+    SemanticGrouper,
+    group_diffs,
+)
 
 logger = logging.getLogger("codereview_ai.agentic.sandbox")
 
@@ -213,15 +218,8 @@ def _fingerprint_dup(f: Finding, seen: list[Finding]) -> bool:
     return any(finding_matches(seen_f, f) for seen_f in seen)
 
 
-async def _group(diffs: list[FileDiff], grouper: SemanticGrouper | None) -> list[list[FileDiff]]:
-    """分组：大变更按语义分组，否则整组一次（与 review_in_groups 同规约，§7.5）。"""
-    if grouper is None or len(diffs) < GROUPING_MIN_FILES:
-        return [list(diffs)] if diffs else []
-    try:
-        groups = await grouper.group(diffs)
-    except Exception as exc:  # noqa: BLE001 —— 分组失败退整组，不阻断沙箱审查
-        raise SandboxDisabled(f"agentic 分组失败：{exc}") from exc
-    return groups or [list(diffs)]
+#: 全局预算（run_budget_seconds）下限：剩余不足此值的文件组不再开跑
+_MIN_GROUP_BUDGET_SECONDS = 30.0
 
 
 async def run_agentic_review(
@@ -234,7 +232,9 @@ async def run_agentic_review(
 ) -> ReviewResult:
     """按文件组各跑独立 agent 会话，收集 `code_comment` 为 `Finding(source="agent")`。
 
-    每组一个全新 `AgentLLM`（独立 trace_id，组间不共享记忆）；若干组共享同一只读
+    每组一个全新 `AgentLLM`（独立 trace_id，组间不共享记忆也不共享轮数/prompt 预算）；
+    分组形态由 `grouper` 决定（见 review/grouping.py，与 OCR groupDiffs 对齐）；
+    若干组共享同一只读
     工作区但各持独立会话。`pr` 供 clone 型运行时（`LocalCloneRuntime`/`DockerRuntime`）
     取 clone 地址与 head_sha；进程内 FakeRuntime 忽略之。任一步骤异常（含 agent 标记
     FAILED）**整体抛出**→ 主链降级为普通 diff 审查（DESIGN §12.4 B9，保证至少一条
@@ -242,19 +242,38 @@ async def run_agentic_review(
     """
     ctx = await runtime.start(pr, diffs)
     cfg = cfg or AgentConfig()
+    started = time.monotonic()
+    budget_skipped: list[list[FileDiff]] = []
     try:
-        groups = await _group(diffs, grouper)
+        # 分组与 diff 轨共用同一套 OCR 语义（见 review/grouping.py group_diffs）：
+        # 小改动整包一组 / ≥4 文件 LLM 语义分组 / LLM 不可用退 per-file。
+        groups = await group_diffs(
+            diffs, grouper,
+            group_token_budget=int(cfg.max_prompt_tokens * GROUP_TOKEN_BUDGET_RATIO),
+        )
         concurrency = max(1, cfg.group_concurrency)
         sem = asyncio.Semaphore(concurrency)
         # 全部 diff 的 path→FileDiff（含 new_file_content），供 re_location 跨文件唯一串搜
         #（只读共享，并发安全；`_norm_key` 语义 = `new_path.removeprefix("/")`）。
         file_diffs = {d.new_path.removeprefix("/"): d for d in diffs}
+        # 各组工具层留痕汇总（只增不改，供 ReviewResult.warnings 带出结果）。
+        warnings_acc: list[dict[str, Any]] = []
 
         # 每组独立走 OCR 阶段机：Plan → Main → re_location → review_filter。独立 LLM/trace、
         # 独立 ToolRunner/ToolState，可安全并发（只读 clone 工作区共享，仅去重寄存器是下文
         # merge 的共享可变状态，加锁守 check-append 原子性）。
         async def _run_one(g: list[FileDiff]) -> list[Finding]:
             async with sem:
+                # 全局预算（run_budget_seconds）：超预算不再开新组（已在跑的组不受影响），
+                # 未跑的组记 skipped；每组时长上限再收紧到「剩余预算」内。
+                group_cfg = cfg
+                if cfg.run_budget_seconds is not None:
+                    remaining = cfg.run_budget_seconds - (time.monotonic() - started)
+                    if remaining < _MIN_GROUP_BUDGET_SECONDS:
+                        budget_skipped.append(g)
+                        return []
+                    group_cfg = replace(
+                        cfg, max_time_seconds=min(cfg.max_time_seconds, remaining))
                 llm = llm_factory()
                 group_key = g[0].new_path if g else ""
                 runner = ToolRunner(
@@ -269,10 +288,10 @@ async def run_agentic_review(
                 # A. Plan（OCR PlanRequired 门控才跑，失败非致命）
                 set_phase("plan")
                 plan = ""
-                if cfg.plan_enabled and plan_required(
+                if group_cfg.plan_enabled and plan_required(
                     g,
-                    line_threshold=cfg.plan_line_threshold,
-                    group_line_threshold=cfg.plan_group_line_threshold,
+                    line_threshold=group_cfg.plan_line_threshold,
+                    group_line_threshold=group_cfg.plan_group_line_threshold,
                 ):
                     plan = await run_plan_phase(
                         llm, build_plan_messages(diffs=g, change_files=change_files))
@@ -280,16 +299,20 @@ async def run_agentic_review(
                 # B. Main loop（注入 plan/checklist，逐文件不跳过）
                 set_phase("main")
                 intro = build_main_task_intro(diffs=g, change_files=change_files, plan=plan)
-                turn = await run_agent_session(llm, runner, intro, cfg=cfg)
+                turn = await run_agent_session(llm, runner, intro, cfg=group_cfg)
+                # 工具层留痕（参数修复/整批或条目被丢）：无 await 的 list.extend 在
+                # asyncio 下不会被切走，无需加锁。
+                if runner.state.warnings:
+                    warnings_acc.extend(runner.state.warnings)
                 if turn.failed:
                     raise SandboxDisabled("agent 标记 FAILED，降级为普通 diff 审查")
 
                 # C. re_location 钉行阶梯（无行且带 existing_code 的意见重锚）
                 set_phase("re_location")
-                comments = await resolve_leaked_lines(turn.comments, file_diffs, llm, cfg)
+                comments = await resolve_leaked_lines(turn.comments, file_diffs, llm, group_cfg)
 
                 # D. review_filter 事实核查（只删 diff 铁证反驳的错评，存疑批过）
-                if cfg.review_filter_enabled:
+                if group_cfg.review_filter_enabled:
                     set_phase("review_filter")
                     comments = await run_review_filter(
                         llm, comments, group_diff_text=diff_text)
@@ -302,6 +325,13 @@ async def run_agentic_review(
         # 防同问题在多组/多轮/多会话重复上报（PR-Agent body_fp OR code_fp 护栏）。串行时
         # 无竞争；并发后去重寄存器是唯一共享可变状态，合并紧凑加锁守 check-append 原子性。
         result = ReviewResult()
+        result.warnings = warnings_acc
+        if budget_skipped:
+            skipped = sorted({d.new_path or d.old_path for g in budget_skipped for d in g})
+            logger.warning(
+                "全局预算（%.0fs）耗尽：跳过 %d 组 / %d 个文件，已得结果保留：%s",
+                cfg.run_budget_seconds or 0.0, len(budget_skipped), len(skipped), skipped[:8])
+            result.skipped_files = skipped
         merge_lock = asyncio.Lock()
 
         async def _merge(comments: list[Finding]) -> None:

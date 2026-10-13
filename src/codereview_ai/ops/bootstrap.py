@@ -188,6 +188,7 @@ async def ensure_worker_started(app: Any) -> bool:
                 agent_config = AgentConfig(
                     max_iterations=settings.agent_max_iterations,
                     max_time_seconds=settings.agent_max_time_seconds,
+                    run_budget_seconds=settings.agent_run_budget_seconds,
                     max_prompt_tokens=settings.agent_max_prompt_tokens,
                     group_concurrency=settings.agent_group_concurrency,
                     plan_enabled=settings.agent_plan_enabled,
@@ -214,7 +215,6 @@ async def ensure_worker_started(app: Any) -> bool:
                     base_url=agent_resolved.base_url,
                     max_tokens=agent_resolved.max_tokens,
                     temperature=agent_resolved.temperature,
-                    json_object=True,
                 )))
                 logger.info("agentic 审查已启用（clone 缓存：%s，轮数=%d）",
                             cache_root, settings.agent_max_iterations)

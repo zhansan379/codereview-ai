@@ -7,8 +7,10 @@ import pytest
 from codereview_ai.domain.models import Category, Severity
 from codereview_ai.review.fallback import FallbackLLMGateway, wrap_fallback
 from codereview_ai.review.llm_gateway import (
+    EXTRA_HEADERS_ENV,
     LLMError,
     LLMGateway,
+    parse_extra_headers,
     parse_review_json,
     repair_json,
     repair_json_array,
@@ -108,6 +110,60 @@ def test_gateway_empty_content_is_llm_error():
             await gw.complete([])
 
     asyncio.run(run())
+
+
+def test_parse_extra_headers_basic_and_quoted_comma():
+    """`k=v` 逗号分隔；双引号值内的逗号不拆（OCR_LLM_EXTRA_HEADERS 同格式）。"""
+    assert parse_extra_headers("") == {}
+    assert parse_extra_headers("x-opencode-session=abc") == {"x-opencode-session": "abc"}
+    assert parse_extra_headers(' A=1 , B="1,2" ,C= 3 ') == {"A": "1", "B": "1,2", "C": "3"}
+
+
+def test_parse_extra_headers_rejects_malformed():
+    """缺 `=` / 空键名是配置错误，直接抛（不静默丢弃成「缺头」的鉴权失败）。"""
+    for raw in ("noseparator", "=value"):
+        with pytest.raises(ValueError):
+            parse_extra_headers(raw)
+
+
+def test_gateway_litellm_backend_forwards_extra_headers(monkeypatch):
+    """env 设了 CR_LLM_EXTRA_HEADERS 时透传给 acompletion；未设不传该 kwarg。"""
+    import asyncio
+
+    captured: dict = {}
+
+    class _Msg:
+        content = "hi"
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    async def fake_acompletion(**kwargs):
+        captured.update(kwargs)
+        return _Resp()
+
+    monkeypatch.setattr("litellm.acompletion", fake_acompletion)
+    monkeypatch.setenv(EXTRA_HEADERS_ENV, "x-opencode-session=sess-1")
+
+    gw = LLMGateway(model="openai/gpt-4o-mini")
+
+    async def run():
+        return await gw.complete([{"role": "user", "content": "ping"}])
+
+    assert asyncio.run(run()) == "hi"
+    assert captured["extra_headers"] == {"x-opencode-session": "sess-1"}
+
+    captured.clear()
+    monkeypatch.delenv(EXTRA_HEADERS_ENV)
+
+    async def run_again():
+        return await gw.complete([{"role": "user", "content": "ping"}])
+
+    assert asyncio.run(run_again()) == "hi"
+    assert "extra_headers" not in captured
 
 
 def test_repair_json_strips_code_fence():

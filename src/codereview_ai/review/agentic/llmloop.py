@@ -79,9 +79,17 @@ class AgentLLM(Protocol):
 
 @dataclass
 class AgentConfig:
-    max_iterations: int = 20
-    max_prompt_tokens: int = 80_000
+    #: 会话预算默认值：与 `config/settings.py` 的同名项保持一致（两套默认值必须同步，
+    #: 否则「传了 Settings」与「只用 dataclass 默认」两条路径跑出不同深度）。
+    #: 这些取值来自 aacr-bench 实测 + 对齐 OCR 模板（MAX_TOOL_REQUEST_TIMES=100/下限 50、
+    #: MAX_TOKENS=200000、PLAN_MODE_*=50/100）：轮数 20 会在多文件组上频繁触发 grace
+    #: 收尾（实测 lvgl 样本 4 组里 3 组被截断、其中 2 组一条评论都没产出）。
+    max_iterations: int = 50
+    max_prompt_tokens: int = 200_000
     max_time_seconds: float = 300.0
+    #: 整次审查（全部文件组**累计**）时长预算（秒）；None=不限。超预算不再开新组、
+    #: 已跑组结果保留、未跑的组计入 `ReviewResult.skipped_files`（防大 PR 无限拖）。
+    run_budget_seconds: float | None = None
     max_empty_turns: int = 2
     #: 单次审查内，多个文件组**并发**跑的上限（sandbox.run_agentic_review 用有界
     #: asyncio.Semaphore 控制；4=同一时刻最多 4 组在飞，避免打爆 LLM 速率）。
@@ -93,9 +101,12 @@ class AgentConfig:
     relocation_enabled: bool = True
     review_filter_enabled: bool = True
     scoring_enabled: bool = True
-    #: plan 门控阈值（plan_required：单大文件 / 组 churn）。
-    plan_line_threshold: int = 300
-    plan_group_line_threshold: int = 600
+    #: plan 门控阈值（plan_required：单大文件 / 组 churn）。对齐 OCR 的
+    #: PLAN_MODE_LINE_THRESHOLD / PLAN_MODE_GROUP_LINE_THRESHOLD（50/100）：阈值定在
+    #: 300/600 时多文件组几乎不触发规划，agent 缺少「逐文件过一遍」的清单；
+    #: 实测降到 50/100 后同一条样本产出更多评论、总 token 反而下降 23%（少走弯路）。
+    plan_line_threshold: int = 50
+    plan_group_line_threshold: int = 100
     #: 主任务 system 提示词 = OCR main_task_system.md 全文（Role/Capabilities/Strict
     #: Focus Rules/Reply limit：逐文件不跳过、不改删代码、task_done 前确认每个 <file>
     #: 都过了一遍——对症"漏文件/只审第一条"）。

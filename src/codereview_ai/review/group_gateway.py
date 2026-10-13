@@ -14,6 +14,10 @@ from codereview_ai.review.agentic.capture import ACTIVE_RECORDER
 from codereview_ai.review.agentic.prompts import GROUPING_TASK_SYSTEM, GROUPING_TASK_USER
 from codereview_ai.review.llm_gateway import LLMGateway, repair_json_array
 
+#: 分组调用的输出上限：分组只回一个 JSON 数组（每组 {label, files}），4096 足够；
+#: 与 OCR callGroupingLLM 的 `if maxTokens <= 0 { maxTokens = 4096 }` 同值。
+DEFAULT_GROUPING_MAX_TOKENS = 4096
+
 
 class LLMGroupAdapter:
     """实现 `GroupLLM`：调一次 LLM 把变更文件按语义归成 ≤10 文件的组。

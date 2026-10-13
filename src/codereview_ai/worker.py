@@ -35,6 +35,7 @@ from codereview_ai.review.agentic.capture import (
 )
 from codereview_ai.review.agentic.llmloop import AgentConfig, AgentLLM
 from codereview_ai.review.agentic.sandbox import SandboxDisabled, SandboxRuntime, run_agentic_review
+from codereview_ai.review.file_scope import filter_review_scope
 from codereview_ai.review.group_review import review_in_groups
 from codereview_ai.review.grouping import SemanticGrouper
 from codereview_ai.review.increments import (
@@ -690,6 +691,13 @@ async def _do_review_pull_request(
         # 项目级文件扩展名过滤：只审命中的文件（DESIGN 文件扩展名过滤）
         if cfg and cfg.file_extensions:
             diffs = apply_extension_filter(diffs, cfg.file_extensions)
+        else:
+            # 未配自定义范围 → 应用与 OCR 相同的默认范围（扩展名白名单 + 测试/生成物/
+            # fixtures 排除）。项目显式配 file_extensions 视为自定义范围，不叠加默认规则。
+            diffs, scope_skipped = filter_review_scope(diffs)
+            if scope_skipped:
+                logger.info(
+                    "MR 默认审查范围跳过 %d 个文件：%s", len(scope_skipped), scope_skipped[:10])
         # 未变更文件复用：增量轮里内容哈希未变的文件不再喂 agent，直接复用上次
         #「已审过干净」的结果（省 token/时，对齐 OCR review_item_reused）。
         if (incremental and agent_reuse_enabled and review_repo is not None
@@ -1028,6 +1036,12 @@ async def _review_push_event(
         # 项目级文件扩展名过滤（DESIGN 文件扩展名过滤），push 轨同样生效（cfg 已在开头取）
         if cfg and cfg.file_extensions:
             diffs = apply_extension_filter(diffs, cfg.file_extensions)
+        else:
+            # 同 MR 轨：未配自定义范围 → 应用 OCR 同款默认范围过滤
+            diffs, scope_skipped = filter_review_scope(diffs)
+            if scope_skipped:
+                logger.info(
+                    "push 默认审查范围跳过 %d 个文件：%s", len(scope_skipped), scope_skipped[:10])
         if not diffs or _count_diff_lines(diffs) == 0:
             # 无待审文件 / 实变行数为 0（空 diff/重命名）→ 不调 LLM，审计行标 completed-empty
             if review_repo is not None:
