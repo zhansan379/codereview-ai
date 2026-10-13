@@ -1,4 +1,4 @@
-# <img width="24" height="24" alt="image" src="https://github.com/user-attachments/assets/d108c6ef-3293-4bf9-87fc-777cddebeac2" /> codereview-ai
+## <img width="24" height="24" alt="image" src="https://github.com/user-attachments/assets/d108c6ef-3293-4bf9-87fc-777cddebeac2" /> codereview-ai
 
 一个部署在你自己机器上的代码审查服务。在 GitHub / GitLab / Gitee 挂一个 webhook，之后每一个打开或更新的 PR / MR 都会被自动审查，意见以行级 inline 评论写回改动所在的那一行，同时推送到钉钉 / 飞书 / 企微。webhook 万一漏了事件，或者项目刚接入时已经有一批 PR 开着，后台可以主动补拉一轮把它们捞回来。配置、模型、项目、权限、统计都在自带的 Vue 管理后台里。
 
