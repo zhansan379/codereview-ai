@@ -1,11 +1,4 @@
 <div align="center">
-
-# codereview-ai
-
-**自托管的 AI 代码审查平台。Webhook 进来，行级评论回去。**
-
-<img alt="codereview-ai" src="./assets/banner.webp">
-
 <img alt="license: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-black">
 <img alt="python: 3.11+" src="https://img.shields.io/badge/python-3.11+-black">
 <img alt="stack: FastAPI + Vue 3" src="https://img.shields.io/badge/stack-FastAPI%20%2B%20Vue%203-black">
@@ -20,149 +13,64 @@
 
 一个部署在你自己机器上的代码审查服务。在 GitHub / GitLab / Gitee 挂一个 webhook，之后每一个打开或更新的 PR / MR 都会被自动审查，意见以行级 inline 评论写回改动所在的那一行，同时推送到钉钉 / 飞书 / 企微。webhook 万一漏了事件，或者项目刚接入时已经有一批 PR 开着，后台可以主动补拉一轮把它们捞回来。配置、模型、项目、权限、统计都在自带的 Vue 管理后台里。
 
-<img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/173bc789-b4a7-4a92-bcbe-e2d9a1ff8a9a" />
+分组 / 门控 / 预算闸门移植自 **open-code-review**（阿里巴巴），跨组去重沿用 **pr-agent** 的内容指纹，平台形态最接近 **AI-Codereview-Gitlab**。
 
-<img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/4b8a42f2-9348-4bfa-87ad-a32133c5e77f" />
+## 页面预览
 
-<img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/2bbc929b-1cb4-4914-8660-89a44d74007c" />
-
-<img width="1470" height="785" alt="image" src="https://github.com/user-attachments/assets/8b488eb4-f5e9-4711-8898-aaa634ed8776" />
-
-<img width="1367" height="684" alt="image" src="https://github.com/user-attachments/assets/8c356076-37d3-44b7-8022-0f826296cf42" />
-
-<img width="2560" height="1368" alt="image" src="https://github.com/user-attachments/assets/1878447e-93f5-42c5-aa88-849fea0b870f" />
+<table>
+  <tr>
+    <td align="center" width="50%"><b>仪表盘</b><br><sub>审查任务、问题分布、14 天趋势与成本</sub><br><img width="450" alt="仪表盘" src="https://github.com/user-attachments/assets/173bc789-b4a7-4a92-bcbe-e2d9a1ff8a9a"></td>
+    <td align="center" width="50%"><b>审查记录</b><br><sub>MR 汇总 / 明细，筛选、重试与导出</sub><br><img width="450" alt="审查记录" src="https://github.com/user-attachments/assets/4b8a42f2-9348-4bfa-87ad-a32133c5e77f"></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><b>审查详情</b><br><sub>总结 Markdown + 结构化 findings（严重度 / 行号 / 来源）</sub><br><img width="450" alt="审查详情" src="https://github.com/user-attachments/assets/2bbc929b-1cb4-4914-8660-89a44d74007c"></td>
+    <td align="center" width="50%"><b>行级 inline 评论</b><br><sub>意见回写到改动所在的那一行</sub><br><img width="450" alt="行级 inline 评论" src="https://github.com/user-attachments/assets/8b488eb4-f5e9-4711-8898-aaa634ed8776"></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><b>评分总结评论</b><br><sub>五维打分，总分与结论一次给全</sub><br><img width="450" alt="评分总结评论" src="https://github.com/user-attachments/assets/8c356076-37d3-44b7-8022-0f826296cf42"></td>
+    <td align="center" width="50%"><b>IM 日报推送</b><br><sub>钉钉 / 飞书 / 企微，任务与问题分布按日汇总</sub><br><img width="450" alt="IM 日报推送" src="https://github.com/user-attachments/assets/1878447e-93f5-42c5-aa88-849fea0b870f"></td>
+  </tr>
+</table>
 
 ## 功能一览
-
-<img alt="核心能力" src="./assets/features.webp">
 
 - **三平台 webhook 接入** — GitHub / GitLab / Gitee，PR / MR 打开或更新即自动审查；一套服务管多个项目，逐项目独立开关
 - **行级 inline 评论** — 意见回写到改动所在的那一行；模型只负责粘贴代码片段，行号由引擎按内容匹配钉出，幻觉行号进不了评论位置
 - **IM 推送** — 钉钉 / 飞书 / 企业微信机器人，审查完成即推，带 findings 明细与评分
 - **主动补拉** — webhook 漏事件、服务停机、接入前的存量 PR，手动一键或定时轮询补回；同 head 已审自动跳过
 - **三层审查管线** — LLM diff 审查 + 按需触发的 agentic 全仓推理 + 可选的 semgrep 静态分析，融合去重成一份意见
-- **两种审查模式** — `diff` 与 `agentic` 逐项目可选；agent 出任何岔子整条退回 diff，永远有一份可交付结论
 - **跨轮缓存** — 相邻轮次未变文件按内容哈希复用上一轮结论，高频 PR 省钱
-- **模型无关** — 经 LiteLLM 接任意厂商或自建中转，凭据 Fernet 加密落库，后台改完即时生效
 - **自托管管理后台** — 仪表盘、审查记录、项目管理、成员分析、提交分析、IM 通知与凭据配置，一个 Vue 3 后台全包
 - **私有化部署** — Docker 单容器 + SQLite 开箱即用，需要时切 PostgreSQL；代码不出内网
-
-## 为什么需要它
-
-做审查的方式上，它站在"确定性的工程 × 会翻仓库的 agent"这一档：**凡是能被工程确定性解决的问题，绝不让模型赌**。行号由引擎按代码片段纯字符串匹配钉出，模型报的行号伤不到评论位置；文件分组按硬上限切开、LLM 只做闭卷的分组判断；agent 探一圈仓库，出任何岔子整条退回 diff，绝不把 agent 的失败记成任务失败。
-
-这套基准不是凭空造的——哪些环节可以放手让模型发挥、哪些必须交给确定性的工程兜底，全靠对照这类项目找出来的。它的血统：diff / agent 双档与"模型不填行号、只粘片段"的锚定，直接移植自 **open-code-review**（阿里巴巴）的 grouping / plan 门控 / 预算闸门 / resolver；跨组去重用的内容指纹取自 **pr-agent** 的 *body_fp OR code_fp*；而"webhook 进来 → 异步队列 → 行级评论回写 + IM 推送 + 自托管后台"这个平台形态，最接近 **AI-Codereview-Gitlab**。
-
-## 工作方式
-
-Webhook 事件经 HMAC 验签后写入异步队列，立即返回 `202`，请求不等待审查。主动补拉走同一条队列——调平台 API 列出打开的 PR / MR，给未审过的落一条 `queued` 记录入队，同样立即返回。worker 池取出任务，把 diff 交给 LLM 审查层，按开关叠加 semgrep 与 agentic 全仓分析，三路结论融合去重。
-
-最终意见经 Forge API 回写为行级评论，同时落库供后台看板与日报使用。整条链路上没有外部服务参与调度。
-
-控制流的完整图谱（每个跳过与降级出口、agent 会话循环、组内四阶段的失败语义）见 [Agent 工作流图](docs/agentic_workflow.md)——图里带代码行号，随代码改动同步更新。
 
 ## 两种审查模式
 
 两条路径共用同一个队列、同一套回写与统计，区别只在**模型能看到多少东西**。每个项目在后台单独选，默认 `diff`；`agentic` 另需全局打开 `CR_AGENT_REVIEW_ENABLED`。
 
-<img width="1785" height="717" alt="image" src="https://github.com/user-attachments/assets/91b18b28-5442-422e-b0d0-0d332e7d30a4" />
-
-<img width="1160" height="1057" alt="image" src="https://github.com/user-attachments/assets/4f42c8f9-e7a9-4b2f-8ac2-d26c4956f46a" />
-
-<img width="1160" height="923" alt="image" src="https://github.com/user-attachments/assets/b4fb959b-0a8f-49f8-bf81-6f97119b112b" />
-
+- **`diff` — 只喂 diff**：按文件分组并发审查，行号由引擎按代码片段纯字符串匹配钉出，确定性合并去重。便宜、确定、快。
+- **`agentic` — 只读沙箱里自己读仓库**：每文件组一个独立会话，多轮工具循环（read / grep / find / diff）跨文件追上下文，记忆压缩、预算触顶切 grace 收尾。更贵、更慢、理解更深。
 
 ## 快速开始
 
-### 方式一：拉取官方镜像，免克隆（推荐）
+三条路线任选，装完后的配置步骤都一样：
 
-镜像发布在 GitHub Container Registry，准备一个空目录，两步起服务（命令在 bash 与 PowerShell 中均可直接执行）：
+- **官方镜像**（推荐）—— 免克隆，两步起服务，宿主机只要 Docker
+- **克隆仓库本地构建** —— 要改代码、自己构建镜像
+- **Windows 桌面单机版** —— 一个 exe，免 Docker 免 Python
 
-```bash
-mkdir codereview-ai && cd codereview-ai
+起服务后打开 `http://localhost:5001/admin` 登录后台，配置模型与平台，然后在 GitHub / GitLab / Gitee 添加 webhook 指向 `POST http://<你的主机>:5001/webhook`，打开一个 PR 即可看到审查评论。
 
-# 1) 生成四枚密钥：直接借用官方镜像里的 Python，宿主机什么都不用装
-docker run --rm ghcr.io/zhansan379/codereview-ai:latest python -c "
-import os, base64, secrets
-print('CR_SECRET_KEY=' + secrets.token_urlsafe(48))
-print('CR_WEBHOOK_SECRET=' + secrets.token_urlsafe(48))
-print('CR_ENCRYPTION_KEY=' + base64.urlsafe_b64encode(os.urandom(32)).decode())
-print('CR_ADMIN_PASSWORD=' + secrets.token_urlsafe(24))
-"
-```
+完整步骤（密钥生成、源码运行、开发与质量门槛）见 [安装与快速开始](docs/how_use_install.md)。
 
-把终端输出的四行存成当前目录的 `.env` 文件（密码行可当场换成你自己的登录密码；任意文本编辑器均可，注意别存成 `.env.txt`）：
+## 文档
 
-```ini
-CR_SECRET_KEY=<粘贴第 1 行>
-CR_WEBHOOK_SECRET=<粘贴第 2 行>
-CR_ENCRYPTION_KEY=<粘贴第 3 行>
-CR_ADMIN_PASSWORD=<粘贴第 4 行，或换成你自己的密码>
-```
-
-```bash
-# 2) 起容器（单行命令，任何 shell 通用）
-docker run -d --name codereview-ai -p 5001:5001 --env-file .env -v codereview-ai-data:/app/data ghcr.io/zhansan379/codereview-ai:latest
-```
-
-浏览器打开 http://localhost:5001/admin，用 `CR_ADMIN_PASSWORD` 登录。
-
-默认使用 SQLite，数据持久化在 `codereview-ai-data` 卷里；需要 PostgreSQL（standard 档）见[教程](docs/how_use_postgres.md)。
-
-> 注意：重新生成 `CR_ENCRYPTION_KEY` 后，数据库里已保存的平台凭据（token 等）会解不开，需要在后台重新配置一遍。
-
-### 方式二：克隆仓库，本地构建
-
-```bash
-git clone https://github.com/zhansan379/codereview-ai.git
-cd codereview-ai
-
-# 备份模板：完整环境变量清单 + 双语注解，常用的直接放开，不用的保持注释
-cp .env.example .env
-
-# 或手动写：四个密钥没有默认值，缺失即 fail-fast 退出
-cat > .env <<'EOF'
-CR_SECRET_KEY=<用下面的命令生成>
-CR_WEBHOOK_SECRET=<用下面的命令生成>
-CR_ENCRYPTION_KEY=<用下面的命令生成>
-CR_ADMIN_PASSWORD=<用下面的命令生成>
-EOF
-
-# 前端构建一次（dist 被 gitignore，镜像 COPY 用，缺了 build 必失败）
-cd frontend && npm install && npm run build && cd ..
-
-docker compose up -d
-open http://localhost:5001/admin
-```
-
-生成密钥：
-
-```bash
-python -c 'import secrets;print(secrets.token_urlsafe(48))'      # SECRET_KEY / WEBHOOK_SECRET
-python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())'  # ENCRYPTION_KEY
-python -c 'import secrets;print(secrets.token_urlsafe(24))'                          # ADMIN_PASSWORD
-```
-
-> `CR_ENCRYPTION_KEY` 必须是合法的 32 字节 urlsafe-base64 Fernet 密钥，不能用 `secrets.token_urlsafe` 顶替。
-
-### 方式三：Windows 桌面单机版（exe，免 Docker 免 Python）
-
-不装 Docker 也不装 Python：从 [GitHub Release](https://github.com/zhansan379/codereview-ai/releases/latest) 下载 `codereview-ai-windows-x64.zip`，解压到任意目录，双击 `codereview-ai.exe` 即用。
-
-- 首次启动自动生成四枚密钥写入数据目录的 `.env`，并在控制台打印**后台登录密码**；浏览器自动打开 `http://127.0.0.1:5001/admin/`
-- 控制台窗口保持开着（关窗 = 停止服务）；数据存在 exe 旁（便携模式）或 `%LOCALAPPDATA%\codereview-ai`，控制台会打印实际位置
-- 功能与 Docker 版一致，ruff 静态检查随包附带；需要 semgrep 时机器上 `pip install semgrep` 即可
-- 接收跨机 webhook 回调要加 `--host 0.0.0.0`；常用参数、升级与卸载见[桌面版教程](docs/how_use_desktop.md)
-
-后台登录后配置模型与平台，然后在 GitHub / GitLab / Gitee 添加 webhook 指向 `POST http://<你的主机>:5001/webhook`，打开一个 PR 即可看到审查评论。
-
-详细教程：
-
+- [安装与快速开始](docs/how_use_install.md)
 - [GitHub 接入教程](docs/how_use_github.md)
 - [Gitee 接入教程](docs/how_use_gitee.md)
 - [主动补拉（轮询轨）](docs/how_use_poll.md)
-- [部署到阿里云 ECS（GitHub Actions 自动部署）](docs/how_use_deploy_aliyun.md)
 - [使用 PostgreSQL 存储（standard 档）](docs/how_use_postgres.md)
+- [部署到阿里云 ECS（GitHub Actions 自动部署）](docs/how_use_deploy_aliyun.md)
+- [Agent 工作流图](docs/agentic_workflow.md)
 
 IM 通道配置参考：
 
@@ -170,46 +78,13 @@ IM 通道配置参考：
 - [飞书：自定义机器人使用指南](https://open.feishu.cn/document/uktmuktmuktm/uctm5yjl3eto24ynxkjn)
 - [企业微信群机器人获取 Webhook](https://www.tencentcloud.com/zh/document/product/1254/78645)
 
-## 安装
-
-不用 Docker 的话：
-
-```bash
-uv sync
-uv run uvicorn codereview_ai.main:app --host 0.0.0.0 --port 5001
-```
-
-管理后台在 `/admin`，交互式 API 文档在 `/docs`（`CR_OPENAPI_ENABLED=0` 可关闭），健康检查在 `/health`。
-
-前端构建（`/admin` 托管 `frontend/dist`，Docker 镜像也会 COPY 它；改前端代码后重新执行）：
-
-```bash
-cd frontend && npm install && npm run build   # 产物输出到 frontend/dist
-```
-
-Docker 部署：改完代码重建本地镜像并重启 `docker compose build && docker compose up -d`；只想用官方镜像的话 `docker compose pull && docker compose up -d`。
-
-开发与质量门槛：
-
-```bash
-uv run ruff check src tests
-uv run mypy src
-uv run pytest tests --cov=codereview_ai --cov-fail-under=70
-```
-
-覆盖率总门槛 70%，核心模块（`forges` / `review` / `worker` / `queue` / `storage`）83%；CI 另跑 `pip-audit`。
-
-完整配置项（`CR_` 前缀）与 API 清单见 `/docs` 与 `GET /openapi.json`。
-
 ## 路线图
-
-接下来计划推进的部分，按优先级排序。
 
 **优先做**
 
-- [ ] **AI 助手反馈闭环（MCP）** — 让提交者的 AI 编程助手（Claude Code / Cursor / Codex CLI）在 push 后自动取审查结果并修复，形成「push → 等审查 → 取 findings → 修 critical/high → 再 push」的闭环。分四步走：项目级 API token 鉴权（现有 API 全是 admin UI 的 JWT 会话，外部工具用不了）→ `wait_for_review` / `get_findings` 查询接口（审查是异步的，wait 语义是关键）→ 挂成 streamable HTTP MCP Server → 设置页一键生成 AGENTS.md 片段让助手知道主动用；另附 CLI 薄壳（`cra check --pr <url>`）给不支持 MCP 的场景与 git hook / CI 用。`ReviewFinding` 已是结构化数据（file / line / severity / suggestion / fingerprint），缺的只是对外的 token 化通道。
-- [ ] **项目级规则引擎** — 按 `path` / glob 注入追加规则、首个匹配者胜，让审查策略能逐目录逐文件配置。数据层已就位（`ProjectRule` 表带 `path_glob` / `priority` / `system_merge`），但全树尚无引用：缺仓储层、管理接口，以及审查时的规则匹配与 prompt 注入。
-- [ ] **平台原生 suggestion 建议块** — 把已经拿到的 `suggestion_code` 渲染成 GitHub 的 `suggestion` 代码围栏（多行用 `start_line`），让建议能在 diff 上一键 Apply，而不是只能读。
+- [ ] **AI 助手反馈闭环（MCP）** — 让提交者的 AI 编程助手（Claude Code / Cursor / Codex CLI）在 push 后自动取审查结果并修复，形成「push → 等审查 → 取 findings → 修 critical/high → 再 push」的闭环。分四步：项目级 API token 鉴权 → `wait_for_review` / `get_findings` 查询接口（审查异步，wait 语义是关键）→ 挂成 streamable HTTP MCP Server → 设置页一键生成 AGENTS.md 片段；另附 CLI 薄壳（`cra check --pr <url>`）给不支持 MCP 的场景与 git hook / CI 用。
+- [ ] **项目级规则引擎** — 按 `path` / glob 注入追加规则、首个匹配者胜。数据层已就位（`ProjectRule` 表带 `path_glob` / `priority` / `system_merge`），缺仓储层、管理接口与审查时的规则匹配和 prompt 注入。
+- [ ] **平台原生 suggestion 建议块** — 把已经拿到的 `suggestion_code` 渲染成 GitHub 的 `suggestion` 代码围栏（多行用 `start_line`），让建议能在 diff 上一键 Apply。
 - [ ] **四种审查风格** — 专业 / 毒舌 / 绅士 / 幽默，只影响措辞不影响评分。配置入口与字段都在，缺各风格的 prompt 预设。
 - [ ] **standard 队列档** — Redis + arq 支撑多实例部署。存储层已打通 PostgreSQL（见[教程](docs/how_use_postgres.md)）；队列仍是单机 asyncio 后端、接口已抽象好，未打通。（单机 simple 档当前完全够用。）
 

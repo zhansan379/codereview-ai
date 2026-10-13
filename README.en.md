@@ -4,8 +4,6 @@
 
 **Self-hosted AI code review. Webhook in, inline comments out.**
 
-<img alt="codereview-ai" src="./assets/banner.webp">
-
 <img alt="license: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-black">
 <img alt="python: 3.11+" src="https://img.shields.io/badge/python-3.11+-black">
 <img alt="stack: FastAPI + Vue 3" src="https://img.shields.io/badge/stack-FastAPI%20%2B%20Vue%203-black">
@@ -20,149 +18,64 @@
 
 A code review service that runs on your own machine. Point a webhook at it from GitHub, GitLab or Gitee, and every PR / MR that opens or updates gets reviewed automatically — findings land as inline comments on the exact changed lines, and get pushed to DingTalk / Feishu / WeCom. If a webhook never arrives, or a batch of PRs was already open when you onboarded the project, the admin panel can sweep the platform and pull them in. Models, projects, permissions and stats are all configured from the bundled Vue admin panel.
 
-## Features
+Grouping / gates / budget caps are ported from **open-code-review** (Alibaba), cross-group de-duplication follows **pr-agent**'s content fingerprint, and the platform shape is closest to **AI-Codereview-Gitlab**.
 
-<img alt="Core capabilities" src="./assets/features.webp">
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="50%"><b>Dashboard</b><br><sub>review jobs, issue mix, 14-day trend and cost</sub><br><img width="450" alt="Dashboard" src="https://github.com/user-attachments/assets/173bc789-b4a7-4a92-bcbe-e2d9a1ff8a9a"></td>
+    <td align="center" width="50%"><b>Review records</b><br><sub>per-PR rollup and per-job detail, filters, retry, export</sub><br><img width="450" alt="Review records" src="https://github.com/user-attachments/assets/4b8a42f2-9348-4bfa-87ad-a32133c5e77f"></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><b>Review detail</b><br><sub>Markdown summary + structured findings (severity / line / source)</sub><br><img width="450" alt="Review detail" src="https://github.com/user-attachments/assets/2bbc929b-1cb4-4914-8660-89a44d74007c"></td>
+    <td align="center" width="50%"><b>Inline comments</b><br><sub>findings pinned to the exact changed line</sub><br><img width="450" alt="Inline comments" src="https://github.com/user-attachments/assets/8b488eb4-f5e9-4711-8898-aaa634ed8776"></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><b>Score summary</b><br><sub>five-dimension scorecard with the verdict</sub><br><img width="450" alt="Score summary" src="https://github.com/user-attachments/assets/8c356076-37d3-44b7-8022-0f826296cf42"></td>
+    <td align="center" width="50%"><b>IM daily report</b><br><sub>DingTalk / Feishu / WeCom, jobs and issue mix per day</sub><br><img width="450" alt="IM daily report" src="https://github.com/user-attachments/assets/1878447e-93f5-42c5-aa88-849fea0b870f"></td>
+  </tr>
+</table>
+
+## Features
 
 - **Three forges via webhook** — GitHub / GitLab / Gitee; every PR / MR that opens or updates is reviewed automatically. One service runs many projects, each with its own switches.
 - **Inline comments on the changed line** — the model only pastes a code snippet and the engine pins the line by content matching; a hallucinated line number never lands a comment.
 - **IM push** — DingTalk / Feishu / WeCom robots; a push with findings detail and the score the moment a review finishes.
 - **Backfill** — missed webhooks, downtime, PRs opened before onboarding: pull them back by hand or on a schedule; heads already reviewed are skipped.
 - **Three-layer pipeline** — LLM diff review + on-demand agentic whole-repo reasoning + optional semgrep static analysis, fused and de-duplicated into one set of findings.
-- **Two review modes** — `diff` and `agentic`, picked per project; any agent failure drops the whole review back to diff, so there is always a deliverable conclusion.
 - **No paying twice across rounds** — unchanged files between adjacent rounds are reused by content hash, saving money on high-frequency PRs.
-- **Model-agnostic** — any provider or self-hosted relay through LiteLLM; credentials are Fernet-encrypted at rest and hot-reload the moment you save them.
 - **Self-hosted admin panel** — dashboard, review records, projects, member & commit analytics, notifier and credential config, all in one Vue 3 app.
 - **Private deployment** — one Docker container + SQLite out of the box, PostgreSQL when you need it; your code never leaves the network.
-
-## Why it exists
-
-For how it reviews, it sits on the "**deterministic engineering × an agent that goes read the repo**" axis: *anything the engineering can decide for certain, the model never has to gamble on.* Line numbers are pinned by the engine with pure string matching over the code snippet the model pastes back, so a hallucinated line number cannot push a comment off-target. File grouping is cut to hard ceilings and the LLM only makes a closed-book grouping judgment. If the agent goes exploring and anything at all goes sideways, the whole review drops back to diff — an agent failure is never recorded as a task failure.
-
-That baseline wasn't built from nothing — which parts can safely be left to the model and which must be shored up by deterministic engineering came from studying this exact family of tools. Its lineage: the diff / agent dual-tracks and the "model pastes a snippet, never a line number" anchoring are ported straight from **open-code-review** (Alibaba) — its grouping / plan gate / budget gate / resolver; the cross-group content-fingerprint de-dup follows **pr-agent**'s *body_fp OR code_fp*; and the "webhook in → async queue → inline write-back + IM push + self-hosted admin" platform shape is closest to **AI-Codereview-Gitlab**.
-
-## How it works
-
-Webhook events are HMAC-verified, written to an async queue, and answered `202` — the request never waits on a review. Polling uses the same queue: it calls the platform API to list open PRs / MRs, records a `queued` row for each one not yet reviewed, and returns just as fast. The worker pool picks the task up, hands the diff to the LLM review layer, and layers semgrep and agentic whole-repo analysis on top depending on your switches, then fuses and de-duplicates the three sets of findings.
-
-The result is written back through the forge API as inline comments and persisted for the admin dashboards and the daily report. Nothing external takes part in scheduling.
-
-The full control-flow map — every skip and degradation exit, the agent session loop, and the failure semantics of each in-group phase — lives in [Agent workflow diagram](docs/agentic_workflow.md) (Chinese). Its nodes carry source line references and are kept in sync with the code.
 
 ## Two review modes
 
 Both paths share the same queue, the same write-back and the same stats. The only difference is **how much the model gets to see**. Each project picks its own, `diff` by default; `agentic` additionally needs `CR_AGENT_REVIEW_ENABLED` on globally.
 
-### diff — read only what changed
-
-The diff is reviewed as-is, without touching the repository. Files are grouped first: small changes (few files and low total churn) are lazily bundled into one group; larger ones buy one cheap "paths and line counts only" call for semantic clustering that pulls related files together (degrading to one file per group on failure), and the result is then cut to hard ceilings (≤10 files, ≤1000 churn lines per group). Groups are reviewed concurrently, and findings are merged and de-duplicated on a content fingerprint of file plus finding text.
-
-The load-bearing convention here is that **the model never reports line numbers** — the prompt asks it to paste the offending code back verbatim, and the engine anchors it: a consecutive match inside the diff hunks first (new side, then old), then a fallback scan of the whole new file, and only then a search across other files — where a *unique* hit is required, because two hits means guessing. A hallucinated line number therefore cannot land a comment in the wrong place. Findings that can't be anchored, or anchor outside a commentable hunk, are never dropped; they fold into the summary comment. Files over 600 changed lines or 20 KB of diff are skipped, and the skip list goes into the summary too rather than vanishing.
-
-### agentic — go read the repo, with tools
-
-A signature that changed while a caller didn't, a state assumption that spans files — the diff alone can't show you those, so the model has to read the repository itself. Once enabled, the agent gets six **read-only** tools: read a line range (≤500 lines), fixed-string `git grep` (≤100 hits), find files by name, read the parsed diff, submit findings, end the session. No shell, no network, no writes.
-
-The repository is one **bare clone** per repo (incrementally fetched under a cross-platform file lock, in whatever cache directory you configured), and every read goes through `git cat-file blob <head sha>:<path>` — there is no working tree to escape, and two PRs can't knock over each other's checkout. Sessions run per file group, each with its own context, capped at 20 turns / 300 seconds / 80k prompt tokens. Running out doesn't just stop the session: a grace round is injected with only "submit findings" and "finish" available, forcing the model to hand over what it has. Context compaction starts in the background at 60% and synchronously at 80%, and a failed compaction returns the messages untouched rather than truncating them into half a JSON object.
-
-The full per-group pipeline: a plan for large changes first (triggered only at ≥300 churn lines in one file, or ≥600 across the group) → the main loop reading code → re-anchoring for findings with no line (deterministic match → unique cross-file match → let the model re-pick the snippet) → a fact check that deletes findings the diff provably contradicts (the only stage that removes anything) → cross-group de-duplication → one 0-100 score. Every LLM call is persisted with its stage, so the admin panel can replay the whole exchange as swim lanes.
-
-### Anything goes wrong, it falls back to diff
-
-Sandbox off, `git` not on PATH, clone unreachable, target commit not fetchable, grouping failed, the agent reporting FAILED itself — any of these drops the whole review back to plain diff review rather than turning an agent failure into a task-level `failed`. An agent that submits nothing at all on a non-trivial diff gets the same treatment: an empty success is never accepted as a conclusion. What's recorded is the path that **actually ran**, so Agent-vs-diff on the dashboard is honest accounting.
+- **`diff` — the diff only**: files are grouped and reviewed concurrently; line numbers are pinned by the engine with pure string matching over the pasted snippet, and results are merged deterministically. Cheap, certain, fast.
+- **`agentic` — read the repo yourself, in a read-only sandbox**: one session per file group, a multi-turn tool loop (read / grep / find / diff) chasing context across files, context compaction, and a grace round when a budget is hit. Pricier, slower, deeper.
 
 ## Quick start
 
-### Option 1: Pull the official image — no clone needed (recommended)
+Three paths, pick one — the setup steps afterwards are the same:
 
-The image is published on GitHub Container Registry. Grab an empty directory and bring the service up in two steps (commands work in both bash and PowerShell):
+- **Official image** (recommended) — no clone, two steps, all you need is Docker
+- **Clone and build locally** — for changing the code
+- **Windows desktop edition** — a single exe, no Docker, no Python
 
-```bash
-mkdir codereview-ai && cd codereview-ai
+Open `http://localhost:5001/admin`, sign in, configure a model and a forge, then point a webhook at `POST http://<your-host>:5001/webhook` and open a PR.
 
-# 1) Generate the four secrets: borrow the Python inside the official image — nothing to install on the host
-docker run --rm ghcr.io/zhansan379/codereview-ai:latest python -c "
-import os, base64, secrets
-print('CR_SECRET_KEY=' + secrets.token_urlsafe(48))
-print('CR_WEBHOOK_SECRET=' + secrets.token_urlsafe(48))
-print('CR_ENCRYPTION_KEY=' + base64.urlsafe_b64encode(os.urandom(32)).decode())
-print('CR_ADMIN_PASSWORD=' + secrets.token_urlsafe(24))
-"
-```
+Full steps — secret generation, running from source, dev and quality gates — are in [Install & quick start](docs/how_use_install.md) (Chinese).
 
-Save the four printed lines as `.env` in the current directory (replace the password line with your own login password if you like; any text editor works — just don't end up with `.env.txt`):
+## Docs
 
-```ini
-CR_SECRET_KEY=<paste line 1>
-CR_WEBHOOK_SECRET=<paste line 2>
-CR_ENCRYPTION_KEY=<paste line 3>
-CR_ADMIN_PASSWORD=<paste line 4, or your own password>
-```
-
-```bash
-# 2) Start the container (single line — works in any shell)
-docker run -d --name codereview-ai -p 5001:5001 --env-file .env -v codereview-ai-data:/app/data ghcr.io/zhansan379/codereview-ai:latest
-```
-
-Open http://localhost:5001/admin in a browser and sign in with `CR_ADMIN_PASSWORD`.
-
-SQLite is the default; data persists in the `codereview-ai-data` volume. For PostgreSQL (standard tier), see the [guide](docs/how_use_postgres.md).
-
-> Heads-up: regenerating `CR_ENCRYPTION_KEY` makes the platform credentials (tokens, etc.) already stored in the database undecryptable — you'll need to re-enter them in the admin panel.
-
-### Option 2: Clone the repo and build locally
-
-```bash
-git clone https://github.com/zhansan379/codereview-ai.git
-cd codereview-ai
-
-# Start from the annotated template: every env var + zh/en notes,
-# common ones enabled, uncommon ones commented out
-cp .env.example .env
-
-# Or write it by hand — these four secrets have no defaults, the app fail-fasts without them
-cat > .env <<'EOF'
-CR_SECRET_KEY=<generate with the commands below>
-CR_WEBHOOK_SECRET=<generate with the commands below>
-CR_ENCRYPTION_KEY=<generate with the commands below>
-CR_ADMIN_PASSWORD=<generate with the commands below>
-EOF
-
-# Build the frontend once (dist/ is gitignored; the image COPYs it — the build fails without it)
-cd frontend && npm install && npm run build && cd ..
-
-docker compose up -d
-open http://localhost:5001/admin
-```
-
-Generating them:
-
-```bash
-python -c 'import secrets;print(secrets.token_urlsafe(48))'                          # SECRET_KEY / WEBHOOK_SECRET
-python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())'  # ENCRYPTION_KEY
-python -c 'import secrets;print(secrets.token_urlsafe(24))'                          # ADMIN_PASSWORD
-```
-
-> `CR_ENCRYPTION_KEY` must be a valid 32-byte urlsafe-base64 Fernet key — `secrets.token_urlsafe` will not do.
-
-### Option 3: Windows desktop edition (exe — no Docker, no Python)
-
-No Docker, no Python: download `codereview-ai-windows-x64.zip` from [GitHub Releases](https://github.com/zhansan379/codereview-ai/releases/latest), unzip it anywhere, and double-click `codereview-ai.exe`.
-
-- On first launch the four secrets are generated into the data directory's `.env`, and the **admin login password** is printed to the console; the browser opens `http://127.0.0.1:5001/admin/` automatically.
-- Keep the console window open (closing it stops the service); data lives next to the exe (portable mode) or in `%LOCALAPPDATA%\codereview-ai` — the console prints which one.
-- Feature parity with the Docker edition; ruff ships in the package, and semgrep can be added later with `pip install semgrep`.
-- Cross-machine webhook callbacks need `--host 0.0.0.0`; flags, upgrade and uninstall are covered in the [desktop guide](docs/how_use_desktop.md).
-
-Sign in, configure a model and a forge, then add a webhook pointing at `POST http://<your-host>:5001/webhook` and open a PR.
-
-Docs:
-
+- [Install & quick start](docs/how_use_install.md) (Chinese)
 - [GitHub onboarding guide](docs/how_use_github.md)
 - [Gitee onboarding guide](docs/how_use_gitee.md)
 - [Scheduled pull (backfill)](docs/how_use_poll.md)
-- [Deploy to your own Aliyun ECS (GitHub Actions CI/CD)](docs/how_use_deploy_aliyun.md)
 - [Use PostgreSQL storage (standard tier)](docs/how_use_postgres.md)
+- [Deploy to your own Aliyun ECS (GitHub Actions CI/CD)](docs/how_use_deploy_aliyun.md)
+- [Agent workflow diagram](docs/agentic_workflow.md) (Chinese)
 
 IM robot setup (Chinese):
 
@@ -170,44 +83,14 @@ IM robot setup (Chinese):
 - [Feishu: custom robot guide](https://open.feishu.cn/document/uktmuktmuktm/uctm5yjl3eto24ynxkjn)
 - [WeCom group robot webhook](https://www.tencentcloud.com/zh/document/product/1254/78645)
 
-## Install
-
-Without Docker:
-
-```bash
-uv sync
-uv run uvicorn codereview_ai.main:app --host 0.0.0.0 --port 5001
-```
-
-The admin panel is at `/admin`, interactive API docs at `/docs` (`CR_OPENAPI_ENABLED=0` turns them off), health probe at `/health`.
-
-Frontend build (`/admin` serves `frontend/dist`, and the Docker image COPYs it; re-run after changing frontend code):
-
-```bash
-cd frontend && npm install && npm run build   # output goes to frontend/dist
-```
-
-For Docker deploys: after code changes rebuild the local image and restart with `docker compose build && docker compose up -d`, or stick to the official image with `docker compose pull && docker compose up -d`.
-
-Development and quality gates:
-
-```bash
-uv run ruff check src tests
-uv run mypy src
-uv run pytest tests --cov=codereview_ai --cov-fail-under=70
-```
-
-Coverage gate is 70% overall and 83% for the core modules (`forges` / `review` / `worker` / `queue` / `storage`); CI also runs `pip-audit`.
-
-Full configuration reference and API surface live in `/docs`.
-
 ## Roadmap
 
 What is planned next, in priority order.
 
 **Doing next**
 
-- [ ] **Project-level rule engine** — inject additional review rules matched by `path` / glob, first match wins, so review policy can be configured per directory and per file. The schema is already in place (the `ProjectRule` table carries `path_glob` / `priority` / `system_merge`) but nothing references it yet: it needs a repository layer, an admin API, and the match-and-inject step at review time.
+- [ ] **MCP feedback loop** — let the author's AI coding assistant (Claude Code / Cursor / Codex CLI) fetch findings after a push and fix them, closing the "push → wait for review → fetch findings → fix critical/high → push again" loop. Four steps: project-level API tokens → `wait_for_review` / `get_findings` endpoints (reviews are async, so wait semantics are the crux) → streamable HTTP MCP server → one-click AGENTS.md snippet from the settings page; plus a thin CLI shell (`cra check --pr <url>`) for setups without MCP and for git hooks / CI.
+- [ ] **Project-level rule engine** — inject additional review rules matched by `path` / glob, first match wins. The schema is already in place (the `ProjectRule` table carries `path_glob` / `priority` / `system_merge`) but nothing references it yet: it needs a repository layer, an admin API, and the match-and-inject step at review time.
 - [ ] **Native suggestion blocks** — render the `suggestion_code` we already capture as GitHub `suggestion` fences (`start_line` for multi-line) so a fix can be applied from the diff in one click instead of only read.
 - [ ] **Four review voices** — professional / sarcastic / gentle / humorous, wording only, never the score. The config field and plumbing exist; the per-voice prompt presets do not.
 - [ ] **standard queue tier** — Redis + arq for multi-instance deployments. Storage is wired to PostgreSQL already (see [tutorial](docs/how_use_postgres.md)); the queue still runs the single-node asyncio backend with the interface abstracted, not wired. (The single-node simple tier is entirely sufficient for now.)
@@ -217,6 +100,7 @@ What is planned next, in priority order.
 - [ ] More platforms — Gitea adapter (Gitee is already supported: webhook + scheduled pull, see the [Gitee guide](docs/how_use_gitee.md)); webhook IP allowlist as a second line of defense behind signature verification
 - [ ] Deeper context — repo knowledge base (retrieve team conventions and past findings into the prompt), diff-less whole-file audits, `@bot` follow-up questions from developers
 - [ ] More outputs — generic webhook and email notifiers, weekly / monthly reports, HTML report export (currently xlsx)
+- [ ] **Full-auto fix loop** — once a review finishes, launch a headless agent (`claude -p` / `codex exec`) with the findings, open a PR only (never push directly) and trigger a re-review; per-project off-by-default switch, critical/high only. Depends on the MCP loop landing first.
 - [ ] Admin polish — standalone task board, dark mode, zh/en i18n
 
 ## License

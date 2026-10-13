@@ -2,7 +2,7 @@ name: Desktop
 
 # 桌面单机版（Windows exe）：前端产物 + PyInstaller onedir → zip 挂 GitHub Release。
 # 包体积大（litellm 动态 import 全收），仅 tag 与手动触发时构建，main 推送不出包。
-# 产物：codereview-ai-windows-x64.zip，解压双击 codereview-ai.exe（用法见 docs/how_use_desktop.md）。
+# 产物：codereview-ai-windows-x64.zip，解压双击 codereview-ai.exe（安装见 docs/how_use_install.md 方式三）。
 
 on:
   push:
