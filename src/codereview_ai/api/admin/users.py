@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -99,7 +100,9 @@ async def create_user(body: UserCreate, session: AsyncSession = Depends(get_db))
     role = (await session.execute(select(Role).where(Role.id == body.role_id))).scalar_one_or_none()
     if role is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "角色不存在")
-    row = User(username=username, password_hash=hash_password(body.password),
+    # scrypt 同步且 CPU 密集，丢线程池避免阻塞事件循环
+    password_hash = await asyncio.to_thread(hash_password, body.password)
+    row = User(username=username, password_hash=password_hash,
                display_name=body.display_name, enabled=body.enabled, role_id=role.id)
     session.add(row)
     try:
@@ -160,7 +163,7 @@ async def reset_password(
     row = await _get_or_404(session, user_id)
     if not reset_meets_policy(body.password):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "密码至少 8 位")
-    row.password_hash = hash_password(body.password)
+    row.password_hash = await asyncio.to_thread(hash_password, body.password)
     await session.commit()
     await session.refresh(row)
     return _to_out(row)

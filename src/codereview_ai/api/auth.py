@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -84,7 +85,10 @@ async def login(
         .where(User.username == body.username.strip())
         .options(selectinload(User.role).selectinload(Role.permissions))
     )).scalar_one_or_none()
-    if user is None or not user.enabled or not verify_password(body.password, user.password_hash):
+    if user is None or not user.enabled:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户名或口令错误")
+    # scrypt 是 CPU 密集且同步的；丢线程池避免阻塞事件循环（释放 GIL，可多核并行）
+    if not await asyncio.to_thread(verify_password, body.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户名或口令错误")
     settings: Any = request.app.state.settings
     secret_key = getattr(settings, "secret_key", "") or ""
