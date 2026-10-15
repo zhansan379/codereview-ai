@@ -25,6 +25,31 @@ export interface MeResult {
   permissions: string[]
 }
 
+// ===== 侧栏菜单（后端按权限过滤）=====
+export interface MenuItem {
+  name: string
+  path: string
+  title_key: string
+  icon: string | null
+  permission: string | null
+}
+
+export interface MenuGroup {
+  key: string
+  title_key: string
+  items: MenuItem[]
+}
+
+export interface MenuResult {
+  groups: MenuGroup[]
+  // 可访问路由 name 合集（菜单项 + 隐藏在菜单外的详情路由），前端据此挂载路由
+  names: string[]
+}
+
+export function getMenus(): Promise<MenuResult> {
+  return client.get('/menus').then((r) => r.data)
+}
+
 export interface Project {
   id: number
   provider: string
@@ -666,11 +691,13 @@ export interface RoleItem {
   permissions: string[]
   member_count: number
 }
-export interface PermissionItem {
-  code: string
+export interface PermissionNode {
+  key: string
   name: string
-  scope: 'global' | 'project'
+  code: string | null
+  scope: 'global' | 'project' | null
   description: string
+  children: PermissionNode[]
 }
 
 export function listUsers(): Promise<UserRow[]> {
@@ -692,7 +719,7 @@ export function resetPassword(id: number, password: string): Promise<UserRow> {
 export function listRoles(): Promise<RoleItem[]> {
   return client.get('/roles').then((r) => r.data)
 }
-export function listPermissions(): Promise<PermissionItem[]> {
+export function listPermissions(): Promise<PermissionNode[]> {
   return client.get('/roles/permissions').then((r) => r.data)
 }
 export function createRole(data: { name: string; description?: string; all_projects?: boolean; permission_codes?: string[] }): Promise<RoleItem> {

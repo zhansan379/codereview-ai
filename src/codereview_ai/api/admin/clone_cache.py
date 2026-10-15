@@ -28,10 +28,10 @@ from codereview_ai.storage.clone_cache_repo import CloneCacheRepoRepository
 from codereview_ai.storage.models import CloneCacheRepo
 from codereview_ai.storage.setting_repo import SettingRepository
 
-# 整组为管理操作（删目录/改清除策略/rebuild/prune），须 `caches:manage`，
-# 不能仅登录即可访问。require_permission 已内含鉴权（登录+权限），故无需再挂 get_current_user。
+# 读取列表/策略需 `caches:view`；删除/改策略/rebuild/prune 需 `caches:edit`。
+# require_permission 已内含鉴权（登录+权限），故无需再挂 get_current_user。
 router = APIRouter(prefix="/agent/caches", dependencies=[
-    Depends(require_permission("caches:manage")),
+    Depends(require_permission("caches:view", "caches:edit")),
 ])
 
 
@@ -99,7 +99,8 @@ async def list_caches(
     )
 
 
-@router.delete("/{cache_id}", response_model=dict[str, Any])
+@router.delete("/{cache_id}", response_model=dict[str, Any],
+               dependencies=[Depends(require_permission("caches:edit"))])
 async def delete_cache(
     cache_id: int,
     request: Request,
@@ -123,7 +124,8 @@ async def get_settings(request: Request) -> CacheSettings:
     return await _read_settings(request)
 
 
-@router.put("/settings", response_model=CacheSettings)
+@router.put("/settings", response_model=CacheSettings,
+            dependencies=[Depends(require_permission("caches:edit"))])
 async def put_settings(body: CacheSettings, request: Request) -> CacheSettings:
     sr = _settings_repo(request)
     await sr.set(PRUNE_ENABLED_KEY, "1" if body.enabled else "0")
@@ -131,7 +133,8 @@ async def put_settings(body: CacheSettings, request: Request) -> CacheSettings:
     return await _read_settings(request)
 
 
-@router.post("/rebuild", response_model=dict[str, Any])
+@router.post("/rebuild", response_model=dict[str, Any],
+             dependencies=[Depends(require_permission("caches:edit"))])
 async def rebuild_caches(
     request: Request,
     session: AsyncSession = Depends(get_db),
@@ -142,7 +145,8 @@ async def rebuild_caches(
     return {"added": added, "cache_root": cache_root}
 
 
-@router.post("/prune", response_model=dict[str, Any])
+@router.post("/prune", response_model=dict[str, Any],
+             dependencies=[Depends(require_permission("caches:edit"))])
 async def prune_caches(request: Request) -> dict[str, Any]:
     pruner = getattr(request.app.state, "pruner", None)
     if pruner is None:

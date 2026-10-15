@@ -10,6 +10,7 @@ import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'
 import i18n from './locales'
+import { perm } from './directives/perm'
 // 副作用导入：mount 前就把 html.dark 落好，避免刷新时闪一下亮色
 import './composables/useDark'
 // 同理：mount 前定好 html[lang]，首屏语言与存的偏好一致
@@ -24,4 +25,6 @@ app.use(createPinia())
 app.use(router)
 app.use(i18n)
 app.use(ElementPlus)
+// 全局按钮级权限指令 v-perm（无权限置灰禁用，不隐藏）
+app.directive('perm', perm)
 app.mount('#app')

@@ -16,7 +16,7 @@
         <h3>{{ provLabels[prov] }}</h3>
         <el-form label-width="auto">
           <el-form-item label="URL">
-            <el-input v-model="form[prov].url" :placeholder="defaults[prov]" />
+            <el-input v-model="form[prov].url" :placeholder="defaults[prov]" :disabled="!canEditForges" />
             <span class="field-hint">{{ $t('settings.urlHint') }}
               <el-tooltip placement="top" :show-after="50">
                 <template #content>{{ $t('settings.urlTip', { url: defaults[prov] }) }}</template>
@@ -29,6 +29,7 @@
               v-model="form[prov].token"
               type="password"
               show-password
+              :disabled="!canEditForges"
               :placeholder="envActive[prov] ? $t('settings.tokenFromEnv') : $t('settings.tokenPlaceholder')"
             />
             <span class="field-hint" v-if="envActive[prov]">{{ $t('settings.tokenEnvHint') }}
@@ -48,7 +49,7 @@
           </el-form-item>
         </el-form>
         <el-row :gutter="8" class="test-row">
-          <el-button :loading="testing[prov]" @click="onTest(prov)">{{ $t('settings.testConnection') }}</el-button>
+          <el-button v-perm="'forges:edit'" :loading="testing[prov]" @click="onTest(prov)">{{ $t('settings.testConnection') }}</el-button>
         </el-row>
 
         <div v-if="caps[prov]" class="capability-matrix">
@@ -91,7 +92,7 @@
       </div>
 
       <div class="save-bar">
-        <el-button type="primary" :loading="saving" @click="onSave">{{ $t('settings.saveForge') }}</el-button>
+        <el-button v-perm="'forges:edit'" type="primary" :loading="saving" @click="onSave">{{ $t('settings.saveForge') }}</el-button>
       </div>
     </el-card>
 
@@ -102,7 +103,7 @@
       </p>
       <el-form label-width="auto">
         <el-form-item :label="$t('settings.concurrencyLimit')">
-          <el-input-number v-model="concurrency" :min="1" :max="32" />
+          <el-input-number v-model="concurrency" :min="1" :max="32" :disabled="!canEditSettings" />
           <span class="field-hint" style="margin-left: 8px">{{ $t('settings.concurrencyHint') }}
             <el-tooltip placement="top" :show-after="50">
               <template #content>
@@ -114,7 +115,7 @@
         </el-form-item>
       </el-form>
       <div class="save-bar">
-        <el-button type="primary" :loading="ccSaving" @click="onSaveConcurrency">{{ $t('settings.saveConcurrency') }}</el-button>
+        <el-button v-perm="'settings:edit'" type="primary" :loading="ccSaving" @click="onSaveConcurrency">{{ $t('settings.saveConcurrency') }}</el-button>
         <span v-if="ccActive" class="form-tip">{{ $t('settings.concurrencyActive', { n: concurrency }) }}</span>
         <span v-else class="hint">{{ $t('settings.runnerIdle') }}</span>
       </div>
@@ -133,7 +134,7 @@
       </p>
       <el-form label-width="auto">
         <el-form-item :label="$t('settings.pushTrack')">
-          <el-switch v-model="pushEnabled" />
+          <el-switch v-model="pushEnabled" :disabled="!canEditSettings" />
           <span class="field-hint" style="margin-left: 8px">{{ $t('settings.pushHint') }}
             <el-tooltip placement="top" :show-after="50">
               <template #content>
@@ -152,7 +153,7 @@
         </el-form-item>
         <el-divider class="track-divider" />
         <el-form-item :label="$t('settings.mrTrack')">
-          <el-switch v-model="mrEnabled" />
+          <el-switch v-model="mrEnabled" :disabled="!canEditSettings" />
           <span class="field-hint" style="margin-left: 8px">{{ $t('settings.mrHint') }}
             <el-tooltip placement="top" :show-after="50">
               <template #content>
@@ -171,8 +172,8 @@
         </el-form-item>
       </el-form>
       <div class="save-bar">
-        <el-button :loading="pushSaving" @click="onSavePushDefault">{{ $t('settings.savePushTrack') }}</el-button>
-        <el-button :loading="mrSaving" @click="onSaveMrDefault">{{ $t('settings.saveMrTrack') }}</el-button>
+        <el-button v-perm="'settings:edit'" :loading="pushSaving" @click="onSavePushDefault">{{ $t('settings.savePushTrack') }}</el-button>
+        <el-button v-perm="'settings:edit'" :loading="mrSaving" @click="onSaveMrDefault">{{ $t('settings.saveMrTrack') }}</el-button>
       </div>
     </el-card>
 
@@ -181,7 +182,7 @@
       <p class="intro">{{ $t('settings.pollScopeIntro') }}</p>
       <el-form label-width="auto">
         <el-form-item :label="$t('settings.includeClosed')">
-          <el-switch v-model="pollIncludeClosed" />
+          <el-switch v-model="pollIncludeClosed" :disabled="!canEditSettings" />
           <span class="field-hint" style="margin-left: 8px">{{ $t('settings.pollScopeHint') }}
             <el-tooltip placement="top" :show-after="50">
               <template #content>
@@ -200,7 +201,7 @@
         </el-form-item>
       </el-form>
       <div class="save-bar">
-        <el-button type="primary" :loading="pollScopeSaving" @click="onSavePollScope">{{ $t('settings.savePollScope') }}</el-button>
+        <el-button v-perm="'settings:edit'" type="primary" :loading="pollScopeSaving" @click="onSavePollScope">{{ $t('settings.savePollScope') }}</el-button>
       </div>
     </el-card>
 
@@ -217,7 +218,7 @@
       </p>
       <el-form label-width="auto">
         <el-form-item :label="$t('settings.staticLabel')">
-          <el-switch v-model="staticEnabled" />
+          <el-switch v-model="staticEnabled" :disabled="!canEditSettings" />
           <span class="field-hint" style="margin-left: 8px">{{ $t('settings.staticHint') }}</span>
         </el-form-item>
         <el-form-item v-if="staticSource === 'env'" :label="$t('settings.staticSourceLabel')">
@@ -229,7 +230,7 @@
         </el-form-item>
       </el-form>
       <div class="save-bar">
-        <el-button type="primary" :loading="staticSaving" @click="onSaveStaticAnalysis">{{ $t('settings.saveStatic') }}</el-button>
+        <el-button v-perm="'settings:edit'" type="primary" :loading="staticSaving" @click="onSaveStaticAnalysis">{{ $t('settings.saveStatic') }}</el-button>
       </div>
     </el-card>
 
@@ -278,13 +279,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { listForges, updateForge, testForge, getConcurrency, setConcurrency, getPushReviewDefault, setPushReviewDefault, getMrReviewDefault, setMrReviewDefault, getPollIncludeClosed, setPollIncludeClosed, getStaticAnalysis, setStaticAnalysis } from '../api'
 import type { ForgeCapability } from '../api'
+import { useAuthStore } from '../stores/auth'
 
 const { t } = useI18n()
+const auth = useAuthStore()
+// 无编辑权限时：运行时设置各项禁用（只读）；平台接入整块隐藏（含 token，需 forges:edit）
+const canEditSettings = computed(() => auth.hasPerm('settings:edit'))
+const canEditForges = computed(() => auth.hasPerm('forges:edit'))
 
 const MASK = '******'
 const providers = ['github', 'gitlab', 'gitee'] as const
@@ -508,7 +514,8 @@ async function onSave() {
 }
 
 onMounted(() => {
-  load()
+  // 平台接入需 forges:edit；无权限不请求（卡片也已隐藏），避免 403
+  if (canEditForges.value) load()
   loadConcurrency()
   loadPushDefault()
   loadMrDefault()

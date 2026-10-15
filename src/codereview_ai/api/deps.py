@@ -204,3 +204,19 @@ def require_permission(*codes: str) -> Any:
 
 #: 便于 import：require_any_permission == require_permission（工厂本就接受多码）
 require_any_permission = require_permission
+
+
+def require_code(*codes: str) -> Any:
+    """依赖工厂：仅按权限码是否在角色权限集内判定（**不做项目作用域**）。
+
+    用于「按项目权限码、但无项目上下文」的动作（如新建项目前的仓库解析 resolve-repo）：
+    此时无法用 `user_can(project_id=None)`（项目级权限会因无项目而被拒）。
+    """
+
+    async def _dep(user: CurrentUser) -> User:
+        allowed = resolved_permission_codes(user)
+        if not any(code in allowed for code in codes):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "无权限")
+        return user
+
+    return _dep

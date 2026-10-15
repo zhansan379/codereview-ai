@@ -43,6 +43,7 @@ from codereview_ai.api.admin import (
 from codereview_ai.api.admin.notifier_members import router as members  # 系统级 @成员名单
 from codereview_ai.api.admin_ui import mount_admin
 from codereview_ai.api.auth import router as auth_router
+from codereview_ai.api.menus import router as menus_router
 from codereview_ai.api.webhook import WebhookHelpMiddleware
 from codereview_ai.api.webhook import router as webhook_router
 from codereview_ai.config import Settings
@@ -204,6 +205,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health_router)
     mount_admin(app, settings.frontend_dist)
     app.include_router(auth_router, prefix="/api")
+    app.include_router(menus_router, prefix="/api")
     app.include_router(projects.router, prefix="/api")
     app.include_router(models.router, prefix="/api")
     app.include_router(members, prefix="/api")

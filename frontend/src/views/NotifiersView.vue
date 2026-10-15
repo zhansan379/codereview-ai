@@ -2,8 +2,8 @@
   <div>
     <el-card>
       <div class="toolbar" data-tour="notifiers-toolbar">
-        <el-button type="primary" @click="openCreate">{{ $t('notifiers.createBtn') }}</el-button>
-        <el-button @click="openMemberManager">{{ $t('notifiers.memberManagerBtn') }}</el-button>
+        <el-button v-perm="'notifiers:edit'" type="primary" @click="openCreate">{{ $t('notifiers.createBtn') }}</el-button>
+        <el-button v-perm="'notifiers:edit'" @click="openMemberManager">{{ $t('notifiers.memberManagerBtn') }}</el-button>
       </div>
       <el-table :data="items" v-loading="loading" stripe data-tour="notifiers-table">
         <el-table-column prop="id" :label="$t('common.id')" width="70" />
@@ -35,8 +35,8 @@
         <el-table-column prop="webhook" label="Webhook" min-width="160" show-overflow-tooltip />
         <el-table-column :label="$t('common.actions')" width="160" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
-            <el-button link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
+            <el-button v-perm="'notifiers:edit'" link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
+            <el-button v-perm="'notifiers:edit'" link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>

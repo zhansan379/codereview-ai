@@ -21,20 +21,48 @@ from codereview_ai.api.deps import (
     require_any_permission,
 )
 from codereview_ai.storage.models import Permission, Role, RolePermission
-from codereview_ai.storage.seed import PERMISSION_CATALOG
+from codereview_ai.storage.seed import (
+    PERMISSION_CATALOG,
+    PERMISSION_TREE,
+    PermissionDef,
+    PermissionGroup,
+    PermissionNode,
+    with_implied_view,
+)
 
 router = APIRouter(
     prefix="/roles",
     dependencies=[Depends(get_current_user),
-                  Depends(require_any_permission("roles:manage", "users:manage"))],
+                  Depends(require_any_permission(
+                      "roles:view", "roles:edit", "users:view", "users:edit"))],
 )
 
 
-class PermissionOut(BaseModel):
-    code: str
-    name: str = ""
-    scope: str = "global"
+class PermissionNodeOut(BaseModel):
+    """权限树节点：分组节点 `code` 为空、只带 `children`；叶子节点带 `code`/`scope`。"""
+
+    key: str
+    name: str
+    code: str | None = None
+    scope: str | None = None
     description: str = ""
+    children: list[PermissionNodeOut] = []
+
+
+PermissionNodeOut.model_rebuild()
+
+
+def _perm_tree(nodes: tuple[PermissionNode, ...]) -> list[PermissionNodeOut]:
+    out: list[PermissionNodeOut] = []
+    for node in nodes:
+        if isinstance(node, PermissionGroup):
+            out.append(PermissionNodeOut(
+                key=node.key, name=node.name, children=_perm_tree(node.children)))
+        elif isinstance(node, PermissionDef):
+            out.append(PermissionNodeOut(
+                key=node.code, name=node.name, code=node.code,
+                scope=node.scope, description=node.description))
+    return out
 
 
 class RoleOut(BaseModel):
@@ -114,11 +142,10 @@ async def _member_count(session: AsyncSession, role_id: int) -> int:
     )).scalar_one() or 0)
 
 
-@router.get("/permissions", response_model=list[PermissionOut])
-async def list_permissions() -> list[PermissionOut]:
-    """返回权限目录（PERMISSION_CATALOG 的单一事实源），前端勾选用。"""
-    return [PermissionOut(code=c, name=n, scope=s, description=d)
-            for c, n, s, d in PERMISSION_CATALOG]
+@router.get("/permissions", response_model=list[PermissionNodeOut])
+async def list_permissions() -> list[PermissionNodeOut]:
+    """返回权限模块树（PERMISSION_TREE 单一事实源），前端按层级勾选用。"""
+    return _perm_tree(PERMISSION_TREE)
 
 
 @router.get("", response_model=list[RoleOut])
@@ -129,7 +156,8 @@ async def list_roles(session: AsyncSession = Depends(get_db)) -> list[RoleOut]:
     return [_to_out(r, await _member_count(session, r.id)) for r in rows]
 
 
-@router.post("", response_model=RoleOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=RoleOut, status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_any_permission("roles:edit"))])
 async def create_role(body: RoleCreate, session: AsyncSession = Depends(get_db)) -> RoleOut:
     name = body.name.strip()
     if not name:
@@ -144,7 +172,7 @@ async def create_role(body: RoleCreate, session: AsyncSession = Depends(get_db))
         raise HTTPException(status.HTTP_409_CONFLICT, "角色名已存在") from None
     await session.refresh(role)
     if body.permission_codes:
-        perms = await _resolve_perms(session, set(body.permission_codes))
+        perms = await _resolve_perms(session, with_implied_view(set(body.permission_codes)))
         for p in perms:
             session.add(RolePermission(role_id=role.id, permission_id=p.id))
         await session.commit()
@@ -152,7 +180,8 @@ async def create_role(body: RoleCreate, session: AsyncSession = Depends(get_db))
     return _to_out(role, await _member_count(session, role.id))
 
 
-@router.put("/{role_id}", response_model=RoleOut)
+@router.put("/{role_id}", response_model=RoleOut,
+            dependencies=[Depends(require_any_permission("roles:edit"))])
 async def update_role(
     role_id: int, body: RoleUpdate, session: AsyncSession = Depends(get_db)
 ) -> RoleOut:
@@ -167,21 +196,24 @@ async def update_role(
     return _to_out(row, await _member_count(session, role_id))
 
 
-@router.put("/{role_id}/permissions", response_model=RoleOut)
+@router.put("/{role_id}/permissions", response_model=RoleOut,
+            dependencies=[Depends(require_any_permission("roles:edit"))])
 async def set_role_permissions(
     role_id: int, body: RolePermissionsWrite, session: AsyncSession = Depends(get_db)
 ) -> RoleOut:
-    """全量替换角色权限（`permission_codes`）。内置角色可改权限（保留删结构限制）。"""
+    """全量替换角色权限（`permission_codes`）。内置角色可改权限（保留删结构限制）。
+    成对授予：`:edit` 自动补上成对的 `:view`。"""
     row = await _get_role(session, role_id)
     # 全量替换：走 relationship 保持内存集合一致（避免 bulk delete 后读旧关系）
-    perms = await _resolve_perms(session, set(body.permission_codes))
+    perms = await _resolve_perms(session, with_implied_view(set(body.permission_codes)))
     row.permissions.clear()
     row.permissions = list(perms)
     await session.commit()
     return _to_out(row, await _member_count(session, role_id))
 
 
-@router.delete("/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{role_id}", status_code=status.HTTP_204_NO_CONTENT,
+               dependencies=[Depends(require_any_permission("roles:edit"))])
 async def delete_role(role_id: int, session: AsyncSession = Depends(get_db)) -> None:
     row = await _get_role(session, role_id)
     if row.is_system:

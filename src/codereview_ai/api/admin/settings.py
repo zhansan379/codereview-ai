@@ -39,7 +39,8 @@ from codereview_ai.storage.setting_repo import (
 
 router = APIRouter(
     prefix="/settings",
-    dependencies=[Depends(get_current_user), Depends(require_permission("settings:manage"))],
+    dependencies=[Depends(get_current_user),
+                  Depends(require_permission("settings:view", "settings:edit"))],
 )
 
 CONCURRENCY_KEY = "worker_concurrency"
@@ -87,7 +88,8 @@ async def get_static_analysis(request: Request) -> StaticAnalysisOut:
     return StaticAnalysisOut(enabled=env_default, source="env")
 
 
-@router.post("/static-analysis", response_model=StaticAnalysisOut)
+@router.post("/static-analysis", response_model=StaticAnalysisOut,
+             dependencies=[Depends(require_permission("settings:edit"))])
 async def set_static_analysis(
     body: StaticAnalysisWrite, request: Request
 ) -> StaticAnalysisOut:
@@ -104,7 +106,8 @@ async def get_concurrency(request: Request) -> ConcurrencyOut:
     return ConcurrencyOut(concurrency=value, active=_pool(request) is not None)
 
 
-@router.post("/concurrency", response_model=ConcurrencyOut)
+@router.post("/concurrency", response_model=ConcurrencyOut,
+             dependencies=[Depends(require_permission("settings:edit"))])
 async def set_concurrency(
     body: ConcurrencyWrite,
     request: Request,
@@ -140,7 +143,8 @@ async def get_push_review_default(request: Request) -> PushReviewDefaultOut:
     return PushReviewDefaultOut(enabled=env_default, source="env")
 
 
-@router.post("/push-review-default", response_model=PushReviewDefaultOut)
+@router.post("/push-review-default", response_model=PushReviewDefaultOut,
+             dependencies=[Depends(require_permission("settings:edit"))])
 async def set_push_review_default(
     body: PushReviewDefaultWrite, request: Request
 ) -> PushReviewDefaultOut:
@@ -170,7 +174,8 @@ async def get_mr_review_default(request: Request) -> MrReviewDefaultOut:
     return MrReviewDefaultOut(enabled=env_default, source="env")
 
 
-@router.post("/mr-review-default", response_model=MrReviewDefaultOut)
+@router.post("/mr-review-default", response_model=MrReviewDefaultOut,
+             dependencies=[Depends(require_permission("settings:edit"))])
 async def set_mr_review_default(
     body: MrReviewDefaultWrite, request: Request
 ) -> MrReviewDefaultOut:
@@ -200,7 +205,8 @@ async def get_poll_include_closed(request: Request) -> PollIncludeClosedOut:
     return PollIncludeClosedOut(enabled=env_default, source="env")
 
 
-@router.post("/poll-include-closed", response_model=PollIncludeClosedOut)
+@router.post("/poll-include-closed", response_model=PollIncludeClosedOut,
+             dependencies=[Depends(require_permission("settings:edit"))])
 async def set_poll_include_closed(
     body: PollIncludeClosedWrite, request: Request
 ) -> PollIncludeClosedOut:

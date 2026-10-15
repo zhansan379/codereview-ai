@@ -2,7 +2,7 @@
   <div>
     <el-card>
       <div class="toolbar" data-tour="users-toolbar">
-        <el-button type="primary" @click="openCreate">{{ $t('users.createTitle') }}</el-button>
+        <el-button v-perm="'users:edit'" type="primary" @click="openCreate">{{ $t('users.createTitle') }}</el-button>
       </div>
       <el-table :data="items" v-loading="loading" stripe data-tour="users-table">
         <el-table-column prop="id" :label="$t('common.id')" width="70" />
@@ -21,12 +21,12 @@
         </el-table-column>
         <el-table-column :label="$t('common.actions')" :width="colWidth(260)" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
-            <el-button link type="primary" @click="openResetPw(row)">{{ $t('users.resetPassword') }}</el-button>
-            <el-button link :type="row.enabled ? 'warning' : 'success'" @click="toggleEnabled(row)">
+            <el-button v-perm="'users:edit'" link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
+            <el-button v-perm="'users:edit'" link type="primary" @click="openResetPw(row)">{{ $t('users.resetPassword') }}</el-button>
+            <el-button v-perm="'users:edit'" link :type="row.enabled ? 'warning' : 'success'" @click="toggleEnabled(row)">
               {{ row.enabled ? $t('users.disable') : $t('users.enable') }}
             </el-button>
-            <el-button link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
+            <el-button v-perm="'users:edit'" link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>

@@ -10,61 +10,15 @@
         router
         class="menu"
       >
-        <!-- 分组标题按子项权限取或：低权限角色不出现「有标题没内容」的空组 -->
-        <el-menu-item-group v-if="auth.hasPerm('stats:view')" :title="$t('menu.groupAnalytics')">
-          <el-menu-item index="/dashboard">
-            <el-icon><DataBoard /></el-icon>
-            <span>{{ $t('menu.dashboard') }}</span>
-          </el-menu-item>
-          <el-menu-item index="/workrate">
-            <el-icon><DataAnalysis /></el-icon>
-            <span>{{ $t('menu.workrate') }}</span>
-          </el-menu-item>
-          <el-menu-item index="/members">
-            <el-icon><User /></el-icon>
-            <span>{{ $t('menu.members') }}</span>
-          </el-menu-item>
-        </el-menu-item-group>
-        <el-menu-item-group v-if="canReviewGroup" :title="$t('menu.groupReview')">
-          <el-menu-item v-if="auth.hasPerm('projects:view')" index="/projects">
-            <el-icon><Folder /></el-icon>
-            <span>{{ $t('menu.projects') }}</span>
-          </el-menu-item>
-          <el-menu-item v-if="auth.hasPerm('reviews:view')" index="/reviews">
-            <el-icon><Document /></el-icon>
-            <span>{{ $t('menu.reviews') }}</span>
-          </el-menu-item>
-          <el-menu-item v-if="auth.hasPerm('schedules:manage')" index="/schedules">
-            <el-icon><Timer /></el-icon>
-            <span>{{ $t('menu.schedules') }}</span>
-          </el-menu-item>
-        </el-menu-item-group>
-        <el-menu-item-group v-if="canResourceGroup" :title="$t('menu.groupResource')">
-          <el-menu-item v-if="auth.hasPerm('models:manage')" index="/models">
-            <el-icon><Cpu /></el-icon>
-            <span>{{ $t('menu.models') }}</span>
-          </el-menu-item>
-          <el-menu-item v-if="auth.hasPerm('notifiers:manage')" index="/notifiers">
-            <el-icon><Bell /></el-icon>
-            <span>{{ $t('menu.notifiers') }}</span>
-          </el-menu-item>
-          <el-menu-item v-if="auth.hasPerm('caches:manage')" index="/clone-caches">
-            <el-icon><Box /></el-icon>
-            <span>{{ $t('menu.caches') }}</span>
-          </el-menu-item>
-        </el-menu-item-group>
-        <el-menu-item-group v-if="canSystemGroup" :title="$t('menu.groupSystem')">
-          <el-menu-item v-if="auth.hasPerm('settings:manage')" index="/settings">
-            <el-icon><Setting /></el-icon>
-            <span>{{ $t('menu.settings') }}</span>
-          </el-menu-item>
-          <el-menu-item v-if="auth.hasPerm('users:manage')" index="/users">
-            <el-icon><User /></el-icon>
-            <span>{{ $t('menu.users') }}</span>
-          </el-menu-item>
-          <el-menu-item v-if="auth.hasPerm('roles:manage')" index="/roles">
-            <el-icon><Key /></el-icon>
-            <span>{{ $t('menu.roles') }}</span>
+        <!-- 菜单由后端按权限过滤后返回（GET /api/menus），前端直接渲染成侧栏 -->
+        <el-menu-item-group
+          v-for="group in auth.menus"
+          :key="group.key"
+          :title="$t(group.title_key)"
+        >
+          <el-menu-item v-for="item in group.items" :key="item.name" :index="item.path">
+            <el-icon v-if="item.icon"><component :is="item.icon" /></el-icon>
+            <span>{{ $t(item.title_key) }}</span>
           </el-menu-item>
         </el-menu-item-group>
       </el-menu>
@@ -137,19 +91,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElNotification } from 'element-plus'
-import { Warning } from '@element-plus/icons-vue'
 import {
-  DataBoard,
-  DataAnalysis,
-  Document,
-  Folder,
-  Cpu,
-  Bell,
-  Setting,
-  Timer,
-  Box,
-  User,
-  Key,
   Moon,
   Sunny,
   QuestionFilled,
@@ -314,17 +256,6 @@ const activeMenu = computed(() => {
   if (route.path.startsWith('/reviews')) return '/reviews'
   return route.path
 })
-
-// 菜单分组显隐：组内任一权限可见即显示整组标题，避免空组
-const canReviewGroup = computed(
-  () => auth.hasPerm('projects:view') || auth.hasPerm('reviews:view') || auth.hasPerm('schedules:manage'),
-)
-const canResourceGroup = computed(
-  () => auth.hasPerm('models:manage') || auth.hasPerm('notifiers:manage') || auth.hasPerm('caches:manage'),
-)
-const canSystemGroup = computed(
-  () => auth.hasPerm('settings:manage') || auth.hasPerm('users:manage') || auth.hasPerm('roles:manage'),
-)
 
 onMounted(() => {
   // 硬刷新后重同步用户与权限

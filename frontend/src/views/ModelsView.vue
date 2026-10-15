@@ -2,7 +2,7 @@
   <div>
     <el-card>
       <div class="toolbar" data-tour="models-toolbar">
-        <el-button type="primary" @click="openCreate">{{ $t('models.create') }}</el-button>
+        <el-button v-perm="'models:edit'" type="primary" @click="openCreate">{{ $t('models.create') }}</el-button>
       </div>
       <el-table :data="items" v-loading="loading" stripe data-tour="models-table">
         <el-table-column prop="id" label="ID" width="70" />
@@ -20,9 +20,9 @@
         </el-table-column>
         <el-table-column :label="$t('common.actions')" width="220" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="onTest(row)">{{ $t('models.test') }}</el-button>
-            <el-button link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
-            <el-button link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
+            <el-button v-perm="'models:edit'" link type="primary" @click="onTest(row)">{{ $t('models.test') }}</el-button>
+            <el-button v-perm="'models:edit'" link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
+            <el-button v-perm="'models:edit'" link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>

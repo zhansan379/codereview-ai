@@ -89,7 +89,7 @@ def test_login_success_issues_jwt_with_user_id(auth_app):
     payload = jwt.decode(body["access_token"], SECRET, algorithms=["HS256"])
     assert payload["sub"] == str(h.admin.id)  # sub=用户 id
     assert body["user"]["username"] == "admin"
-    assert "users:manage" in body["permissions"]  # 超管全量
+    assert "users:edit" in body["permissions"]  # 超管全量
 
 
 def test_login_wrong_password_or_unknown_user_401(auth_app):
@@ -112,8 +112,8 @@ def test_login_exposes_role_scoped_permissions(auth_app):
     ).json()
     perms = body["permissions"]
     assert "projects:view" in perms
-    assert "users:manage" not in perms
-    assert "roles:manage" not in perms
+    assert "users:edit" not in perms
+    assert "roles:edit" not in perms
 
 
 def test_issue_and_decode_token(auth_app):
@@ -169,4 +169,4 @@ def test_auth_me_returns_user_and_permissions(auth_app):
     assert r.status_code == 200
     data = r.json()
     assert data["user"]["username"] == "admin"
-    assert "users:manage" in data["permissions"]
+    assert "users:edit" in data["permissions"]

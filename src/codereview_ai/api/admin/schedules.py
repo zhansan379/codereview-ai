@@ -26,7 +26,8 @@ from codereview_ai.storage.models import ScheduleJob
 
 router = APIRouter(
     prefix="/schedules",
-    dependencies=[Depends(get_current_user), Depends(require_permission("schedules:manage"))],
+    dependencies=[Depends(get_current_user),
+                  Depends(require_permission("schedules:view", "schedules:edit"))],
 )
 
 _JOB_TYPES: set[str] = {"poll", "daily"}
@@ -98,7 +99,8 @@ async def list_schedules(
     )
 
 
-@router.post("", response_model=ScheduleJobOut)
+@router.post("", response_model=ScheduleJobOut,
+             dependencies=[Depends(require_permission("schedules:edit"))])
 async def create_schedule(
     body: ScheduleWrite,
     request: Request,
@@ -124,7 +126,8 @@ async def create_schedule(
     return _to_out(row)
 
 
-@router.put("/{job_id}", response_model=ScheduleJobOut)
+@router.put("/{job_id}", response_model=ScheduleJobOut,
+            dependencies=[Depends(require_permission("schedules:edit"))])
 async def update_schedule(
     job_id: int,
     body: ScheduleWrite,
@@ -153,7 +156,8 @@ async def update_schedule(
     return _to_out(row)
 
 
-@router.delete("/{job_id}", response_model=dict)
+@router.delete("/{job_id}", response_model=dict,
+               dependencies=[Depends(require_permission("schedules:edit"))])
 async def delete_schedule(
     job_id: int,
     request: Request,
@@ -172,7 +176,8 @@ async def delete_schedule(
     return {"id": job_id}
 
 
-@router.post("/{job_id}/run", response_model=dict)
+@router.post("/{job_id}/run", response_model=dict,
+             dependencies=[Depends(require_permission("schedules:edit"))])
 async def run_schedule(
     job_id: int,
     request: Request,

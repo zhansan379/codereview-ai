@@ -24,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
-from codereview_ai.api.deps import get_current_user, get_db, require_permission
+from codereview_ai.api.deps import get_current_user, get_db, require_code, require_permission
 from codereview_ai.config.repository import DEFAULT_FORGE_URLS
 from codereview_ai.crypto import MASK, encrypt, is_masked
 from codereview_ai.forges.base import provider_from_url_host, repo_path_from_url
@@ -130,11 +130,12 @@ async def detect_provider_by_probe(
 
 router = APIRouter(
     prefix="/forges",
-    dependencies=[Depends(get_current_user), Depends(require_permission("forges:manage"))],
+    dependencies=[Depends(get_current_user)],
 )
 
 
-@router.get("", response_model=list[ForgeOut])
+@router.get("", response_model=list[ForgeOut],
+            dependencies=[Depends(require_permission("forges:edit"))])
 async def list_forges(session: AsyncSession = Depends(get_db)) -> list[ForgeOut]:
     rows = (await session.execute(
         select(ForgeConfig).order_by(ForgeConfig.provider)
@@ -155,7 +156,8 @@ async def list_forges(session: AsyncSession = Depends(get_db)) -> list[ForgeOut]
     return out
 
 
-@router.put("/{provider}", response_model=ForgeOut)
+@router.put("/{provider}", response_model=ForgeOut,
+            dependencies=[Depends(require_permission("forges:edit"))])
 async def update_forge(
     provider: str,
     body: ForgeWrite,
@@ -207,7 +209,8 @@ async def probe_forge(provider: str, url: str, token: str) -> list[Capability]:
     return await probe_capabilities(provider, url, token)
 
 
-@router.post("/{provider}/test", response_model=dict[str, Any])
+@router.post("/{provider}/test", response_model=dict[str, Any],
+             dependencies=[Depends(require_permission("forges:edit"))])
 async def test_forge(
     provider: str,
     body: ForgeProbeBody,
@@ -241,7 +244,8 @@ async def test_forge(
     return {"ok": ok, "capabilities": [c.__dict__ for c in caps], "token_source": token_source}
 
 
-@router.post("/resolve-repo", response_model=ResolveRepoOut)
+@router.post("/resolve-repo", response_model=ResolveRepoOut,
+             dependencies=[Depends(require_code("projects:edit", "forges:edit"))])
 async def resolve_repo(
     body: ResolveRepoBody,
     request: Request,

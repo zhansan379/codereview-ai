@@ -96,9 +96,21 @@ def test_user_list_and_disable(ctx):
 
 # ── 角色管理 ──────────────────────────────────────────────────────────────
 
+def _flatten_codes(nodes) -> set[str]:
+    out: set[str] = set()
+    for n in nodes:
+        if n.get("code"):
+            out.add(n["code"])
+        out |= _flatten_codes(n.get("children") or [])
+    return out
+
+
 def test_role_permissions_catalog(ctx):
-    perms = {p["code"] for p in _c(ctx).get("/api/roles/permissions").json()}
-    assert "projects:view" in perms and "users:manage" in perms
+    tree = _c(ctx).get("/api/roles/permissions").json()
+    perms = _flatten_codes(tree)
+    assert "projects:view" in perms and "users:edit" in perms
+    # 树形结构：存在带 children 的分组节点
+    assert any(n.get("children") for n in tree)
 
 
 def test_create_custom_role_and_assign_permissions(ctx):
@@ -112,13 +124,23 @@ def test_create_custom_role_and_assign_permissions(ctx):
     assert set(r.json()["permissions"]) == {"projects:view", "reviews:view"}
 
     r = c.put(f"/api/roles/{rid}/permissions",
-              json={"permission_codes": ["reviews:manage"]})
-    assert set(r.json()["permissions"]) == {"reviews:manage"}
+              json={"permission_codes": ["reviews:edit"]})
+    # 成对授予：edit 自动补上成对 view
+    assert set(r.json()["permissions"]) == {"reviews:view", "reviews:edit"}
 
     # 建个引用它的用户后再删 → 409
     assert c.post("/api/users", json={
         "username": "qa1", "password": "secret123", "role_id": rid}).status_code == 201
     assert c.delete(f"/api/roles/{rid}").status_code == 409
+
+
+def test_edit_implies_view_pairing(ctx):
+    """成对授予：有配对 view 的 edit 自动补 view；无配对 view 的 edit（pulls:edit）保持不变。"""
+    c = _c(ctx)
+    r = c.post("/api/roles", json={
+        "name": "Pair", "permission_codes": ["models:edit", "pulls:edit"]})
+    assert r.status_code == 201
+    assert set(r.json()["permissions"]) == {"models:view", "models:edit", "pulls:edit"}
 
 
 def test_system_role_protected(ctx):

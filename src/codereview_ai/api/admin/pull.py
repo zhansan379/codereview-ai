@@ -23,7 +23,7 @@ from codereview_ai.ops.bootstrap import get_or_create_poller
 
 router = APIRouter(
     prefix="/pulls",
-    dependencies=[Depends(get_current_user), Depends(require_permission("pulls:manage"))],
+    dependencies=[Depends(get_current_user), Depends(require_permission("pulls:edit"))],
 )
 
 

@@ -22,7 +22,8 @@ from codereview_ai.storage.models import Role, User
 
 router = APIRouter(
     prefix="/users",
-    dependencies=[Depends(get_current_user), Depends(require_permission("users:manage"))],
+    dependencies=[Depends(get_current_user),
+                  Depends(require_permission("users:view", "users:edit"))],
 )
 
 
@@ -87,7 +88,8 @@ async def list_users(session: AsyncSession = Depends(get_db)) -> list[UserOut]:
     return [_to_out(r) for r in rows]
 
 
-@router.post("", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=UserOut, status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_permission("users:edit"))])
 async def create_user(body: UserCreate, session: AsyncSession = Depends(get_db)) -> UserOut:
     username = body.username.strip()
     if not username:
@@ -110,7 +112,8 @@ async def create_user(body: UserCreate, session: AsyncSession = Depends(get_db))
     return _to_out(row)
 
 
-@router.put("/{user_id}", response_model=UserOut)
+@router.put("/{user_id}", response_model=UserOut,
+            dependencies=[Depends(require_permission("users:edit"))])
 async def update_user(
     user_id: int, body: UserUpdate, session: AsyncSession = Depends(get_db)
 ) -> UserOut:
@@ -135,7 +138,8 @@ async def update_user(
     return _to_out(row)
 
 
-@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT,
+               dependencies=[Depends(require_permission("users:edit"))])
 async def delete_user(
     user_id: int, user: CurrentUser, session: AsyncSession = Depends(get_db)
 ) -> None:
@@ -148,7 +152,8 @@ async def delete_user(
     await session.commit()
 
 
-@router.post("/{user_id}/reset-password", response_model=UserOut)
+@router.post("/{user_id}/reset-password", response_model=UserOut,
+             dependencies=[Depends(require_permission("users:edit"))])
 async def reset_password(
     user_id: int, body: PasswordWrite, session: AsyncSession = Depends(get_db)
 ) -> UserOut:

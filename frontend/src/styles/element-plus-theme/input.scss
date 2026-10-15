@@ -398,14 +398,22 @@ body .el-textarea .el-input__count {
     transition: color $transition-base;
     bottom: 0.8px;
     top: 0.8px;
+    /* 覆盖原生 <button> 的 UA 默认（3D 边框 + 内边距），否则图标会视觉偏移/溢出按钮背景 */
+    padding: 0;
+    border: 0;
+    appearance: none;
+    -webkit-appearance: none;
   }
 
+  /* 默认形态：减号在左、加号在右，各留一条与输入框的分隔线 */
   .el-input-number__increase {
     right: 0.8px;
+    border-left: elVar('border');
   }
 
   .el-input-number__decrease {
     left: 0.8px;
+    border-right: elVar('border');
   }
 
   &.is-controls-right .el-input__inner {
@@ -413,19 +421,27 @@ body .el-textarea .el-input__count {
   }
 }
 
+/* 右侧堆叠形态：加减上下排在右栏，分隔线为「左边（对输入框）+ 上加号的底边」 */
 body .el-input-number.is-controls-right {
   .el-input-number__increase {
     bottom: auto;
+    border-left: elVar('border');
+    border-bottom: elVar('border');
+    border-right: 0;
   }
 
   .el-input-number__decrease {
     right: 0.8px;
     left: auto;
     top: auto;
+    border-left: elVar('border');
+    border-right: 0;
+    border-bottom: 0;
   }
 }
 
 body .el-input-number .el-input .el-input__wrapper {
+  box-sizing: border-box;
   padding-top: 0;
   padding-bottom: 0;
   padding-left: eleVar('input', 'padding-left');
@@ -478,6 +494,14 @@ body .el-input-number .el-input .el-input__wrapper {
   padding-left: calc(
     #{elVar('component-size', 'large')} + #{eleVar('input', 'icon-space')}
   );
+}
+
+/* Edge 下 <input type="number"> 的内在最小宽度更大，经 flex 的 min-width:auto 会把
+   wrapper 撑出 .el-input-number 父级（Chrome 不会）。允许整条链收缩，杜绝溢出。 */
+.el-input-number .el-input,
+.el-input-number .el-input .el-input__wrapper,
+.el-input-number .el-input .el-input__inner {
+  min-width: 0;
 }
 
 body .el-input-number.is-disabled .el-input-number__increase,
