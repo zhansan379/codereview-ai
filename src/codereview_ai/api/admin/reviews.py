@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime
 from io import BytesIO
@@ -337,7 +338,8 @@ async def export_reviews(
     rows: list[tuple[ReviewTask, ReviewFinding]] = [
         (review, finding) for review, finding in (await session.execute(stmt)).all()
     ]
-    buf = _build_export_xlsx(rows)
+    # openpyxl 生成 xlsx 是同步 CPU 密集，丢线程池避免阻塞事件循环（多 worker 请求会互卡）
+    buf = await asyncio.to_thread(_build_export_xlsx, rows)
 
     filename = datetime.now().strftime("review_issues_%Y%m%d_%H%M%S.xlsx")
     return StreamingResponse(
