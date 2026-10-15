@@ -22,7 +22,8 @@ from codereview_ai.storage.models import ModelConfig
 
 router = APIRouter(
     prefix="/models",
-    dependencies=[Depends(get_current_user), Depends(require_permission("models:manage"))],
+    dependencies=[Depends(get_current_user),
+                  Depends(require_permission("models:view", "models:edit"))],
 )
 
 
@@ -89,7 +90,8 @@ async def list_models(session: AsyncSession = Depends(get_db)) -> list[ModelOut]
     return [await _to_out(r) for r in rows]
 
 
-@router.post("", response_model=ModelOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=ModelOut, status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_permission("models:edit"))])
 async def create_model(
     body: ModelWrite, request: Request, session: AsyncSession = Depends(get_db)
 ) -> ModelOut:
@@ -116,7 +118,8 @@ async def get_model(model_id: int, session: AsyncSession = Depends(get_db)) -> M
     return await _to_out(row)
 
 
-@router.put("/{model_id}", response_model=ModelOut)
+@router.put("/{model_id}", response_model=ModelOut,
+            dependencies=[Depends(require_permission("models:edit"))])
 async def update_model(
     model_id: int, body: ModelWrite, request: Request, session: AsyncSession = Depends(get_db)
 ) -> ModelOut:
@@ -138,7 +141,8 @@ async def update_model(
     return await _to_out(row)
 
 
-@router.delete("/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{model_id}", status_code=status.HTTP_204_NO_CONTENT,
+               dependencies=[Depends(require_permission("models:edit"))])
 async def delete_model(model_id: int, session: AsyncSession = Depends(get_db)) -> None:
     row = await _get_or_404(session, model_id)
     await session.delete(row)
@@ -166,7 +170,8 @@ async def probe_model(cfg: ModelConfig, prompt: str, *, encryption_key: str) -> 
     return bool(text.strip())
 
 
-@router.post("/{model_id}/test", response_model=dict[str, Any])
+@router.post("/{model_id}/test", response_model=dict[str, Any],
+             dependencies=[Depends(require_permission("models:edit"))])
 async def test_model(
     model_id: int,
     body: ProbeRequest,

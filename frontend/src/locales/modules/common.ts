@@ -43,8 +43,15 @@ export default {
     operationFailed: '操作失败',
     deleteConfirmTitle: '确认删除',
     tip: '提示',
+    noPermission: '无权限',
     requiredFields: '请填写必填项',
     empty: '暂无数据',
+    forbidden: {
+      title: '无权访问',
+      code: '403',
+      desc: '你没有访问该页面的权限，或该页面不存在。',
+      back: '返回仪表盘',
+    },
   },
   en: {
     confirm: 'OK',
@@ -89,7 +96,14 @@ export default {
     operationFailed: 'Operation failed',
     deleteConfirmTitle: 'Confirm deletion',
     tip: 'Notice',
+    noPermission: 'No permission',
     requiredFields: 'Please fill in the required fields',
     empty: 'No data',
+    forbidden: {
+      title: 'Access denied',
+      code: '403',
+      desc: 'You do not have permission to access this page, or it does not exist.',
+      back: 'Back to dashboard',
+    },
   },
 }

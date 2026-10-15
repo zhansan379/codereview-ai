@@ -480,7 +480,7 @@ async def delete_review(
     if not await review_task_allowed(session, user, row):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "审查记录不存在")
     pid = await review_task_project_id(session, row)
-    if not await user_can(session, user, "reviews:manage", project_id=pid):
+    if not await user_can(session, user, "reviews:edit", project_id=pid):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "无权限删除该审查记录")
     await session.delete(row)
     await session.commit()
@@ -517,7 +517,7 @@ async def batch_delete_reviews(
             denied += 1
             continue
         pid = await review_task_project_id(session, row)
-        if not await user_can(session, user, "reviews:manage", project_id=pid):
+        if not await user_can(session, user, "reviews:edit", project_id=pid):
             denied += 1
             continue
         await session.delete(row)

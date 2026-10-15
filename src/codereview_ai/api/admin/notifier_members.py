@@ -16,10 +16,10 @@ from starlette import status
 from codereview_ai.api.deps import get_db, require_permission
 from codereview_ai.storage.models import NotifierMember, NotifierRouteMember
 
-# IM 成员目录含手机号/企微/飞书 ID 等敏感数据，增删改（含读）须 `notifiers:manage`，
-# 不能仅登录即可。require_permission 已含登录鉴权。
+# IM 成员目录含手机号/企微/飞书 ID 等敏感数据，读取需 `notifiers:view`、增删改需 `notifiers:edit`。
+# require_permission 已含登录鉴权。
 router = APIRouter(prefix="/notifiers/members", dependencies=[
-    Depends(require_permission("notifiers:manage")),
+    Depends(require_permission("notifiers:view", "notifiers:edit")),
 ])
 
 
@@ -68,7 +68,8 @@ async def list_members(session: AsyncSession = Depends(get_db)) -> list[MemberOu
     return [_to_out(r) for r in rows]
 
 
-@router.post("", response_model=MemberOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=MemberOut, status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_permission("notifiers:edit"))])
 async def create_member(
     body: MemberWrite, session: AsyncSession = Depends(get_db)
 ) -> MemberOut:
@@ -85,7 +86,8 @@ async def create_member(
     return _to_out(row)
 
 
-@router.put("/{member_id}", response_model=MemberOut)
+@router.put("/{member_id}", response_model=MemberOut,
+            dependencies=[Depends(require_permission("notifiers:edit"))])
 async def update_member(
     member_id: int, body: MemberWrite, session: AsyncSession = Depends(get_db)
 ) -> MemberOut:
@@ -97,7 +99,8 @@ async def update_member(
     return _to_out(row)
 
 
-@router.delete("/{member_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{member_id}", status_code=status.HTTP_204_NO_CONTENT,
+               dependencies=[Depends(require_permission("notifiers:edit"))])
 async def delete_member(member_id: int, session: AsyncSession = Depends(get_db)) -> None:
     row = await _get_or_404(session, member_id)
     await session.execute(

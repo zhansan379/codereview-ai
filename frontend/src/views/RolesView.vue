@@ -2,7 +2,7 @@
   <div>
     <el-card>
       <div class="toolbar" data-tour="roles-toolbar">
-        <el-button type="primary" @click="openCreate">{{ $t('roles.createTitle') }}</el-button>
+        <el-button v-perm="'roles:edit'" type="primary" @click="openCreate">{{ $t('roles.createTitle') }}</el-button>
       </div>
       <el-table :data="items" v-loading="loading" stripe data-tour="roles-table">
         <el-table-column prop="name" :label="$t('common.name')" min-width="110" />
@@ -28,9 +28,9 @@
         <el-table-column prop="member_count" :label="$t('roles.memberCount')" :width="colWidth(80)" />
         <el-table-column :label="$t('common.actions')" :width="colWidth(200)" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openPerms(row)">{{ $t('roles.permissions') }}</el-button>
-            <el-button v-if="!row.is_system" link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
-            <el-button v-if="!row.is_system" link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
+            <el-button v-perm="'roles:edit'" link type="primary" @click="openPerms(row)">{{ $t('roles.permissions') }}</el-button>
+            <el-button v-if="!row.is_system" v-perm="'roles:edit'" link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
+            <el-button v-if="!row.is_system" v-perm="'roles:edit'" link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -50,16 +50,7 @@
           <span class="form-tip">{{ $t('roles.allProjectsTip') }}</span>
         </el-form-item>
         <el-form-item v-if="!isEdit" :label="$t('roles.permissions')">
-          <div class="perm-panel">
-            <div v-for="group in permGroups" :key="group.scope" class="perm-group">
-              <div class="perm-group-title">{{ group.label }}</div>
-              <el-checkbox-group v-model="form.permission_codes">
-                <el-checkbox v-for="p in group.items" :key="p.code" :value="p.code">
-                  {{ p.name }} <span class="muted">· {{ p.code }}</span>
-                </el-checkbox>
-              </el-checkbox-group>
-            </div>
-          </div>
+          <PermissionTreeSelect v-model="form.permission_codes" :nodes="perms" :loading="permsLoading" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -68,31 +59,40 @@
       </template>
     </el-dialog>
 
-    <!-- 权限分配（任意角色，含内置） -->
-    <el-dialog v-model="permVisible" :title="$t('roles.assignPermsTitle', { name: current?.name || '' })" width="640px">
-      <div class="perm-panel">
-        <div v-for="group in permGroups" :key="group.scope" class="perm-group">
-          <div class="perm-group-title">{{ group.label }}</div>
-          <el-checkbox-group v-model="permForm.codes">
-            <el-checkbox v-for="p in group.items" :key="p.code" :value="p.code">
-              {{ p.name }} <span class="muted">· {{ p.code }}</span>
-            </el-checkbox>
-          </el-checkbox-group>
-        </div>
+    <!-- 权限分配（树形，任意角色含内置） -->
+    <el-dialog
+      v-model="permVisible"
+      :title="$t('roles.assignPermsTitle', { name: current?.name || '' })"
+      width="640px"
+      :close-on-click-modal="false"
+      @closed="onPermsClosed"
+    >
+      <!-- 角色信息：只读回显 -->
+      <div class="perm-role">
+        <el-tag type="info" size="small">{{ $t('common.name') }}：{{ current?.name }}</el-tag>
+        <el-tag type="info" size="small">
+          {{ $t('roles.code') }}：{{ current?.builtin_code || $t('roles.custom') }}
+        </el-tag>
       </div>
+
+      <PermissionTreeSelect v-model="permCodes" :nodes="perms" :loading="permsLoading" />
+
       <template #footer>
-        <el-button @click="permVisible = false">{{ $t('common.cancel') }}</el-button>
-        <el-button type="primary" :loading="saving" @click="onSavePerms">{{ $t('common.save') }}</el-button>
+        <el-button :disabled="saving" @click="permVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="saving" :disabled="!perms.length" @click="onSavePerms">
+          {{ $t('common.save') }}
+        </el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { colWidth } from '../composables/useLocale'
+import PermissionTreeSelect from '../components/PermissionTreeSelect.vue'
 import {
   listRoles,
   listPermissions,
@@ -101,45 +101,35 @@ import {
   deleteRole,
   setRolePermissions,
   type RoleItem,
-  type PermissionItem,
+  type PermissionNode,
 } from '../api'
 
 const { t } = useI18n()
 
 const items = ref<RoleItem[]>([])
-const perms = ref<PermissionItem[]>([])
+const perms = ref<PermissionNode[]>([])
 const loading = ref(false)
+const permsLoading = ref(false)
 const saving = ref(false)
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const current = ref<RoleItem | null>(null)
 const permVisible = ref(false)
-
-const permGroups = computed(() => [
-  {
-    scope: 'global',
-    label: t('roles.groupGlobal'),
-    items: perms.value.filter((p) => p.scope === 'global'),
-  },
-  {
-    scope: 'project',
-    label: t('roles.groupProject'),
-    items: perms.value.filter((p) => p.scope === 'project'),
-  },
-])
+// 权限分配弹窗当前勾选的权限码（由 PermissionTreeSelect 双向绑定）
+const permCodes = ref<string[]>([])
 
 const emptyForm = () => ({ name: '', description: '', all_projects: false, permission_codes: [] as string[] })
 const form = reactive(emptyForm())
 
-const permForm = reactive({ codes: [] as string[] })
-
 async function load() {
   loading.value = true
+  permsLoading.value = true
   try {
     items.value = await listRoles()
     perms.value = await listPermissions()
   } finally {
     loading.value = false
+    permsLoading.value = false
   }
 }
 
@@ -181,21 +171,29 @@ async function onSave() {
 
 function openPerms(row: RoleItem) {
   current.value = row
-  permForm.codes = [...row.permissions]
+  permCodes.value = [...row.permissions]
   permVisible.value = true
 }
+
 async function onSavePerms() {
+  if (saving.value) return
   saving.value = true
   try {
-    await setRolePermissions(current.value!.id, permForm.codes)
+    await setRolePermissions(current.value!.id, [...permCodes.value])
     ElMessage.success(t('roles.permsUpdated'))
     permVisible.value = false
     load()
   } catch (e: any) {
+    // 保存失败：保留弹窗与勾选，仅提示错误
     ElMessage.error(e?.response?.data?.detail || t('common.saveFailed'))
   } finally {
     saving.value = false
   }
+}
+
+// 弹窗关闭后清空勾选，避免下次打开残留
+function onPermsClosed() {
+  permCodes.value = []
 }
 
 async function onDelete(row: RoleItem) {
@@ -216,49 +214,17 @@ onMounted(load)
 .toolbar {
   margin-bottom: 12px;
 }
+/* 权限分配弹窗：角色回显标签 */
+.perm-role {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
 .form-tip {
   font-size: 12px;
   color: var(--el-text-color-secondary);
   margin-left: 10px;
-}
-.perm-panel {
-  width: 100%;
-  max-width: 100%;
-  box-sizing: border-box;
-  max-height: 480px;
-  overflow: auto;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
-  padding: 12px;
-}
-.perm-group {
-  margin-bottom: 12px;
-}
-.perm-group:last-child {
-  margin-bottom: 0;
-}
-.perm-group-title {
-  font-weight: 600;
-  margin-bottom: 8px;
-  color: var(--el-text-color-primary);
-}
-/* 权限多选默认 white-space:nowrap 且横向排布，标签长时会撑破对话框。
-   改用 flex 换行 + 标签可断词，保证面板宽度恒不超出容器。 */
-.perm-panel :deep(.el-checkbox-group) {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 20px;
-}
-.perm-panel :deep(.el-checkbox) {
-  margin-right: 0;
-  min-width: 0;
-  white-space: normal;
-}
-.perm-panel :deep(.el-checkbox__label) {
-  white-space: normal;
-  word-break: break-word;
-  line-height: 20px;
-  min-width: 0;
 }
 .muted {
   color: var(--el-text-color-secondary);

@@ -2,12 +2,12 @@
   <div>
     <el-card>
       <div class="toolbar" data-tour="projects-toolbar">
-        <el-button v-if="auth.hasPerm('projects:manage')" type="primary" @click="openCreate">{{ $t('projects.createBtn') }}</el-button>
-        <el-tooltip v-if="auth.hasPerm('pulls:manage')" placement="top" :show-after="50">
+        <el-button v-perm="'projects:edit'" type="primary" @click="openCreate">{{ $t('projects.createBtn') }}</el-button>
+        <el-tooltip placement="top" :show-after="50">
           <template #content>
             {{ $t('projects.pollBtnTip.what') }}<br/>{{ $t('projects.pollBtnTip.skip') }}
           </template>
-          <el-button :loading="pollBusy" @click="onPoll">
+          <el-button v-perm.quiet="'pulls:edit'" :loading="pollBusy" @click="onPoll">
             {{ pollBusy ? $t('projects.pollBtnBusy') : $t('projects.pollBtn') }}
           </el-button>
         </el-tooltip>
@@ -41,9 +41,9 @@
         </el-table-column>
         <el-table-column :label="$t('common.actions')" width="220" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="auth.hasPerm('projects:manage')" link type="primary" @click="openMembers(row)">{{ $t('projects.membersBtn') }}</el-button>
-            <el-button v-if="auth.hasPerm('projects:manage')" link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
-            <el-button v-if="auth.hasPerm('projects:manage')" link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
+            <el-button v-perm="'projects:edit'" link type="primary" @click="openMembers(row)">{{ $t('projects.membersBtn') }}</el-button>
+            <el-button v-perm="'projects:edit'" link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
+            <el-button v-perm="'projects:edit'" link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -307,10 +307,8 @@ import {
   type UserRow,
 } from '../api'
 import { pollBusy, pollProgress, triggerPoll, resumePollWatchIfBusy } from './usePoll'
-import { useAuthStore } from '../stores/auth'
 import { colWidth } from '../composables/useLocale'
 
-const auth = useAuthStore()
 const { t } = useI18n()
 
 const items = ref<Project[]>([])

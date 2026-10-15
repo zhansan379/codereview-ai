@@ -2,7 +2,7 @@
   <div>
     <el-card>
       <div class="toolbar" data-tour="schedules-toolbar">
-        <el-button type="primary" @click="openCreate">{{ $t('schedules.create') }}</el-button>
+        <el-button v-perm="'schedules:edit'" type="primary" @click="openCreate">{{ $t('schedules.create') }}</el-button>
         <el-button @click="load">{{ $t('common.refresh') }}</el-button>
         <span v-if="!workerActive" class="hint">
           {{ $t('schedules.workerInactive') }}
@@ -30,9 +30,9 @@
         </el-table-column>
         <el-table-column :label="$t('common.actions')" width="210" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="onRun(row)">{{ $t('schedules.runNow') }}</el-button>
-            <el-button link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
-            <el-button link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
+            <el-button v-perm="'schedules:edit'" link type="primary" @click="onRun(row)">{{ $t('schedules.runNow') }}</el-button>
+            <el-button v-perm="'schedules:edit'" link type="primary" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
+            <el-button v-perm="'schedules:edit'" link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>

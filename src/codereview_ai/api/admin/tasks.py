@@ -229,7 +229,7 @@ async def retry_task(
     if not await review_task_allowed(session, user, row):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "任务不存在")
     pid = await review_task_project_id(session, row)
-    if not await user_can(session, user, "reviews:manage", project_id=pid):
+    if not await user_can(session, user, "reviews:edit", project_id=pid):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "无权限重试该任务")
     if not _retryable(row):
         raise HTTPException(
@@ -258,7 +258,7 @@ async def stop_task(
     if not await review_task_allowed(session, user, row):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "任务不存在")
     pid = await review_task_project_id(session, row)
-    if not await user_can(session, user, "reviews:manage", project_id=pid):
+    if not await user_can(session, user, "reviews:edit", project_id=pid):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "无权限停止该任务")
     if row.state != "queued":
         raise HTTPException(status.HTTP_409_CONFLICT, f"仅排队中的任务可停止（{row.state}）")
@@ -316,7 +316,7 @@ async def batch_execute_tasks(
             results.append(BatchItemResult(id=tid, status="denied"))
             continue
         pid = await review_task_project_id(session, row)
-        if not await user_can(session, user, "reviews:manage", project_id=pid):
+        if not await user_can(session, user, "reviews:edit", project_id=pid):
             denied += 1
             results.append(BatchItemResult(id=tid, status="denied"))
             continue
@@ -345,7 +345,7 @@ async def batch_stop_tasks(
             results.append(BatchItemResult(id=tid, status="denied"))
             continue
         pid = await review_task_project_id(session, row)
-        if not await user_can(session, user, "reviews:manage", project_id=pid):
+        if not await user_can(session, user, "reviews:edit", project_id=pid):
             denied += 1
             results.append(BatchItemResult(id=tid, status="denied"))
             continue
@@ -450,7 +450,7 @@ async def redeliver_task(
     if not await review_task_allowed(session, user, row):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "任务不存在")
     pid = await review_task_project_id(session, row)
-    if not await user_can(session, user, "reviews:manage", project_id=pid):
+    if not await user_can(session, user, "reviews:edit", project_id=pid):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "无权限重发该任务")
     if not row.writeback_failed:
         raise HTTPException(status.HTTP_409_CONFLICT, "该任务无需重发（writeback_failed 未置位）")

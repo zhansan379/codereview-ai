@@ -11,14 +11,14 @@
       <div class="policy-body">
         <el-form :inline="true" label-width="auto">
           <el-form-item :label="$t('common.enabled')">
-            <el-switch v-model="settings.enabled" />
+            <el-switch v-model="settings.enabled" :disabled="!canEditCaches" />
           </el-form-item>
           <el-form-item :label="$t('caches.retentionDays')">
-            <el-input-number v-model="settings.days" :min="0" :max="3650" />
+            <el-input-number v-model="settings.days" :min="0" :max="3650" :disabled="!canEditCaches" />
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" :loading="saving" @click="onSave">{{ $t('caches.savePolicy') }}</el-button>
-            <el-button :loading="pruning" @click="onPrune">{{ $t('caches.pruneNow') }}</el-button>
+            <el-button v-perm="'caches:edit'" type="primary" :loading="saving" @click="onSave">{{ $t('caches.savePolicy') }}</el-button>
+            <el-button v-perm="'caches:edit'" :loading="pruning" @click="onPrune">{{ $t('caches.pruneNow') }}</el-button>
           </el-form-item>
         </el-form>
         <div class="hint">
@@ -31,7 +31,7 @@
     <el-card>
       <div class="toolbar" data-tour="caches-list">
         <span class="toolbar-title">{{ $t('caches.listTitle') }}</span>
-        <el-button :loading="scanning" @click="onRebuild">{{ $t('caches.scanExisting') }}</el-button>
+        <el-button v-perm="'caches:edit'" :loading="scanning" @click="onRebuild">{{ $t('caches.scanExisting') }}</el-button>
         <el-button @click="load">{{ $t('common.refresh') }}</el-button>
       </div>
       <div class="hint">
@@ -59,7 +59,7 @@
         </el-table-column>
         <el-table-column :label="$t('common.actions')" width="90" fixed="right">
           <template #default="{ row }">
-            <el-button link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
+            <el-button v-perm="'caches:edit'" link type="danger" @click="onDelete(row)">{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
         <template #empty>
@@ -71,10 +71,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { colWidth } from '../composables/useLocale'
+import { useAuthStore } from '../stores/auth'
 import {
   listCloneCaches,
   deleteCloneCache,
@@ -86,6 +87,9 @@ import {
 } from '../api'
 
 const { t } = useI18n()
+const auth = useAuthStore()
+
+const canEditCaches = computed(() => auth.hasPerm('caches:edit'))
 
 const items = ref<CloneCacheItem[]>([])
 const cacheRoot = ref('')

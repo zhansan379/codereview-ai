@@ -152,11 +152,12 @@
     </el-dialog>
 
     <!-- 多选批量操作条：勾选后才出现，按钮按所选行的状态自动适配生效范围 -->
-    <el-card v-if="canManage && selection.length > 0" class="batch-card">
+    <el-card v-if="selection.length > 0" class="batch-card">
       <div class="batch-bar">
         <span class="batch-count">{{ $t('reviews.batchSelected', { n: selection.length }) }}</span>
         <span class="batch-actions">
           <el-button
+            v-perm="'reviews:edit'"
             type="primary"
             size="small"
             :disabled="executableCount === 0"
@@ -166,6 +167,7 @@
             {{ $t('reviews.batchExecute') }} ({{ executableCount }})
           </el-button>
           <el-button
+            v-perm="'reviews:edit'"
             type="warning"
             size="small"
             :disabled="stoppableCount === 0"
@@ -175,6 +177,7 @@
             {{ $t('reviews.batchStop') }} ({{ stoppableCount }})
           </el-button>
           <el-button
+            v-perm="'reviews:edit'"
             type="danger"
             size="small"
             :loading="batchBusy"
@@ -193,11 +196,11 @@
         storage-key="reviews"
         toolbar-target="#reviews-table-tools"
         show-process
-        :show-retry="canManage"
-        :show-stop="canManage"
+        show-retry
+        show-stop
         :selectable="canManage"
-        :show-redeliver="canManage"
-        :show-delete="canManage"
+        show-redeliver
+        show-delete
         :retrying-id="retryingId"
         :stopping-id="stoppingId"
         :redelivering-id="redeliveringId"
@@ -250,8 +253,8 @@ const router = useRouter()
 const route = useRoute()
 const { t } = useI18n()
 const auth = useAuthStore()
-// 写操作（重试/停止/重发/删除/批量）后端要求 reviews:manage；无权限时不渲染点了必 403 的按钮
-const canManage = computed(() => auth.hasPerm('reviews:manage'))
+// 写操作（重试/停止/重发/删除/批量）后端要求 reviews:edit；无权限时不渲染点了必 403 的按钮
+const canManage = computed(() => auth.hasPerm('reviews:edit'))
 
 const items = ref<ReviewItem[]>([])
 const total = ref(0)

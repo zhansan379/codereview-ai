@@ -69,7 +69,7 @@ function pageSteps(): TourStepProps[] {
       step('[data-tour="schedules-toolbar"]', 'bottom', 'tour.schedulesToolbarTitle', 'tour.schedulesToolbarDesc'),
       step('[data-tour="schedules-table"]', 'top', 'tour.schedulesTableTitle', 'tour.schedulesTableDesc'),
     ],
-    CloneCaches: [
+    Caches: [
       step('[data-tour="caches-policy"]', 'bottom', 'tour.cachesPolicyTitle', 'tour.cachesPolicyDesc'),
       step('[data-tour="caches-list"]', 'top', 'tour.cachesListTitle', 'tour.cachesListDesc'),
     ],

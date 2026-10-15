@@ -27,15 +27,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from codereview_ai.api.deps import (
     CurrentUser,
     allowed_project_ids,
+    get_current_user,
     get_db,
     require_permission,
     review_scope_clause,
 )
 from codereview_ai.storage.models import Project, ReviewTask
 
-# 与 /stats 同门槛：admin/tech_lead/viewer 具备；数据层另有项目成员隔离。
+# 提交分析页需 `workrate:view`、成员分析页需 `members:view`（按路由分别挂）；
+# 数据层另有项目成员隔离（review_scope_clause）。
 router = APIRouter(prefix="/stats/workrate", dependencies=[
-    Depends(require_permission("stats:view")),
+    Depends(get_current_user),
 ])
 
 #: `days` 允许的窗口（0 = 不限）；其余值回落默认。
@@ -553,7 +555,8 @@ async def _scope_of(session: AsyncSession, user: CurrentUser) -> tuple[bool, set
     return await allowed_project_ids(session, user)
 
 
-@router.get("/options", response_model=WorkrateOptions)
+@router.get("/options", response_model=WorkrateOptions,
+            dependencies=[Depends(require_permission("workrate:view"))])
 async def get_workrate_options(
     user: CurrentUser,
     session: AsyncSession = Depends(get_db),
@@ -582,7 +585,8 @@ async def get_workrate_options(
     return WorkrateOptions(authors=authors, projects=projects)
 
 
-@router.get("/report", response_model=WorkrateReport)
+@router.get("/report", response_model=WorkrateReport,
+            dependencies=[Depends(require_permission("workrate:view"))])
 async def get_workrate_report(
     user: CurrentUser,
     session: AsyncSession = Depends(get_db),
@@ -643,7 +647,8 @@ def _bind_instant(session: AsyncSession, naive_utc: datetime) -> datetime:
     return naive_utc
 
 
-@router.get("/members", response_model=MembersReport)
+@router.get("/members", response_model=MembersReport,
+            dependencies=[Depends(require_permission("members:view"))])
 async def get_workrate_members(
     user: CurrentUser,
     session: AsyncSession = Depends(get_db),

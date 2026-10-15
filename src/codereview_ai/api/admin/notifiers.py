@@ -22,7 +22,10 @@ from codereview_ai.api.deps import (
 from codereview_ai.crypto import MASK, encrypt, is_masked
 from codereview_ai.storage.models import NotifierConfig, NotifierRouteMember
 
-router = APIRouter(prefix="/notifiers", dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/notifiers", dependencies=[
+    Depends(get_current_user),
+    Depends(require_permission("notifiers:view", "notifiers:edit")),
+])
 
 
 class NotifierOut(BaseModel):
@@ -110,7 +113,7 @@ async def list_notifiers(
 
 
 @router.post("", response_model=NotifierOut, status_code=status.HTTP_201_CREATED,
-             dependencies=[Depends(require_permission("notifiers:manage"))])
+             dependencies=[Depends(require_permission("notifiers:edit"))])
 async def create_notifier(
     body: NotifierWrite, request: Request, session: AsyncSession = Depends(get_db)
 ) -> NotifierOut:
@@ -150,7 +153,7 @@ async def get_notifier(
 
 
 @router.put("/{notifier_id}", response_model=NotifierOut,
-            dependencies=[Depends(require_permission("notifiers:manage"))])
+            dependencies=[Depends(require_permission("notifiers:edit"))])
 async def update_notifier(
     notifier_id: int, body: NotifierWrite, request: Request, session: AsyncSession = Depends(get_db)
 ) -> NotifierOut:
@@ -169,7 +172,7 @@ async def update_notifier(
 
 
 @router.delete("/{notifier_id}", status_code=status.HTTP_204_NO_CONTENT,
-               dependencies=[Depends(require_permission("notifiers:manage"))])
+               dependencies=[Depends(require_permission("notifiers:edit"))])
 async def delete_notifier(notifier_id: int, session: AsyncSession = Depends(get_db)) -> None:
     row = await _get_or_404(session, notifier_id)
     await _sync_members(session, notifier_id, [])  # 清理绑定行（项目无外键，显式删）

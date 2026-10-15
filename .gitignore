@@ -40,3 +40,7 @@ aacr-bench/
 .agents/
 
 skills-lock.json
+
+.debug/
+.zcodeignore
+AGENTS.md

@@ -155,7 +155,7 @@ async def test_sync_catalog_materializes_missing_permission_rows(engine):
     async with session_factory(engine)() as s:
         await seed_rbac(s, "hunter2")
         # 模拟旧库漏了 caches:manage 这一行（seed 在线程跑前就种了更早的目录）
-        await s.execute(delete(Permission).where(Permission.code == "caches:manage"))
+        await s.execute(delete(Permission).where(Permission.code == "caches:edit"))
         await s.commit()
 
     # 补缺：应新建 1 条 caches:manage
@@ -164,7 +164,7 @@ async def test_sync_catalog_materializes_missing_permission_rows(engine):
 
     async with session_factory(engine)() as s:
         row = (await s.execute(
-            select(Permission).where(Permission.code == "caches:manage")
+            select(Permission).where(Permission.code == "caches:edit")
         )).scalar_one_or_none()
         assert row is not None
         # 现在按 code 分配能匹配到行，可挂到角色并持久
@@ -175,7 +175,7 @@ async def test_sync_catalog_materializes_missing_permission_rows(engine):
         await s.commit()
         joined = (await s.execute(
             select(Permission).join(RolePermission, RolePermission.permission_id == Permission.id)
-            .where(RolePermission.role_id == dev.id, Permission.code == "caches:manage")
+            .where(RolePermission.role_id == dev.id, Permission.code == "caches:edit")
         )).scalar_one_or_none()
         assert joined is not None
 
@@ -202,11 +202,11 @@ async def test_sync_default_role_permissions_restores_drift(engine):
         tl = (await s.execute(
             select(Role).where(Role.builtin_code == "tech_lead"))).scalar_one()
         caches = (await s.execute(
-            select(Permission).where(Permission.code == "caches:manage"))).scalar_one()
+            select(Permission).where(Permission.code == "caches:edit"))).scalar_one()
         await s.execute(delete(RolePermission).where(
             RolePermission.role_id == tl.id, RolePermission.permission_id == caches.id))
         users_perm = (await s.execute(
-            select(Permission).where(Permission.code == "users:manage"))).scalar_one()
+            select(Permission).where(Permission.code == "users:edit"))).scalar_one()
         s.add(RolePermission(role_id=tl.id, permission_id=users_perm.id))
         custom = Role(name="QA", description="", is_super=False,
                       is_system=False, all_projects=False)
@@ -224,8 +224,8 @@ async def test_sync_default_role_permissions_restores_drift(engine):
         tl = (await s.execute(
             select(Role).where(Role.builtin_code == "tech_lead"))).scalar_one()
         codes = await _role_perm_codes(engine, tl.id)
-        assert "caches:manage" in codes            # 漂移补回
-        assert "users:manage" in codes             # 手工加权保留（只增不删）
+        assert "caches:edit" in codes            # 漂移补回
+        assert "users:edit" in codes             # 手工加权保留（只增不删）
         custom = (await s.execute(select(Role).where(Role.name == "QA"))).scalar_one()
         assert await _role_perm_codes(engine, custom.id) == {"projects:view"}  # 自定义角色不动
 

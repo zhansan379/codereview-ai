@@ -16,3 +16,18 @@
 @use './tag.scss' as tag;
 @use './tree.scss' as tree;
 @use './tree-select.scss' as treeSelect;
+
+// Element Plus 假定宿主页面已提供按钮 reset。这里补一条**元素级**（最低优先级）的 button 重置：
+// 去掉原生 <button> 的 UA 3D 边框与内边距——否则 el-input-number 的加减按钮会呈现系统默认
+// 凸起外观、内部图标视觉偏移/溢出。组件类样式（.el-button / .el-input-number__* 等）优先级更高，
+// 会覆盖本重置，故仅影响未被显式样式覆盖的原生按钮。
+button {
+  padding: 0;
+  border: 0;
+  background: none;
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  color: inherit;
+  line-height: inherit;
+}

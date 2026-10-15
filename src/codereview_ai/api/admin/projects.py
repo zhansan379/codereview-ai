@@ -125,7 +125,7 @@ async def create_project(
     user: CurrentUser,
     session: AsyncSession = Depends(get_db),
 ) -> Project:
-    if not await user_can(session, user, "projects:manage", project_id=None):
+    if not await user_can(session, user, "projects:edit", project_id=None):
         _forbid()
     provider = body.provider.strip() if body.provider else ""
     repo_id = body.repo_id.strip() if body.repo_id else ""
@@ -167,7 +167,7 @@ async def update_project(
     session: AsyncSession = Depends(get_db),
 ) -> Project:
     row = await _get_or_404(session, project_id)
-    if not await user_can(session, user, "projects:manage", project_id=row.id):
+    if not await user_can(session, user, "projects:edit", project_id=row.id):
         _forbid()
     provider = body.provider.strip() if body.provider else row.provider
     repo_id = body.repo_id.strip() if body.repo_id else row.repo_id
@@ -189,7 +189,7 @@ async def delete_project(
     session: AsyncSession = Depends(get_db),
 ) -> None:
     row = await _get_or_404(session, project_id)
-    if not await user_can(session, user, "projects:manage", project_id=row.id):
+    if not await user_can(session, user, "projects:edit", project_id=row.id):
         _forbid()
     # 成员关系随项目级联删除（project_member.project_id ondelete=CASCADE）
     await session.delete(row)
@@ -205,7 +205,7 @@ async def list_project_members(
     session: AsyncSession = Depends(get_db),
 ) -> list[ProjectMemberOut]:
     row = await _get_or_404(session, project_id)
-    if not await user_can(session, user, "projects:manage", project_id=row.id):
+    if not await user_can(session, user, "projects:edit", project_id=row.id):
         _forbid()
     pairs = (await session.execute(
         select(User, ProjectMember)
@@ -225,7 +225,7 @@ async def set_project_members(
     session: AsyncSession = Depends(get_db),
 ) -> list[ProjectMemberOut]:
     row = await _get_or_404(session, project_id)
-    if not await user_can(session, user, "projects:manage", project_id=row.id):
+    if not await user_can(session, user, "projects:edit", project_id=row.id):
         _forbid()
     # 全量替换：清空该项目成员，再按 user_ids 重建
     await session.execute(delete(ProjectMember).where(ProjectMember.project_id == project_id))

@@ -75,12 +75,12 @@
         fixed="right">
         <template #default="{ row }">
           <el-button v-if="showAction" link type="primary" @click="$emit('detail', row.id)">{{ $t('common.detail') }}</el-button>
-          <el-button v-if="showDelete" link type="danger" @click="$emit('delete', row.id)">{{ $t('common.delete') }}</el-button>
-          <el-button v-if="showStop && row.state === 'queued'" link type="warning" :loading="stoppingId === row.id"
+          <el-button v-if="showDelete" v-perm="'reviews:edit'" link type="danger" @click="$emit('delete', row.id)">{{ $t('common.delete') }}</el-button>
+          <el-button v-if="showStop && row.state === 'queued'" v-perm="'reviews:edit'" link type="warning" :loading="stoppingId === row.id"
             @click="$emit('stop', row)">{{ $t('reviewsTable.stop') }}</el-button>
-          <el-button v-if="showRetry && isRetryable(row)" link type="danger" :loading="retryingId === row.id"
+          <el-button v-if="showRetry && isRetryable(row)" v-perm="'reviews:edit'" link type="danger" :loading="retryingId === row.id"
             @click="$emit('retry', row)">{{ row.state === 'skipped' ? $t('reviewsTable.execute') : $t('reviewsTable.retry') }}</el-button>
-          <el-button v-if="showRedeliver && row.writeback_failed" link type="warning" :loading="redeliveringId === row.id"
+          <el-button v-if="showRedeliver && row.writeback_failed" v-perm="'reviews:edit'" link type="warning" :loading="redeliveringId === row.id"
             @click="$emit('redeliver', row)">{{ $t('reviewsTable.resend') }}</el-button>
         </template>
       </el-table-column>
