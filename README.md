@@ -4,6 +4,8 @@
 
 分组 / 门控 / 预算闸门移植自 **open-code-review**（阿里巴巴），跨组去重沿用 **pr-agent** 的内容指纹，平台形态最接近 **AI-Codereview-Gitlab**。
 
+项目演示地址：http://60.205.230.218:5001/admin 账号密码均为：test_user
+
 ## 功能一览
 
 - **三平台 webhook 接入** — GitHub / GitLab / Gitee，PR / MR 打开或更新即自动审查
